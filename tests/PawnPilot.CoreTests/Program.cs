@@ -102,4 +102,5 @@ ActionResult nested = null;
 gate.Execute(Cmd("outer", state:state), state, "broker", 1, () => { nested = gate.Execute(Cmd("inner", state:state), state, "broker", 1, Close); return State(open:false,revision:2); });
 Check("reentrant_write_rejected", nested.reason == "busy" && calls == 1);
 Check("null_command_safe", gate.Execute(null, State(), "broker", 1, Close).reason == "invalid_command");
-Console.WriteLine($"TOTAL {count} passed, 0 failed (managed lifecycle and gate only; no Unity runtime)");
+TradeDiagnosticTests.Run(Check);
+Console.WriteLine($"TOTAL {count} passed, 0 failed (managed lifecycle, gate and diagnostic fixtures; no Unity runtime)");

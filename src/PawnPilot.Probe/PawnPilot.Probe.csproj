@@ -7,11 +7,19 @@
     <AssemblyName>PawnPilot.Probe</AssemblyName>
     <EnableNETAnalyzers>false</EnableNETAnalyzers>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(M2AReadOnlyProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);M2A_READ_ONLY_PROBE</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="Assembly-CSharp"><HintPath>$(GameManagedDir)/Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameManagedDir)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.UnityWebRequestModule"><HintPath>$(GameManagedDir)/UnityEngine.UnityWebRequestModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Newtonsoft.Json"><HintPath>$(GameManagedDir)/Newtonsoft.Json.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <ItemGroup Condition="'$(M2AReadOnlyProbe)' == 'true'">
+    <Reference Include="Unity.TextMeshPro"><HintPath>$(GameManagedDir)/Unity.TextMeshPro.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(GameManagedDir)/UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UIModule"><HintPath>$(GameManagedDir)/UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
   <Target Name="CheckGameReferences" BeforeTargets="ResolveReferences">
     <Error Condition="!Exists('$(GameManagedDir)/Assembly-CSharp.dll')" Text="请复制 local.props.example 为 local.props 并配置正式版 GameManagedDir。" />

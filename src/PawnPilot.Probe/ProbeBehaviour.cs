@@ -26,6 +26,11 @@ namespace PawnPilot
         private ActionResult pendingResult;
         private bool connectionReported;
         private bool failureReported;
+#if M2A_READ_ONLY_PROBE
+        private readonly TradeDiagnostic tradeDiagnostic = new TradeDiagnostic();
+        private string lastDiagnosticVersion;
+        private bool diagnosticStopped;
+#endif
         // 使用游戏自带 Json.NET；禁止类型名驱动实例化，限制反序列化深度。
         private static readonly JsonSerializerSettings JsonSettings = new JsonSerializerSettings
         {
@@ -45,7 +50,30 @@ namespace PawnPilot
             StartCoroutine(Bootstrap());
         }
 
-        private void Update() => RefreshReadinessFrame();
+        private void Update()
+        {
+            RefreshReadinessFrame();
+#if M2A_READ_ONLY_PROBE
+            if (stopped || diagnosticStopped) return;
+            try
+            {
+                var sample = tradeDiagnostic.Capture(worldVersion.Epoch, latestReadiness.ready, TradeDiagnosticReader.Read);
+                string version = sample.world_epoch + ":" + sample.diagnostic_revision;
+                if (version == lastDiagnosticVersion) return;
+                log.Log("PAWNPILOT_M2A_READ_ONLY " + ToJson(new
+                {
+                    source = "game_runtime", diagnostic_format = 1, frame = Time.frameCount,
+                    realtime = Time.realtimeSinceStartup, sample
+                }));
+                lastDiagnosticVersion = version;
+            }
+            catch (Exception)
+            {
+                // Diagnostic/logging failures must not stop M1 networking or gameplay.
+                diagnosticStopped = true;
+            }
+#endif
+        }
 
         private IEnumerator Bootstrap()
         {

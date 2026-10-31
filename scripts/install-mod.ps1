@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$GameRoot,
     [ValidateSet('Install','Remove')][string]$Action = 'Install',
-    [switch]$Apply
+    [switch]$Apply,
+    [switch]$M2AProbe
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -23,10 +24,10 @@ foreach ($path in @($resolvedGame, $modsRoot, $target)) {
     }
 }
 $files = @('PawnPilot.Probe.dll', 'manifest.xml', 'session.json')
-$receipt = Join-Path $projectRoot 'artifacts/m1-install-receipt.json'
+$receipt = Join-Path $projectRoot $(if ($M2AProbe) { 'artifacts/m2a/install-receipt.json' } else { 'artifacts/m1-install-receipt.json' })
 if ($Action -eq 'Install') {
     if (Test-Path -LiteralPath $target) { throw 'Target already exists; inspect and remove only this experiment before reinstalling.' }
-    $package = Join-Path $projectRoot 'artifacts/package/pawnpilot_m0'
+    $package = Join-Path $projectRoot $(if ($M2AProbe) { 'artifacts/m2a/package/pawnpilot_m0' } else { 'artifacts/package/pawnpilot_m0' })
     $sources = @((Join-Path $package $files[0]), (Join-Path $package $files[1]), (Join-Path $projectRoot 'artifacts/session.json'))
     foreach ($source in $sources) { if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing source: $source" } }
     Write-Output "Install exactly DLL, manifest and local session config into $target"
