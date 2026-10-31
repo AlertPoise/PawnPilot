@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Manifest>
+  <ID>pawnpilot_m0</ID>
+  <Name>PawnPilot Game Bridge</Name>
+  <Author>PawnPilot</Author>
+  <ModVersion>0.1.0</ModVersion>
+  <Description>Local MCP bridge: observation and native menu resume.</Description>
+  <GameVersions><Version>0.46D</Version></GameVersions>
+  <Prerequisites />
+  <Assemblies><Assembly>PawnPilot.Probe.dll</Assembly></Assemblies>
+  <Capabilities><Capability>network</Capability></Capabilities>
+</Manifest>
