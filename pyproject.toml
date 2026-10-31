@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pawnpilot-mcp"
+version = "0.1.0"
+description = "MCP stdio adapter for the local PawnPilot broker"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp==2.3.0",
+    "pydantic==2.12.5",
+]
+
+[tool.setuptools.packages.find]
+include = ["pawnpilot_mcp*", "bridge*"]
