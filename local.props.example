@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- 复制为 local.props，仅引用本机正式版 Managed，不复制游戏 DLL。 -->
+    <GameManagedDir>C:\Path\To\Probably Stolen\Probably Stolen_Data\Managed</GameManagedDir>
+  </PropertyGroup>
+</Project>

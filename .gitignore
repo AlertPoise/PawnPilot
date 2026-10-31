@@ -1,0 +1,58 @@
+# 游戏版权文件、用户存档（不随源码分发）
+*.dll
+*.exe
+*.pdb
+*.assets
+*.bundle
+*.es3
+*.sav
+*.save
+*.acf
+*.vdf
+# 本机配置与密钥；示例配置及 Agent Skill 纳入版本管理
+local.props
+session.json
+*.local.json
+.env*
+!.env.example
+.codex/
+secrets/
+saves/
+GameData/
+# 本机工具、依赖缓存及测试临时目录
+.research/
+.tools/
+.dotnet/
+.nuget/
+.test-tmp/
+.uv-cache/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+# 构建、打包及原始证据；docs 中的脱敏摘要纳入版本管理
+artifacts/
+**/bin/
+**/obj/
+build/
+dist/
+*.log
+broker-journal*.json*
+# 编辑器与操作系统临时文件
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.swp
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
