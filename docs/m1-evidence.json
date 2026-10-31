@@ -1,0 +1,528 @@
+{
+  "milestone": "M1",
+  "verdict": "PASS",
+  "date": "2026-10-31",
+  "scope": "basic observation and native close_menu only",
+  "versions": {
+    "bridge": "0.1.0",
+    "schema": 1,
+    "python": "3.13.2",
+    "mcp_sdk": "2.3.0",
+    "pydantic": "2.12.5",
+    "uv": "0.13.6",
+    "codex_cli": "0.145.0",
+    "codex_test_model": "gpt-5.6-luna",
+    "game": "0.46D / VERSION 100-Rev6",
+    "steam_build": 26337366,
+    "unity": "2021.3.45f2"
+  },
+  "automated_tests": {
+    "python": 43,
+    "managed": 39,
+    "total": 82,
+    "python_breakdown": {
+      "broker": 20,
+      "recovery": 13,
+      "process_recovery": 2,
+      "mcp_sdk_stdio": 8
+    },
+    "managed_scope": "pure lifecycle and action gate, not Unity runtime"
+  },
+  "real_codex": {
+    "client": "independent Codex CLI with official MCP stdio adapter",
+    "completed_tool_counts": {
+      "health_check": 1,
+      "observe": 2,
+      "act": 1,
+      "get_action_status": 1
+    },
+    "calls": [
+      {
+        "tool": "health_check",
+        "arguments": {},
+        "structured_result": {
+          "ok": true,
+          "error_source": "none",
+          "error": null,
+          "schema_version": 1,
+          "protocol_compatible": true,
+          "broker_connected": true,
+          "bridge_connected": true,
+          "loaded": true,
+          "ready": true,
+          "can_act": true,
+          "broker_epoch": "6c44895d-e1e6-4101-a090-6d468d2f69ba",
+          "world_epoch": "103234533c784a8ebd16c398cdaac696",
+          "revision": 3,
+          "version": "103234533c784a8ebd16c398cdaac696:3",
+          "phase": "MORNING",
+          "blocking_reason": null,
+          "blocked_command_id": null
+        }
+      },
+      {
+        "tool": "observe",
+        "arguments": {},
+        "structured_result": {
+          "ok": true,
+          "error_source": "none",
+          "error": null,
+          "broker_connected": true,
+          "bridge_connected": true,
+          "snapshot": {
+            "schema_version": 1,
+            "broker_epoch": "6c44895d-e1e6-4101-a090-6d468d2f69ba",
+            "session_id": "6a1ac2811846420baadd68c34cbc555d",
+            "connected": true,
+            "state": {
+              "schema_version": 1,
+              "version": "103234533c784a8ebd16c398cdaac696:3",
+              "loaded": true,
+              "ready": true,
+              "world_epoch": "103234533c784a8ebd16c398cdaac696",
+              "revision": 3,
+              "phase": "MORNING",
+              "scene": "InventoryScene",
+              "menu_open": true,
+              "can_close_menu": true,
+              "cash": 550,
+              "not_ready_reason": null
+            },
+            "blocking_reason": null,
+            "blocked_command_id": null,
+            "can_act": true
+          },
+          "legal_actions": [
+            "close_menu"
+          ],
+          "wait_reason": null,
+          "manual_action_required": false
+        }
+      },
+      {
+        "tool": "act",
+        "arguments": {
+          "action": "close_menu",
+          "command_id": "codex-close-menu-20261031-6c44895d-0001",
+          "broker_epoch": "6c44895d-e1e6-4101-a090-6d468d2f69ba",
+          "expected_world_epoch": "103234533c784a8ebd16c398cdaac696",
+          "expected_revision": 3,
+          "expected_version": "103234533c784a8ebd16c398cdaac696:3"
+        },
+        "structured_result": {
+          "ok": true,
+          "error_source": "none",
+          "error": null,
+          "command_id": "codex-close-menu-20261031-6c44895d-0001",
+          "command_status": "pending",
+          "broker_epoch": "6c44895d-e1e6-4101-a090-6d468d2f69ba",
+          "world_epoch": "103234533c784a8ebd16c398cdaac696",
+          "revision": 3,
+          "version": "103234533c784a8ebd16c398cdaac696:3",
+          "reason": null,
+          "result": null
+        }
+      },
+      {
+        "tool": "get_action_status",
+        "arguments": {
+          "command_id": "codex-close-menu-20261031-6c44895d-0001"
+        },
+        "structured_result": {
+          "ok": true,
+          "error_source": "none",
+          "error": null,
+          "command_id": "codex-close-menu-20261031-6c44895d-0001",
+          "found": true,
+          "command_status": "succeeded",
+          "broker_epoch": "6c44895d-e1e6-4101-a090-6d468d2f69ba",
+          "reason": "observed",
+          "result": {
+            "schema_version": 1,
+            "id": "codex-close-menu-20261031-6c44895d-0001",
+            "broker_epoch": "6c44895d-e1e6-4101-a090-6d468d2f69ba",
+            "status": "succeeded",
+            "command_status": null,
+            "reason": "observed",
+            "before": {
+              "schema_version": 1,
+              "version": "103234533c784a8ebd16c398cdaac696:3",
+              "loaded": true,
+              "ready": true,
+              "world_epoch": "103234533c784a8ebd16c398cdaac696",
+              "revision": 3,
+              "phase": "MORNING",
+              "scene": "InventoryScene",
+              "menu_open": true,
+              "can_close_menu": true,
+              "cash": 550,
+              "not_ready_reason": null
+            },
+            "after": {
+              "schema_version": 1,
+              "version": "103234533c784a8ebd16c398cdaac696:4",
+              "loaded": true,
+              "ready": true,
+              "world_epoch": "103234533c784a8ebd16c398cdaac696",
+              "revision": 4,
+              "phase": "MORNING",
+              "scene": "InventoryScene",
+              "menu_open": false,
+              "can_close_menu": false,
+              "cash": 550,
+              "not_ready_reason": null
+            }
+          },
+          "resolved": false,
+          "resolution": null
+        }
+      },
+      {
+        "tool": "observe",
+        "arguments": {},
+        "structured_result": {
+          "ok": true,
+          "error_source": "none",
+          "error": null,
+          "broker_connected": true,
+          "bridge_connected": true,
+          "snapshot": {
+            "schema_version": 1,
+            "broker_epoch": "6c44895d-e1e6-4101-a090-6d468d2f69ba",
+            "session_id": "6a1ac2811846420baadd68c34cbc555d",
+            "connected": true,
+            "state": {
+              "schema_version": 1,
+              "version": "103234533c784a8ebd16c398cdaac696:4",
+              "loaded": true,
+              "ready": true,
+              "world_epoch": "103234533c784a8ebd16c398cdaac696",
+              "revision": 4,
+              "phase": "MORNING",
+              "scene": "InventoryScene",
+              "menu_open": false,
+              "can_close_menu": false,
+              "cash": 550,
+              "not_ready_reason": null
+            },
+            "blocking_reason": null,
+            "blocked_command_id": null,
+            "can_act": true
+          },
+          "legal_actions": [],
+          "wait_reason": null,
+          "manual_action_required": false
+        }
+      }
+    ],
+    "native_result_log_count": 1
+  },
+  "lifecycle": {
+    "main_menu": {
+      "schema_version": 1,
+      "broker_epoch": "6c44895d-e1e6-4101-a090-6d468d2f69ba",
+      "session_id": "6a1ac2811846420baadd68c34cbc555d",
+      "state": {
+        "schema_version": 1,
+        "version": "61114a4186704e4da897ae5e891a909e:1",
+        "world_epoch": "61114a4186704e4da897ae5e891a909e",
+        "phase": "not_loaded",
+        "scene": "EmporiumMenu",
+        "not_ready_reason": "not_gameplay_scene",
+        "revision": 1,
+        "loaded": false,
+        "ready": false,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 0
+      },
+      "connected": true,
+      "can_act": false,
+      "blocked_command_id": null,
+      "blocking_reason": "not_gameplay_scene"
+    },
+    "new_game_direct_ready": {
+      "schema_version": 1,
+      "broker_epoch": "6c44895d-e1e6-4101-a090-6d468d2f69ba",
+      "session_id": "6a1ac2811846420baadd68c34cbc555d",
+      "state": {
+        "schema_version": 1,
+        "version": "103234533c784a8ebd16c398cdaac696:2",
+        "world_epoch": "103234533c784a8ebd16c398cdaac696",
+        "phase": "MORNING",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 2,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550
+      },
+      "connected": true,
+      "can_act": true,
+      "blocked_command_id": null,
+      "blocking_reason": null
+    },
+    "after_action": {
+      "schema_version": 1,
+      "broker_epoch": "6c44895d-e1e6-4101-a090-6d468d2f69ba",
+      "session_id": "6a1ac2811846420baadd68c34cbc555d",
+      "state": {
+        "schema_version": 1,
+        "version": "103234533c784a8ebd16c398cdaac696:4",
+        "world_epoch": "103234533c784a8ebd16c398cdaac696",
+        "phase": "MORNING",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 4,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550
+      },
+      "connected": true,
+      "can_act": true,
+      "blocked_command_id": null,
+      "blocking_reason": null
+    },
+    "broker_reconnected": {
+      "schema_version": 1,
+      "broker_epoch": "95b562af-3194-4dc2-95d2-535046fae0a0",
+      "session_id": "6a1ac2811846420baadd68c34cbc555d",
+      "state": {
+        "schema_version": 1,
+        "version": "103234533c784a8ebd16c398cdaac696:4",
+        "world_epoch": "103234533c784a8ebd16c398cdaac696",
+        "phase": "MORNING",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 4,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550
+      },
+      "connected": true,
+      "can_act": true,
+      "blocked_command_id": null,
+      "blocking_reason": null
+    },
+    "returned_main_menu": {
+      "schema_version": 1,
+      "broker_epoch": "95b562af-3194-4dc2-95d2-535046fae0a0",
+      "session_id": "6a1ac2811846420baadd68c34cbc555d",
+      "state": {
+        "schema_version": 1,
+        "version": "f0a98e0c10b0439e84e786fa2949033d:1",
+        "world_epoch": "f0a98e0c10b0439e84e786fa2949033d",
+        "phase": "not_loaded",
+        "scene": "EmporiumMenu",
+        "not_ready_reason": "not_gameplay_scene",
+        "revision": 1,
+        "loaded": false,
+        "ready": false,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 0
+      },
+      "connected": true,
+      "can_act": false,
+      "blocked_command_id": null,
+      "blocking_reason": "not_gameplay_scene"
+    },
+    "loaded_test_save": {
+      "schema_version": 1,
+      "broker_epoch": "95b562af-3194-4dc2-95d2-535046fae0a0",
+      "session_id": "6a1ac2811846420baadd68c34cbc555d",
+      "state": {
+        "schema_version": 1,
+        "version": "8ad94bb6218e4186a4c0030987011db5:2",
+        "world_epoch": "8ad94bb6218e4186a4c0030987011db5",
+        "phase": "MORNING",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 2,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550
+      },
+      "connected": true,
+      "can_act": true,
+      "blocked_command_id": null,
+      "blocking_reason": null
+    },
+    "repeated_load": {
+      "schema_version": 1,
+      "broker_epoch": "95b562af-3194-4dc2-95d2-535046fae0a0",
+      "session_id": "6a1ac2811846420baadd68c34cbc555d",
+      "state": {
+        "schema_version": 1,
+        "version": "53d4c799c06f4e1793bcc561cf5f650d:2",
+        "world_epoch": "53d4c799c06f4e1793bcc561cf5f650d",
+        "phase": "MORNING",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 2,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550
+      },
+      "connected": true,
+      "can_act": true,
+      "blocked_command_id": null,
+      "blocking_reason": null
+    },
+    "game_exited": {
+      "schema_version": 1,
+      "broker_epoch": "95b562af-3194-4dc2-95d2-535046fae0a0",
+      "session_id": "6a1ac2811846420baadd68c34cbc555d",
+      "state": {
+        "schema_version": 1,
+        "version": "789c17eb40c4414ab0266cc35a0b3a32:1",
+        "world_epoch": "789c17eb40c4414ab0266cc35a0b3a32",
+        "phase": "not_loaded",
+        "scene": "EmporiumMenu",
+        "not_ready_reason": "not_gameplay_scene",
+        "revision": 1,
+        "loaded": false,
+        "ready": false,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 0
+      },
+      "connected": false,
+      "can_act": false,
+      "blocked_command_id": null,
+      "blocking_reason": "game_disconnected"
+    }
+  },
+  "result_after_broker_restart": {
+    "id": "codex-close-menu-20261031-6c44895d-0001",
+    "command_status": "succeeded",
+    "status": "success",
+    "result": {
+      "schema_version": 1,
+      "id": "codex-close-menu-20261031-6c44895d-0001",
+      "broker_epoch": "6c44895d-e1e6-4101-a090-6d468d2f69ba",
+      "status": "succeeded",
+      "reason": "observed",
+      "before": {
+        "schema_version": 1,
+        "version": "103234533c784a8ebd16c398cdaac696:3",
+        "world_epoch": "103234533c784a8ebd16c398cdaac696",
+        "phase": "MORNING",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 3,
+        "loaded": true,
+        "ready": true,
+        "menu_open": true,
+        "can_close_menu": true,
+        "cash": 550
+      },
+      "after": {
+        "schema_version": 1,
+        "version": "103234533c784a8ebd16c398cdaac696:4",
+        "world_epoch": "103234533c784a8ebd16c398cdaac696",
+        "phase": "MORNING",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 4,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550
+      }
+    },
+    "resolved": false,
+    "resolution": null
+  },
+  "stale_rejections": {
+    "stale_world": {
+      "http_status": 409,
+      "body": {
+        "error": "stale_state"
+      }
+    },
+    "stale_broker": {
+      "http_status": 409,
+      "body": {
+        "error": "broker_epoch_mismatch"
+      }
+    }
+  },
+  "cleanup": {
+    "original_saves": [
+      {
+        "unchanged": true,
+        "after": "647584803A00060B18D6A1C916CCC3911C5612582E7CF353247ACF2611F39CED",
+        "name": "save_0_day3_20261031-052803.es3",
+        "before": "647584803A00060B18D6A1C916CCC3911C5612582E7CF353247ACF2611F39CED"
+      },
+      {
+        "unchanged": true,
+        "after": "D35489E866520629C0525AF974053049549C0EAD0D5F102765FAE248F7BD1FE4",
+        "name": "save_0_day4_20261031-055048.es3",
+        "before": "D35489E866520629C0525AF974053049549C0EAD0D5F102765FAE248F7BD1FE4"
+      },
+      {
+        "unchanged": true,
+        "after": "DA891F60E6FB70EC6F1553148C2D5CD3C547F5394AD93E897E32583DE662B1BE",
+        "name": "save_0.es3",
+        "before": "DA891F60E6FB70EC6F1553148C2D5CD3C547F5394AD93E897E32583DE662B1BE"
+      }
+    ],
+    "game_process_absent": true,
+    "game_assembly_sha256": "6398D44AA1675E1F02B63BC668868F970E0F5D3AE5A50F2ACED8D06CA084E3B5",
+    "mod_directory_absent": true,
+    "test_slot_absent": true,
+    "port_18765_free": true
+  },
+  "package_dll_sha256": "4fc9ff109a6ed8f7f1a96801821e13c37fbeb3c4504bc7e86b81e5937ed58506",
+  "git": {
+    "initial_commit": false,
+    "commit_or_push_performed": false,
+    "candidate_files_secret_scan": "PASS",
+    "game_binaries_and_saves_excluded": true
+  },
+  "limits": [
+    "Live test used an independent Apprentice normal-difficulty save with intro skipped.",
+    "In-flight crash/result-loss, duplicate delivery and manual reconciliation were fault-injected in automated tests; not deliberately induced in the live Unity game.",
+    "No trading or autonomous operation tested.",
+    "Not an exactly-once guarantee under journal loss or disk corruption."
+  ],
+  "raw_artifact_sha256": {
+    "artifacts/m1/live/01-mod-enabled.png": "6c1dc94342193eee36208633f492e8c75b3c7708662baa10fc69a184470b4fd4",
+    "artifacts/m1/live/02-main-menu.json": "09649ad088ded7fae4468ba6064b26f56c68ddc05a72fa073c56a20739ca1622",
+    "artifacts/m1/live/03-new-game-ready.json": "5419de492335f6d1073288f774a22d5641ccb5265c9ce32cc69d1cc8573d0797",
+    "artifacts/m1/live/03-new-game.png": "0c98c67c2fbc4912f3c4e6d8f63137201fc6eb7a98d4fee24eecf7b53b27ea03",
+    "artifacts/m1/live/04-before-codex-action.png": "5c6956035e4a9c3ec7e3182bda2f26fb9d805b4d4276b4736b53b846940f283d",
+    "artifacts/m1/live/05-after-action.json": "415381f8c0f21ca7cc42381924ea6c5af5174f2db82d312afc5154c5441e663e",
+    "artifacts/m1/live/05-after-codex-action.png": "303ef8005d5e79823a9cad92cad67e1c2192adf11d2fa7eb8ed767a8cb29f26f",
+    "artifacts/m1/live/06-broker-restarted.json": "facf07317ac84b5cb7c982a83ecdf26e74bc8f758086a8960407af01d22ce0f4",
+    "artifacts/m1/live/06-result-after-broker-restart.json": "56bfc180f6dbc92a799a1b95c931bdf1fdddb651d5101851a8f1d08d9afb271b",
+    "artifacts/m1/live/07-returned-main-menu.json": "ac8327ec97d9a3a8dc2ac60b0e98f876cac2fb1b2714cb20643c2718ab639dbb",
+    "artifacts/m1/live/08-separate-save-slots.png": "285440dccc10c0286ad57933e2d80a22e66baf8012aeff17b6e054bdc5a2c5f5",
+    "artifacts/m1/live/09-reloaded-state.json": "05ffaef90e9c109924e221515057af2326ea11051db6b0493f7590c9b0916542",
+    "artifacts/m1/live/09-reloaded.png": "8d1d853992ffdb1797d734e2d62a0dce42c7e4bd7c1b227bac3b448f9220d30c",
+    "artifacts/m1/live/10-stale-rejections.json": "f6326d8008d355779bc3da867f6b8bd2123574f216ef00a56ba7af1e4cb5d4d8",
+    "artifacts/m1/live/11-repeat-load.json": "de6ef50744a42b43ea15a662bcf28051c4c44feb8695918a71862770af9f12da",
+    "artifacts/m1/live/12-test-slot-removed.png": "2ccdde70a040e743a160bbda7a443018a1d3831ee7f0652d3c6bd641113c1951",
+    "artifacts/m1/live/13-mod-disabled.png": "a04cec3a26ac73af3a4dc50c9c53f9241ddbe99da023db066f9f31f814691493",
+    "artifacts/m1/live/14-game-exit.json": "2f2d6b1d1c1cdc596498ba541ef009fb294fca2a9e594420bb66971d86691987",
+    "artifacts/m1/live/15-cleanup.json": "ac0acad13743e27727819dbc03e6184b043e0aaeb09d133539c3f6d191834f16",
+    "artifacts/m1/live/final-player.log": "51de5067b54ff0ddc862af81c81d648d4fb8530642acb31f1739d91c3e044ea0",
+    "artifacts/m1/automated-tests-final.log": "e17524ea892d16d86d9de9aa841ee4ebdef28e3099fef7b1d36df63867f46f83",
+    "artifacts/m1/managed-tests-final.log": "01d95ba00e81d2a98d92e434abd974109e285f213312d5dfae3d79af7c9ff90b",
+    "artifacts/m1/codex/live-close-menu.jsonl": "ac739d106fcfb99164c6292bc33f072ac962e1f65599ce34f77aed8ec54b4054",
+    "artifacts/m1/codex/broker-only-approved.jsonl": "488939081f112651d21f877c4f4be99d5d2d69986d1bac9597655aa84e912859"
+  }
+}

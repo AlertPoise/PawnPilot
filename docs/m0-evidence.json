@@ -1,0 +1,251 @@
+{
+  "date": "2026-10-31",
+  "user_timezone": "America/New_York",
+  "steam_app": 4348910,
+  "steam_build": 26337366,
+  "game_version": "VERSION 100-Rev6",
+  "application_version": "0.46D",
+  "unity": "2021.3.45f2",
+  "probe_version": "0.0.4",
+  "probe_sha256": "5f092344d3afbedfc6b843292835916179a8d001d54a2a8c809b7de296ff135d",
+  "automated_tests": {
+    "python_passed": 19,
+    "managed_gate_passed": 13,
+    "final_failed": 0
+  },
+  "live_checklist": {
+    "passed": 10,
+    "unsupported_new_game_readiness": 1
+  },
+  "exchanges": {
+    "main-menu-state.json": {
+      "http_status": 200,
+      "body": {
+        "session_id": "353cc2d4db204e97a457d009365d1fd6",
+        "state": {
+          "version": "353cc2d4db204e97a457d009365d1fd6:1",
+          "phase": "not_loaded",
+          "scene": "EmporiumMenu",
+          "loaded": false,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 0
+        },
+        "connected": true
+      }
+    },
+    "main-menu-observe-result.json": {
+      "http_status": 200,
+      "body": {
+        "id": "0c93206e23d2f20bfb4ace4bfa52bb88",
+        "status": "success",
+        "reason": "observed",
+        "before": {
+          "version": "353cc2d4db204e97a457d009365d1fd6:1",
+          "phase": "not_loaded",
+          "scene": "EmporiumMenu",
+          "loaded": false,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 0
+        },
+        "after": {
+          "version": "353cc2d4db204e97a457d009365d1fd6:1",
+          "phase": "not_loaded",
+          "scene": "EmporiumMenu",
+          "loaded": false,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 0
+        }
+      }
+    },
+    "unloaded-close-result.json": {
+      "http_status": 200,
+      "body": {
+        "id": "94827c6138222e84a049e831950dfcdb",
+        "status": "rejected",
+        "reason": "not_loaded",
+        "before": {
+          "version": "353cc2d4db204e97a457d009365d1fd6:1",
+          "phase": "not_loaded",
+          "scene": "EmporiumMenu",
+          "loaded": false,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 0
+        },
+        "after": null
+      }
+    },
+    "loaded-state.json": {
+      "http_status": 200,
+      "body": {
+        "session_id": "353cc2d4db204e97a457d009365d1fd6",
+        "state": {
+          "version": "353cc2d4db204e97a457d009365d1fd6:2",
+          "phase": "not_loaded",
+          "scene": "InventoryScene",
+          "loaded": false,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 0
+        },
+        "connected": true
+      }
+    },
+    "reloaded-state.json": {
+      "http_status": 200,
+      "body": {
+        "session_id": "353cc2d4db204e97a457d009365d1fd6",
+        "state": {
+          "version": "353cc2d4db204e97a457d009365d1fd6:4",
+          "phase": "MORNING",
+          "scene": "InventoryScene",
+          "loaded": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550
+        },
+        "connected": true
+      }
+    },
+    "close-result.json": {
+      "http_status": 200,
+      "body": {
+        "id": "88120c4f35fd65c4d55bce36fb7f41a9",
+        "status": "success",
+        "reason": "observed",
+        "before": {
+          "version": "353cc2d4db204e97a457d009365d1fd6:5",
+          "phase": "MORNING",
+          "scene": "InventoryScene",
+          "loaded": true,
+          "menu_open": true,
+          "can_close_menu": true,
+          "cash": 550
+        },
+        "after": {
+          "version": "353cc2d4db204e97a457d009365d1fd6:6",
+          "phase": "MORNING",
+          "scene": "InventoryScene",
+          "loaded": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550
+        }
+      }
+    },
+    "stale-rejected.json": {
+      "http_status": 409,
+      "body": {
+        "error": "stale_state"
+      }
+    },
+    "after-broker-restart.json": {
+      "http_status": 200,
+      "body": {
+        "session_id": "353cc2d4db204e97a457d009365d1fd6",
+        "state": {
+          "version": "353cc2d4db204e97a457d009365d1fd6:6",
+          "phase": "MORNING",
+          "scene": "InventoryScene",
+          "loaded": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550
+        },
+        "connected": true
+      }
+    },
+    "returned-to-main-menu.json": {
+      "http_status": 200,
+      "body": {
+        "session_id": "353cc2d4db204e97a457d009365d1fd6",
+        "state": {
+          "version": "353cc2d4db204e97a457d009365d1fd6:8",
+          "phase": "not_loaded",
+          "scene": "EmporiumMenu",
+          "loaded": false,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 0
+        },
+        "connected": true
+      }
+    },
+    "after-game-exit.json": {
+      "http_status": 200,
+      "body": {
+        "session_id": "353cc2d4db204e97a457d009365d1fd6",
+        "state": {
+          "version": "353cc2d4db204e97a457d009365d1fd6:8",
+          "phase": "not_loaded",
+          "scene": "EmporiumMenu",
+          "loaded": false,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 0
+        },
+        "connected": false
+      }
+    },
+    "original-save-check-final.json": [
+      {
+        "Name": "save_0_day3_20261031-052803.es3",
+        "Unchanged": true
+      },
+      {
+        "Name": "save_0_day4_20261031-055048.es3",
+        "Unchanged": true
+      },
+      {
+        "Name": "save_0.es3",
+        "Unchanged": true
+      }
+    ]
+  },
+  "game_log_excerpt": [
+    "[PawnPilot M0 Probe]: PAWNPILOT_INIT app=0.46D content=VERSION 100-Rev6",
+    "[PawnPilot M0 Probe]: PAWNPILOT_ENABLED",
+    "[ModLoader] audit: pawnpilot_m0 v0.0.4 source=Local workshop=0 owner=0 running=True trust=Updated caps=network hash=89f618a3645f7530671e709da22d3f9272929e5988230fa4520709cc4d123aa7",
+    "[PawnPilot M0 Probe]: PAWNPILOT_BRIDGE_READY",
+    "[PawnPilot M0 Probe]: PAWNPILOT_CONNECTED",
+    "[PawnPilot M0 Probe]: PAWNPILOT_RESULT {\"id\":\"0c93206e23d2f20bfb4ace4bfa52bb88\",\"status\":\"success\",\"reason\":\"observed\",\"before\":{\"version\":\"353cc2d4db204e97a457d009365d1fd6:1\",\"phase\":\"not_loaded\",\"scene\":\"EmporiumMenu\",\"loaded\":false,\"menu_open\":false,\"can_close_menu\":false,\"cash\":0},\"after\":{\"version\":\"353cc2d4db204e97a457d009365d1fd6:1\",\"phase\":\"not_loaded\",\"scene\":\"EmporiumMenu\",\"loaded\":false,\"menu_open\":false,\"can_close_menu\":false,\"cash\":0}}",
+    "[PawnPilot M0 Probe]: PAWNPILOT_RESULT {\"id\":\"94827c6138222e84a049e831950dfcdb\",\"status\":\"rejected\",\"reason\":\"not_loaded\",\"before\":{\"version\":\"353cc2d4db204e97a457d009365d1fd6:1\",\"phase\":\"not_loaded\",\"scene\":\"EmporiumMenu\",\"loaded\":false,\"menu_open\":false,\"can_close_menu\":false,\"cash\":0},\"after\":null}",
+    "[PawnPilot M0 Probe]: PAWNPILOT_GAME_LOADED {\"version\":\"353cc2d4db204e97a457d009365d1fd6:4\",\"phase\":\"MORNING\",\"scene\":\"InventoryScene\",\"loaded\":true,\"menu_open\":false,\"can_close_menu\":false,\"cash\":550}",
+    "[PawnPilot M0 Probe]: PAWNPILOT_RESULT {\"id\":\"88120c4f35fd65c4d55bce36fb7f41a9\",\"status\":\"success\",\"reason\":\"observed\",\"before\":{\"version\":\"353cc2d4db204e97a457d009365d1fd6:5\",\"phase\":\"MORNING\",\"scene\":\"InventoryScene\",\"loaded\":true,\"menu_open\":true,\"can_close_menu\":true,\"cash\":550},\"after\":{\"version\":\"353cc2d4db204e97a457d009365d1fd6:6\",\"phase\":\"MORNING\",\"scene\":\"InventoryScene\",\"loaded\":true,\"menu_open\":false,\"can_close_menu\":false,\"cash\":550}}",
+    "[PawnPilot M0 Probe]: PAWNPILOT_DISCONNECTED http=0 error=Request timeout",
+    "[PawnPilot M0 Probe]: PAWNPILOT_CONNECTED",
+    "[ModLoader] 'pawnpilot_m0' enabled=False (restart required)",
+    "[PawnPilot M0 Probe]: PAWNPILOT_SHUTDOWN",
+    "[PawnPilot M0 Probe]: PAWNPILOT_DISABLED"
+  ],
+  "local_evidence_hashes": {
+    "01-approved.png": "6e5764d14411af3f8fff32055a7d7df51f5dc852bfaea598141e9151bb11a95f",
+    "02-main-menu.png": "a50399035f0d922d5fdd0b69aa95a3da4dbac987e07e6d4c032042a6863e91d4",
+    "03-new-slot.png": "ddd0e155e9ce2bb0c8991af779660f63e60a92f80cdca0a77f803c9e28fd4c5f",
+    "04-separate-slots.png": "6d99e4ba7ac3840635fcc8261d56439d3df4c19fc253a5e29233da4426953f66",
+    "05-cash-550.png": "8686b64bb32ab41153d6933c4b9566f1500a8071ab0a2381301b36e2b1ce3342",
+    "06-before-action.png": "740b29efe8d736aa4af83eb5e8e9c956c5d6f62b715dde45603c7ac6a715d562",
+    "07-after-action.png": "fb5eae7cd10737efa872c3d9b43a3fa0fd5b8916a2924caec8c48c85840b5f1d",
+    "08-test-slot-removed.png": "1037913c9f0e82583c039de634074e82882f5a8660ef7320da4a83e6724949e4",
+    "09-v004-approved.png": "1f70464246fc967e0ed6e3cfbae22a912424f67f5425690ed3ea3398613b191d",
+    "10-disabled.png": "e13c05cf02de0cd02eed6b11a790a463d8b948d20837de3a42855dd4d4779a04",
+    "activation.log": "0abba7e45f5bb74c04e370195b1ef084d49981a33fad774ff0c461198087292f",
+    "bridge-timeout.log": "9c5772da4a9723f73af243ffc57c8ac235f0762f76ad4b5587a936a4b7dab09e",
+    "final-player.log": "793fd59d03a8b104c932ccc28ae31d8bbcc8cff592c1d68edbace7e848e6e02a",
+    "initialization-failed.log": "f3676c6906688ea826c3b154594a0adaceeaa37475ae50d7b9110cc059855c78",
+    "invalid-snapshot.log": "d455a93a15b9b426054a576630f9af589d6a422f4c8fdde7d3432d5b15da0010",
+    "success-before-disconnect.log": "c99398436c58fdbdcbd4758ad2e2a579b3073ac79172f6b6dc2d7cdbef5a0d6d"
+  },
+  "cleanup": {
+    "game_process_exited": true,
+    "mod_disabled_in_ui": true,
+    "installed_mod_directory_removed": true,
+    "test_slot_removed_in_ui": true,
+    "original_save_files_unchanged": true,
+    "broker_stopped_and_port_rebind_passed": true,
+    "global_index_and_settings_byte_identical": false
+  }
+}

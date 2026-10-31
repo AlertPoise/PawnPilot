@@ -1,0 +1,11 @@
+# Copy this table into your project .codex/config.toml after replacing the absolute root.
+# Merge with existing project config; do not overwrite user global config.
+# Broker runs separately. No token appears here; adapter reads artifacts/session.json.
+[mcp_servers.pawnpilot]
+command = 'D:\Path\To\PawnPilot\.venv\Scripts\python.exe'
+args = ['-m', 'pawnpilot_mcp']
+cwd = 'D:\Path\To\PawnPilot'
+startup_timeout_sec = 20
+tool_timeout_sec = 15
+required = true
+enabled_tools = ['health_check', 'observe', 'act', 'get_action_status']
