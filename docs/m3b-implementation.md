@@ -110,3 +110,5 @@ Agent先说明265的普通报价和550现金，认为降价10%能降低收购成
 ## Git
 
 本轮在feature/m3b-bargain开发，未合并main、未force push、未发布Release。提交范围仅源码、契约、测试、README、Skill和本报告，不包含游戏DLL、存档、密钥或原始日志。
+
+实现及验收提交：`023a91af0f836a3085ceac728d7895e4d84c4898`（`feat:实现普通自主议价并完成真实MCP验收`），已推送至origin/feature/m3b-bargain。本段提交记录由后续文档提交补录；交付HEAD以Git日志为准。
