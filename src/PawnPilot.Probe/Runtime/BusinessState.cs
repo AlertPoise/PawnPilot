@@ -3,7 +3,8 @@ using System.Collections.Generic;
 
 namespace PawnPilot
 {
-    // Wire v3 business schema 1. Null is unknown, never an empty/zero substitute.
+    // Wire v3 business schema 1 is retained for history; new projections emit schema 2.
+    // Null is unknown, never an empty/zero substitute.
     [Serializable] public sealed class BusinessDetails
     {
         public int schema_version = 1;
@@ -11,6 +12,7 @@ namespace PawnPilot
         public CustomerState customer = new CustomerState();
         public List<ContainerState> containers = new List<ContainerState>();
         public List<ItemState> items = new List<ItemState>();
+        public string front_collection_fingerprint;
         public QuoteState quote = new QuoteState();
         public BusinessUiState ui = new BusinessUiState();
         public CapacityState capacity = new CapacityState();
@@ -24,7 +26,14 @@ namespace PawnPilot
         public string trade_type = "unknown", phase = "unknown";
         public string dialogue_ref;
         public string dialogue_stage = "unknown";
+        public string dialogue_text;
+        public bool? is_typing, waiting_for_advance;
         public List<string> option_refs = new List<string>();
+        public List<DialogueOptionState> options = new List<DialogueOptionState>();
+    }
+    [Serializable] public sealed class DialogueOptionState
+    {
+        public string option_ref, text;
     }
     [Serializable] public sealed class ContainerState
     {
@@ -49,7 +58,7 @@ namespace PawnPilot
     [Serializable] public sealed class QuoteState
     {
         public string status = "unavailable", mode = "unknown";
-        public int? displayed_total;
+        public int? displayed_total, wholesale_total;
         public List<QuoteRowState> rows = new List<QuoteRowState>();
         public string reason = "not_observed";
     }

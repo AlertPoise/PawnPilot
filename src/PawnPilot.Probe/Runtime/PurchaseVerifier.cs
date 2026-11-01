@@ -25,12 +25,11 @@ namespace PawnPilot
         public string Mode { get; }
         public int Amount { get; }
         public int MaxSpend { get; }
-        public string AuthorizationRef { get; }
         public IReadOnlyList<string> ItemRefs => itemRefs;
 
         public PurchaseRequest(string commandId, string worldEpoch, string expectedVersion, int expectedRevision,
             string customerRef, string offerRef, IEnumerable<string> itemRefs, string collectionFingerprint,
-            string mode, int amount, int maxSpend, string authorizationRef)
+            string mode, int amount, int maxSpend)
         {
             CommandId = commandId;
             WorldEpoch = worldEpoch;
@@ -43,50 +42,7 @@ namespace PawnPilot
             Mode = mode;
             Amount = amount;
             MaxSpend = maxSpend;
-            AuthorizationRef = authorizationRef;
         }
-
-        private static string[] Copy(IEnumerable<string> source)
-        {
-            if (source == null) return Array.Empty<string>();
-            var values = new List<string>();
-            foreach (string value in source) values.Add(value);
-            return values.ToArray();
-        }
-    }
-
-    // Trusted-host-only authorization, never deserialized from the wire. The command's max_spend
-    // is only a requested bound; it cannot create this evidence. No production issuer is connected
-    // yet; registration/consumption by a trusted approval host remains a separate requirement.
-    public sealed class PurchaseAuthorization
-    {
-        private readonly ReadOnlyCollection<string> itemRefs;
-        private int consumed;
-        public string Reference { get; }
-        public string CommandId { get; }
-        public string WorldEpoch { get; }
-        public string CustomerRef { get; }
-        public string OfferRef { get; }
-        public string CollectionFingerprint { get; }
-        public int MaxSpend { get; }
-        public IReadOnlyList<string> ItemRefs => itemRefs;
-
-        internal PurchaseAuthorization(string reference, string commandId, string worldEpoch, string customerRef, string offerRef,
-            IEnumerable<string> itemRefs, string collectionFingerprint, int maxSpend)
-        {
-            Reference = reference;
-            CommandId = commandId;
-            WorldEpoch = worldEpoch;
-            CustomerRef = customerRef;
-            OfferRef = offerRef;
-            this.itemRefs = Array.AsReadOnly(Copy(itemRefs));
-            CollectionFingerprint = collectionFingerprint;
-            MaxSpend = maxSpend;
-        }
-
-        internal bool TryConsume(string requestedCommandId) =>
-            string.Equals(CommandId, requestedCommandId, StringComparison.Ordinal) &&
-            Interlocked.CompareExchange(ref consumed, 1, 0) == 0;
 
         private static string[] Copy(IEnumerable<string> source)
         {
@@ -104,18 +60,22 @@ namespace PawnPilot
         public int Units { get; }
         public bool Owned { get; }
         public CapacityItemSnapshot CapacityFacts { get; }
+        // Per-command opaque identity token. Unlike ItemRef, this remains stable across an
+        // ownership/container projection change, but it is never serialized to the wire.
+        public string IdentityKey { get; }
         // A local fingerprint over other directly-observed mutable item facts. It must be
         // stable for non-target items and is intentionally not used to price an item.
         public string StateFingerprint { get; }
 
         public PurchaseItemEvidence(string itemRef, string container, int units, bool owned,
-            string stateFingerprint = null, CapacityItemSnapshot capacityFacts = null)
+            string stateFingerprint = null, CapacityItemSnapshot capacityFacts = null, string identityKey = null)
         {
             ItemRef = itemRef;
             Container = container;
             Units = units;
             Owned = owned;
             CapacityFacts = capacityFacts;
+            IdentityKey = identityKey;
             StateFingerprint = stateFingerprint ?? StableFingerprint(capacityFacts);
         }
 
@@ -135,6 +95,7 @@ namespace PawnPilot
             Append(builder, (int)item.FeatureProfile);
             Append(builder, (int)item.NestedProfile);
             Append(builder, (int)item.StackCallbackAbsent);
+            Append(builder, (int)item.SlotSearchPassthroughAbsent);
             var shape = item.Shape;
             if (shape == null) Append(builder, (string)null);
             else
@@ -147,6 +108,9 @@ namespace PawnPilot
                 Append(builder, shape.OccupiedCells.Count);
                 foreach (bool occupied in shape.OccupiedCells) Append(builder, occupied);
             }
+            Append(builder, item.OccupiedGridCellsComplete);
+            Append(builder, item.OccupiedGridCellIndexes.Count);
+            foreach (int cell in item.OccupiedGridCellIndexes) Append(builder, cell);
             using (var sha = SHA256.Create())
             {
                 byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(builder.ToString()));
@@ -212,6 +176,8 @@ namespace PawnPilot
         public int? DisplayedTotal { get; }
         public bool MultiBuyEnabled { get; }
         public bool ContainersComplete { get; }
+        public bool QuoteBindingVerified { get; }
+        public bool NativePurchaseReady { get; }
         public CapacitySnapshot CapacitySnapshot { get; }
         public CapacityProofResult CapacityProof { get; }
         public IReadOnlyList<string> PurchaseListOrderRefs => purchaseListOrderRefs;
@@ -238,7 +204,8 @@ namespace PawnPilot
             string quoteStatus, string quoteMode, int? displayedTotal,
             IEnumerable<PurchaseQuoteRowEvidence> quoteRows, IEnumerable<PurchaseItemEvidence> items,
             bool containersComplete, bool multiBuyEnabled, CapacitySnapshot capacitySnapshot = null,
-            CapacityProofResult capacityProof = null)
+            CapacityProofResult capacityProof = null, bool quoteBindingVerified = false,
+            bool nativePurchaseReady = false)
         {
             CommandId = commandId;
             Status = status;
@@ -266,6 +233,8 @@ namespace PawnPilot
             ContainersComplete = containersComplete;
             CapacitySnapshot = capacitySnapshot;
             CapacityProof = capacityProof;
+            QuoteBindingVerified = quoteBindingVerified;
+            NativePurchaseReady = nativePurchaseReady;
             this.purchaseListOrderRefs = Array.AsReadOnly(Copy(purchaseListOrderRefs));
             this.items = Array.AsReadOnly(Copy(items));
             this.quoteRows = Array.AsReadOnly(Copy(quoteRows));
@@ -326,10 +295,18 @@ namespace PawnPilot
             }
             if (observedSource.Count != sourceItems.Count || observedTarget.Count != targetItems.Count) return false;
 
+            var expectedSourceOrder = new List<string>(CapacitySnapshot.SourceDirectItems.Count);
+            foreach (var item in CapacitySnapshot.SourceDirectItems) expectedSourceOrder.Add(item.ItemRef);
+            var expectedTargetOrder = new List<string>(CapacitySnapshot.TargetDirectItems.Count);
+            foreach (var item in CapacitySnapshot.TargetDirectItems) expectedTargetOrder.Add(item.ItemRef);
+            if (!SameOrder(observedSource, expectedSourceOrder) || !SameOrder(observedTarget, expectedTargetOrder)) return false;
+
             var nonOwnedSourceOrder = new List<string>();
             foreach (var itemRef in observedSource)
                 if (!sourceItems[itemRef].IsOwned) nonOwnedSourceOrder.Add(itemRef);
-            return SameOrder(nonOwnedSourceOrder, purchaseListOrderRefs);
+            if (MultiBuyEnabled) return SameOrder(nonOwnedSourceOrder, purchaseListOrderRefs);
+            if (purchaseListOrderRefs.Count != 1) return false;
+            return nonOwnedSourceOrder.Contains(purchaseListOrderRefs[0]);
         }
 
         private static bool SameCapacityFacts(CapacityItemSnapshot left, CapacityItemSnapshot right)
@@ -339,6 +316,9 @@ namespace PawnPilot
                 left.UnitCount != right.UnitCount || left.IsOwned != right.IsOwned ||
                 left.CallbackProfile != right.CallbackProfile || left.FeatureProfile != right.FeatureProfile ||
                 left.NestedProfile != right.NestedProfile || left.StackCallbackAbsent != right.StackCallbackAbsent ||
+                left.SlotSearchPassthroughAbsent != right.SlotSearchPassthroughAbsent ||
+                left.OccupiedGridCellsComplete != right.OccupiedGridCellsComplete ||
+                left.OccupiedGridCellIndexes.Count != right.OccupiedGridCellIndexes.Count ||
                 left.Shape == null || right.Shape == null) return false;
             var a = left.Shape; var b = right.Shape;
             if (a.Complete != b.Complete || a.Width != b.Width || a.Height != b.Height ||
@@ -346,39 +326,41 @@ namespace PawnPilot
                 a.Orientation != b.Orientation || a.OccupiedCells.Count != b.OccupiedCells.Count) return false;
             for (int i = 0; i < a.OccupiedCells.Count; i++)
                 if (a.OccupiedCells[i] != b.OccupiedCells[i]) return false;
+            for (int i = 0; i < left.OccupiedGridCellIndexes.Count; i++)
+                if (left.OccupiedGridCellIndexes[i] != right.OccupiedGridCellIndexes[i]) return false;
             return true;
         }
     }
 
     public sealed class PurchasePreflightDecision
     {
+        private int invocationClaimed;
         public bool Accepted { get; }
         public string Reason { get; }
         public string CommandId { get; }
         internal PurchaseRequest Request { get; }
-        internal PurchaseAuthorization Authorization { get; }
         internal PurchaseEvidence Evidence { get; }
 
         private PurchasePreflightDecision(bool accepted, string reason, PurchaseRequest request,
-            PurchaseAuthorization authorization, PurchaseEvidence evidence)
+            PurchaseEvidence evidence)
         {
             Accepted = accepted;
             Reason = reason;
             CommandId = request?.CommandId;
             Request = request;
-            Authorization = authorization;
             Evidence = evidence;
         }
 
-        internal bool Binds(PurchaseRequest request, PurchaseAuthorization authorization, PurchaseEvidence evidence) => Accepted &&
-            ReferenceEquals(Request, request) && ReferenceEquals(Authorization, authorization) &&
-            ReferenceEquals(Evidence, evidence);
+        internal bool Binds(PurchaseRequest request, PurchaseEvidence evidence) => Accepted &&
+            ReferenceEquals(Request, request) && ReferenceEquals(Evidence, evidence);
 
-        internal static PurchasePreflightDecision Allow(PurchaseRequest request, PurchaseAuthorization authorization,
-            PurchaseEvidence evidence) =>
-            new PurchasePreflightDecision(true, "preflight_passed", request, authorization, evidence);
+        internal bool TryClaimInvocation(PurchaseRequest request) => Accepted &&
+            ReferenceEquals(Request, request) && Interlocked.CompareExchange(ref invocationClaimed, 1, 0) == 0;
+
+        internal static PurchasePreflightDecision Allow(PurchaseRequest request, PurchaseEvidence evidence) =>
+            new PurchasePreflightDecision(true, "preflight_passed", request, evidence);
         internal static PurchasePreflightDecision Reject(string reason, PurchaseRequest request) =>
-            new PurchasePreflightDecision(false, reason ?? "preflight_rejected", request, null, null);
+            new PurchasePreflightDecision(false, reason ?? "preflight_rejected", request, null);
     }
 
     public static class PurchaseVerifier
@@ -386,14 +368,9 @@ namespace PawnPilot
         public const int MaxItems = 64;
         public const int MaxTextLength = 256;
 
-        // Production action registration remains separately disabled until Q/C/V and the
-        // runtime adapter pass review. A positive validation result is evidence, not dispatch.
-        public const bool ProductionDispatchEnabled = false;
-
-        public static PurchasePreflightDecision ValidatePreflight(PurchaseRequest request,
-            PurchaseAuthorization authorization, PurchaseEvidence before)
+        public static PurchasePreflightDecision ValidatePreflight(PurchaseRequest request, PurchaseEvidence before)
         {
-            string reason = ValidateRequestAndAuthorization(request, authorization);
+            string reason = ValidateRequest(request);
             if (reason != null) return PurchasePreflightDecision.Reject(reason, request);
             reason = ValidateCompleteEvidence(before, requirePreflightState: true);
             if (reason != null) return PurchasePreflightDecision.Reject(reason, request);
@@ -405,14 +382,13 @@ namespace PawnPilot
                 return Reject("customer_ref_mismatch", request);
             if (before.StorePhase != "OPEN" || before.CustomerPhase != "trading")
                 return Reject("business_not_trading", request);
-            if (before.UiStatus != "consistent" || before.UiCoverage != "verified" || before.Blockers.Count != 0)
-                return Reject("ui_not_verified", request);
+            if (!before.NativePurchaseReady) return Reject("native_purchase_state_unverified", request);
             if (before.OfferRef != request.OfferRef || before.CollectionFingerprint != request.CollectionFingerprint)
                 return Reject("offer_or_collection_ref_mismatch", request);
             if (before.QuoteStatus != "complete" || before.QuoteMode != "normal" || !before.DisplayedTotal.HasValue)
                 return Reject("normal_quote_unverified", request);
             if (before.DisplayedTotal.Value != request.Amount || request.Amount > request.MaxSpend ||
-                request.Amount > authorization.MaxSpend)
+                request.MaxSpend > before.Cash)
                 return Reject("spend_limit_or_amount_mismatch", request);
             if (before.Cash < request.Amount) return Reject("insufficient_cash", request);
             if (before.PurchaseListOrderRefs.Count > 1 && !before.MultiBuyEnabled)
@@ -421,41 +397,27 @@ namespace PawnPilot
                 return Reject("purchase_collection_mismatch", request);
             if (!QuoteBindsCollection(before)) return Reject("quote_binding_unverified", request);
             if (!before.PassedCapacity) return Reject("capacity_unproven", request);
-            return PurchasePreflightDecision.Allow(request, authorization, before);
+            return PurchasePreflightDecision.Allow(request, before);
         }
 
-        public static VerificationDecision Verify(PurchaseRequest request, PurchaseAuthorization authorization,
-            PurchaseEvidence before, PurchaseEvidence after, PurchaseInvocationLatch invocation)
+        public static VerificationDecision Verify(PurchaseRequest request, PurchaseEvidence before,
+            PurchaseEvidence after, PurchaseInvocationLatch invocation)
         {
-            if (invocation == null || !invocation.Binds(request, authorization, before))
+            if (invocation == null || !invocation.Binds(request, before))
                 return VerificationDecision.Uncertain("invocation_evidence_missing");
             if (!invocation.InvocationStarted || invocation.InvocationCount != 1 ||
                 !invocation.InvocationReturned || invocation.IsUncertain)
                 return VerificationDecision.Uncertain("invocation_not_cleanly_returned");
-            var preflight = ValidatePreflight(request, authorization, before);
+            var preflight = ValidatePreflight(request, before);
             if (!preflight.Accepted) return VerificationDecision.Uncertain("preflight_evidence_invalid:" + preflight.Reason);
             if (after == null || after.Status != "complete" || !after.ContainersComplete)
                 return VerificationDecision.Uncertain("post_evidence_incomplete");
             if (after.CommandId != request.CommandId) return VerificationDecision.Uncertain("command_id_mismatch");
             if (after.WorldEpoch != before.WorldEpoch || after.Scene != before.Scene)
                 return VerificationDecision.Uncertain("world_changed_after_invocation");
-            if (after.StorePhase != before.StorePhase)
-                return VerificationDecision.Uncertain("store_phase_changed_after_invocation");
-            if (after.OfferRef != request.OfferRef || after.CollectionFingerprint != request.CollectionFingerprint)
-                return VerificationDecision.Uncertain("purchase_binding_changed_after_invocation");
             if (after.TargetInventoryRef != before.TargetInventoryRef || after.SourceInventoryRef != before.SourceInventoryRef)
                 return VerificationDecision.Uncertain("inventory_target_changed_after_invocation");
             if (after.Revision <= before.Revision) return VerificationDecision.Uncertain("post_revision_not_advanced");
-            if (after.CustomerPresence == "present")
-            {
-                if (string.IsNullOrEmpty(after.CustomerRef) || after.CustomerRef != before.CustomerRef)
-                    return VerificationDecision.Uncertain("customer_replaced_after_invocation");
-            }
-            else if (after.CustomerPresence == "absent")
-            {
-                if (after.CustomerRef != null) return VerificationDecision.Uncertain("invalid_absent_customer_evidence");
-            }
-            else return VerificationDecision.Uncertain("customer_state_unverified_after_invocation");
 
             long expectedCash = (long)before.Cash - request.Amount;
             if (expectedCash < int.MinValue || expectedCash > int.MaxValue || after.Cash != expectedCash)
@@ -467,30 +429,22 @@ namespace PawnPilot
             return new VerificationDecision
             {
                 outcome = "succeeded",
-                reason = after.CustomerPresence == "absent"
-                    ? "purchase_settled_customer_dismissed" : "purchase_settled"
+                reason = "purchase_settled"
             };
         }
 
-        private static string ValidateRequestAndAuthorization(PurchaseRequest request,
-            PurchaseAuthorization authorization)
+        private static string ValidateRequest(PurchaseRequest request)
         {
-            if (request == null || authorization == null) return "authorization_missing";
+            if (request == null) return "request_missing";
             if (!ValidRef(request.CommandId) || !ValidRef(request.WorldEpoch) ||
                 string.IsNullOrEmpty(request.ExpectedVersion) || request.ExpectedVersion.Length > 256 ||
                 request.ExpectedRevision < 0 || !ValidRef(request.CustomerRef) || !ValidRef(request.OfferRef) ||
-                !ValidRef(request.CollectionFingerprint) || !ValidRef(request.AuthorizationRef) ||
+                !ValidRef(request.CollectionFingerprint) ||
                 request.Mode != "normal" || request.Amount < 0 || request.MaxSpend < 0 ||
                 request.Amount > request.MaxSpend || request.ItemRefs.Count < 1 || request.ItemRefs.Count > MaxItems)
                 return "invalid_request";
             if (request.ExpectedVersion != request.WorldEpoch + ":" + request.ExpectedRevision.ToString(CultureInfo.InvariantCulture))
                 return "invalid_request_version";
-            if (authorization.Reference != request.AuthorizationRef || authorization.WorldEpoch != request.WorldEpoch ||
-                authorization.CommandId != request.CommandId ||
-                authorization.CustomerRef != request.CustomerRef || authorization.OfferRef != request.OfferRef ||
-                authorization.CollectionFingerprint != request.CollectionFingerprint ||
-                authorization.MaxSpend != request.MaxSpend || !SequenceEqual(authorization.ItemRefs, request.ItemRefs))
-                return "authorization_ref_mismatch";
             return ValidateRefList(request.ItemRefs) ? null : "invalid_request_items";
         }
 
@@ -500,23 +454,25 @@ namespace PawnPilot
                 return "evidence_incomplete";
             if (!ValidRef(evidence.CommandId) || !ValidRef(evidence.WorldEpoch) || !ValidRef(evidence.Scene) ||
                 evidence.Revision < 0 || evidence.Version != evidence.WorldEpoch + ":" + evidence.Revision.ToString(CultureInfo.InvariantCulture) ||
-                evidence.StorePhase == null || evidence.StorePhase.Length > MaxTextLength || evidence.Cash < 0 ||
+                (requirePreflightState && (evidence.StorePhase == null || evidence.StorePhase.Length > MaxTextLength)) || evidence.Cash < 0 ||
                 (requirePreflightState && evidence.PurchaseListOrderRefs.Count < 1) || evidence.PurchaseListOrderRefs.Count > MaxItems ||
-                !ValidateRefList(evidence.PurchaseListOrderRefs) || !ValidRef(evidence.OfferRef) ||
+                !ValidateRefList(evidence.PurchaseListOrderRefs) ||
+                (requirePreflightState && (!ValidRef(evidence.OfferRef) || !ValidRef(evidence.CollectionFingerprint))) ||
                 !ValidRef(evidence.TargetInventoryRef) || !ValidRef(evidence.SourceInventoryRef) ||
-                !ValidRef(evidence.CollectionFingerprint)) return "evidence_invalid";
+                (requirePreflightState && !ValidRef(evidence.CollectionFingerprint))) return "evidence_invalid";
             if (evidence.Items.Count > MaxItems || evidence.QuoteRows.Count > MaxItems || evidence.Blockers.Count > 16)
                 return "evidence_limit_exceeded";
-            if (!ValidRef(evidence.CustomerRef) && evidence.CustomerPresence != "absent") return "evidence_invalid_customer";
+            if (requirePreflightState && !ValidRef(evidence.CustomerRef)) return "evidence_invalid_customer";
             if (requirePreflightState && evidence.Cash < 0) return "evidence_invalid_cash";
             var items = new Dictionary<string, PurchaseItemEvidence>(StringComparer.Ordinal);
+            var nativeIdentities = requirePreflightState ? new HashSet<string>(StringComparer.Ordinal) : null;
             foreach (var item in evidence.Items)
             {
                 if (item == null || !ValidRef(item.ItemRef) || !ValidContainer(item.Container) || item.Units < 1 ||
-                    string.IsNullOrWhiteSpace(item.StateFingerprint) || item.StateFingerprint.Length > MaxTextLength ||
+                    (requirePreflightState && (string.IsNullOrWhiteSpace(item.StateFingerprint) || item.StateFingerprint.Length > MaxTextLength)) ||
                     items.ContainsKey(item.ItemRef))
                     return "inventory_evidence_invalid";
-                if ((item.Container == "back" || item.Container == "player") && item.CapacityFacts == null)
+                if (requirePreflightState && (item.Container == "back" || item.Container == "player") && item.CapacityFacts == null)
                     return "inventory_capacity_facts_missing";
                 if (item.CapacityFacts != null &&
                     (item.CapacityFacts.ItemRef != item.ItemRef || item.CapacityFacts.UnitCount != item.Units ||
@@ -525,18 +481,37 @@ namespace PawnPilot
                      item.CapacityFacts.ParentInventoryRef != (item.Container == "back" ? evidence.SourceInventoryRef :
                          item.Container == "player" ? evidence.TargetInventoryRef : null)))
                     return "inventory_capacity_fact_mismatch";
+                if (requirePreflightState && (item.Container == "back" || item.Container == "player") &&
+                    (!ValidRef(item.IdentityKey) || !nativeIdentities.Add(item.IdentityKey)))
+                    return "inventory_identity_invalid";
                 items.Add(item.ItemRef, item);
             }
             foreach (string itemRef in evidence.PurchaseListOrderRefs)
             {
                 if (!items.TryGetValue(itemRef, out var item) || item.Container != "back" || item.Owned)
                     return "purchase_item_source_mismatch";
+                if (requirePreflightState && !ValidRef(item.IdentityKey)) return "purchase_item_identity_missing";
             }
             var observedNonOwnedBackOrder = new List<string>();
             foreach (var item in evidence.Items)
                 if (item.Container == "back" && !item.Owned) observedNonOwnedBackOrder.Add(item.ItemRef);
-            if (!SequenceEqual(observedNonOwnedBackOrder, evidence.PurchaseListOrderRefs))
-                return "purchase_collection_not_complete";
+            if (requirePreflightState)
+            {
+                if (evidence.MultiBuyEnabled)
+                {
+                    if (!SequenceEqual(observedNonOwnedBackOrder, evidence.PurchaseListOrderRefs))
+                        return "purchase_collection_not_complete";
+                }
+                else
+                {
+                    // With multi-buy disabled, the native handler consumes exactly its selected
+                    // row (falling back to the first non-owned source item). The quote reader has
+                    // already bound that one-item list to the visible selection.
+                    if (evidence.PurchaseListOrderRefs.Count != 1 ||
+                        !observedNonOwnedBackOrder.Contains(evidence.PurchaseListOrderRefs[0]))
+                        return "purchase_collection_not_complete";
+                }
+            }
             foreach (var row in evidence.QuoteRows)
                 if (row == null || !ValidRef(row.ItemRef) || !row.Amount.HasValue || row.Amount.Value < 0)
                     return "quote_evidence_invalid";
@@ -545,16 +520,8 @@ namespace PawnPilot
 
         private static bool QuoteBindsCollection(PurchaseEvidence evidence)
         {
-            if (evidence.QuoteRows.Count != evidence.PurchaseListOrderRefs.Count || !evidence.DisplayedTotal.HasValue)
-                return false;
-            long sum = 0;
-            for (int i = 0; i < evidence.PurchaseListOrderRefs.Count; i++)
-            {
-                if (evidence.QuoteRows[i].ItemRef != evidence.PurchaseListOrderRefs[i]) return false;
-                sum += evidence.QuoteRows[i].Amount.Value;
-                if (sum > int.MaxValue) return false;
-            }
-            return sum == evidence.DisplayedTotal.Value && sum <= int.MaxValue;
+            return evidence.QuoteBindingVerified && evidence.DisplayedTotal.HasValue &&
+                evidence.DisplayedTotal.Value >= 0 && evidence.QuoteRows.Count <= MaxItems;
         }
 
         private static string ValidateInventoryTransition(PurchaseRequest request,
@@ -563,35 +530,58 @@ namespace PawnPilot
             string afterShapeReason = ValidateCompleteEvidence(after, requirePreflightState: false);
             if (afterShapeReason != null) return "post_" + afterShapeReason;
             var beforeByRef = new Dictionary<string, PurchaseItemEvidence>(StringComparer.Ordinal);
+            var beforeInventoryIdentities = new HashSet<string>(StringComparer.Ordinal);
             var afterByRef = new Dictionary<string, PurchaseItemEvidence>(StringComparer.Ordinal);
-            foreach (var item in before.Items) beforeByRef.Add(item.ItemRef, item);
-            foreach (var item in after.Items) afterByRef.Add(item.ItemRef, item);
-            var targets = new HashSet<string>(request.ItemRefs, StringComparer.Ordinal);
-
-            foreach (string target in request.ItemRefs)
-                if (!afterByRef.ContainsKey(target)) return "target_identity_missing";
-            if (beforeByRef.Count != afterByRef.Count) return "unexpected_inventory_membership_change";
-            foreach (var pair in beforeByRef)
+            var afterByIdentity = new Dictionary<string, PurchaseItemEvidence>(StringComparer.Ordinal);
+            foreach (var item in before.Items)
             {
-                if (!afterByRef.TryGetValue(pair.Key, out var afterItem))
-                    return targets.Contains(pair.Key) ? "target_identity_missing" : "unexpected_inventory_membership_change";
-                var beforeItem = pair.Value;
-                if (targets.Contains(pair.Key))
+                beforeByRef.Add(item.ItemRef, item);
+                if ((item.Container == "back" || item.Container == "player") && ValidRef(item.IdentityKey))
+                    beforeInventoryIdentities.Add(item.IdentityKey);
+            }
+            foreach (var item in after.Items)
+            {
+                afterByRef.Add(item.ItemRef, item);
+                if (ValidRef(item.IdentityKey) && afterByIdentity.ContainsKey(item.IdentityKey))
+                    return "target_identity_duplicated";
+                if (ValidRef(item.IdentityKey)) afterByIdentity.Add(item.IdentityKey, item);
+                if (item.Container == "back" || item.Container == "player")
                 {
-                    if (beforeItem.Container != "back" || beforeItem.Owned || beforeItem.Units < 1)
-                        return "target_before_state_mismatch";
-                    if (afterItem.Container != "player" || !afterItem.Owned || afterItem.Units != beforeItem.Units ||
-                        afterItem.StateFingerprint != beforeItem.StateFingerprint)
-                        return "target_transfer_incomplete_or_partial";
+                    if (ValidRef(item.IdentityKey))
+                    {
+                        if (!beforeInventoryIdentities.Contains(item.IdentityKey))
+                            return "unexpected_inventory_item_identity";
+                    }
+                    else if (!beforeByRef.TryGetValue(item.ItemRef, out var previous) ||
+                        (previous.Container != "back" && previous.Container != "player") ||
+                        ValidRef(previous.IdentityKey))
+                        return "inventory_item_identity_missing";
                 }
-                else if (afterItem.Container != beforeItem.Container || afterItem.Owned != beforeItem.Owned ||
-                    afterItem.Units != beforeItem.Units || afterItem.StateFingerprint != beforeItem.StateFingerprint)
-                    return "unexpected_non_target_item_change";
+            }
+            foreach (string target in request.ItemRefs)
+            {
+                if (!beforeByRef.TryGetValue(target, out var beforeItem) || beforeItem.Container != "back" ||
+                    beforeItem.Owned || !ValidRef(beforeItem.IdentityKey)) return "target_before_state_mismatch";
+                if (!afterByIdentity.TryGetValue(beforeItem.IdentityKey, out var afterItem)) return "target_identity_missing";
+                if (afterItem.Container != "player" || !afterItem.Owned || afterItem.Units != beforeItem.Units)
+                    return "target_transfer_incomplete_or_partial";
             }
 
-            // The request is bound to the complete non-owned back-counter set, not a subset.
-            // A non-empty post set therefore means an unpurchased target or extra stock appeared.
-            if (after.PurchaseListOrderRefs.Count != 0) return "unrequested_back_items_remain";
+            var requestedRefs = new HashSet<string>(request.ItemRefs, StringComparer.Ordinal);
+            foreach (var beforeItem in before.Items)
+            {
+                if ((beforeItem.Container != "back" && beforeItem.Container != "player") ||
+                    requestedRefs.Contains(beforeItem.ItemRef)) continue;
+
+                PurchaseItemEvidence afterItem;
+                bool found = ValidRef(beforeItem.IdentityKey)
+                    ? afterByIdentity.TryGetValue(beforeItem.IdentityKey, out afterItem)
+                    : afterByRef.TryGetValue(beforeItem.ItemRef, out afterItem);
+                if (!found) return "existing_inventory_item_missing";
+                if (afterItem.Container != beforeItem.Container || afterItem.Owned != beforeItem.Owned ||
+                    afterItem.Units != beforeItem.Units)
+                    return "existing_inventory_item_changed";
+            }
             return null;
         }
 
@@ -629,37 +619,32 @@ namespace PawnPilot
     public sealed class PurchaseInvocationLatch
     {
         private readonly PurchaseRequest request;
-        private readonly PurchaseAuthorization authorization;
         private readonly PurchasePreflightDecision preflight;
-        private bool invocationStarted;
+        private int invocationStarted;
         private bool invocationReturned;
         private bool uncertain;
 
-        public bool InvocationStarted => invocationStarted;
+        public bool InvocationStarted => Volatile.Read(ref invocationStarted) != 0;
         public bool InvocationReturned => invocationReturned;
         public bool IsUncertain => uncertain;
-        public int InvocationCount => invocationStarted ? 1 : 0;
+        public int InvocationCount => InvocationStarted ? 1 : 0;
 
-        internal PurchaseInvocationLatch(PurchaseRequest request, PurchaseAuthorization authorization,
-            PurchasePreflightDecision preflight)
+        internal PurchaseInvocationLatch(PurchaseRequest request, PurchasePreflightDecision preflight)
         {
             this.request = request;
-            this.authorization = authorization;
             this.preflight = preflight;
         }
 
-        internal bool Binds(PurchaseRequest requested, PurchaseAuthorization authorized, PurchaseEvidence evidence) =>
-            ReferenceEquals(request, requested) && ReferenceEquals(authorization, authorized) &&
-            preflight != null && preflight.Binds(requested, authorized, evidence);
+        internal bool Binds(PurchaseRequest requested, PurchaseEvidence evidence) =>
+            ReferenceEquals(request, requested) && preflight != null && preflight.Binds(requested, evidence);
 
         public bool InvokeOnce(string requestedCommandId, Action nativeEntry)
         {
-            if (invocationStarted || request == null || authorization == null || preflight == null ||
-                !preflight.Binds(request, authorization, preflight.Evidence) ||
+            if (request == null || preflight == null || !preflight.Binds(request, preflight.Evidence) ||
                 requestedCommandId != request.CommandId || nativeEntry == null)
                 return false;
-            if (!authorization.TryConsume(request.CommandId)) return false;
-            invocationStarted = true;
+            if (!preflight.TryClaimInvocation(request)) return false;
+            if (Interlocked.CompareExchange(ref invocationStarted, 1, 0) != 0) return false;
             try
             {
                 nativeEntry();
@@ -675,7 +660,7 @@ namespace PawnPilot
 
         public void MarkOutcomeUnknown()
         {
-            if (invocationStarted) uncertain = true;
+            if (InvocationStarted) uncertain = true;
         }
     }
 }

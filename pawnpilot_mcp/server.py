@@ -20,7 +20,7 @@ import bridge.client as broker_client
 from bridge.client import ResponseError, request
 from bridge.protocol import (WIRE_VERSION_V3, MAX_V3_MESSAGE_BYTES,
                               response_size_valid, strict_json_loads, valid_close_menu_evidence,
-                              valid_close_menu_evidence_v3, valid_progress,
+                              valid_success_evidence_v3, valid_progress,
                               valid_result_structure, valid_result_structure_v3,
                               valid_snapshot, valid_snapshot_v3)
 
@@ -37,7 +37,7 @@ class StrictModel(BaseModel):
 
 
 class CloseMenuArguments(StrictModel):
-    """The only production action currently supported; it accepts no parameters."""
+    """An action with no parameters (close_menu, start_business, receive, etc.)."""
 
 
 class ActionArgumentsV3(StrictModel):
@@ -50,7 +50,6 @@ class ActionArgumentsV3(StrictModel):
     mode: str | None = None
     amount: int | None = Field(default=None, strict=True, ge=0, le=2147483647)
     max_spend: int | None = Field(default=None, strict=True, ge=0, le=2147483647)
-    authorization_ref: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -83,7 +82,7 @@ class LegalAction(StrictModel):
 class LegalActionV3(StrictModel):
     action: Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                     "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
-                    "refuse_trade", "dismiss_customer"]
+                    "dismiss_customer", "purchase_visible_offer"]
     arguments: dict[str, Any]
 
 
@@ -333,7 +332,7 @@ class ObserveReply(ToolReply):
     snapshot: SnapshotUnion | None = None
     legal_actions: list[Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                                  "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
-                                 "refuse_trade", "dismiss_customer"]] = Field(default_factory=list, max_length=9)
+                                 "refuse_trade", "dismiss_customer", "purchase_visible_offer"]] = Field(default_factory=list, max_length=9)
     wait_reason: str | None = None
     manual_action_required: bool = False
 
@@ -408,7 +407,7 @@ class ActionEvidenceV3(StrictModel):
         if not valid_result_structure_v3(value, require_execution=False):
             raise ValueError("invalid_v3_result")
         if (type(value) is dict and value.get("status") == "succeeded"
-                and not valid_close_menu_evidence_v3(value.get("before"), value.get("after"))):
+                and not valid_success_evidence_v3(value.get("before"), value.get("after"))):
             raise ValueError("invalid_v3_success_evidence")
         return value
 
@@ -824,7 +823,10 @@ def health_check() -> HealthReply:
     can_act = _state_can_act(snap)
     blocking_reason = None if can_act else (
         snap.blocking_reason or (state.not_ready_reason if state else None)
-        or ("menu_not_open" if state and state.ready and not state.can_close_menu else None))
+        or ("no_legal_actions" if state and state.schema_version == 3 and state.ready
+            and not state.legal_actions else None)
+        or ("menu_not_open" if state and state.schema_version == 2 and state.ready
+            and not state.can_close_menu else None))
     return HealthReply(ok=True, error_source="none", protocol_compatible=True,
                        broker_connected=True, bridge_connected=snap.connected,
                        loaded=bool(state and state.loaded), ready=bool(state and state.ready),
@@ -839,7 +841,7 @@ def health_check() -> HealthReply:
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False))
 def observe() -> ObserveReply:
-    """Read the current v2 snapshot and project its currently legal supported actions."""
+    """Read the current versioned snapshot and project its currently legal supported actions."""
     try:
         snap = _snapshot()
     except AdapterError as exc:
@@ -866,7 +868,7 @@ def act(schema_version: Annotated[Literal[2, 3], BeforeValidator(_exact_schema_2
         command_id: Annotated[str, Field(min_length=1, max_length=128, pattern=_COMMAND_ID)],
         action: Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                         "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
-                        "refuse_trade", "dismiss_customer"],
+                        "refuse_trade", "dismiss_customer", "purchase_visible_offer"],
         arguments: CloseMenuArguments | ActionArgumentsV3,
         broker_epoch: Annotated[str, Field(min_length=1, max_length=128)],
         expected_world_epoch: Annotated[str, Field(min_length=1, max_length=128)],

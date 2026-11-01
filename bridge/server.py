@@ -21,7 +21,7 @@ try:
                            valid_request, valid_result_structure, valid_snapshot,
                            valid_success_result, valid_command_v3, valid_request_v3,
                            valid_result_structure_v3, valid_snapshot_v3, valid_success_result_v3,
-                           valid_action_binding_v3,
+                           valid_action_binding_v3, valid_action_state_v3, V3_PRODUCTION_ACTIONS,
                            strict_json_loads)
 except ImportError:  # Support the existing `python bridge/server.py` launch path.
     from journal import Journal, JournalError
@@ -32,7 +32,7 @@ except ImportError:  # Support the existing `python bridge/server.py` launch pat
                           valid_request, valid_result_structure, valid_snapshot,
                           valid_success_result, valid_command_v3, valid_request_v3,
                           valid_result_structure_v3, valid_snapshot_v3, valid_success_result_v3,
-                          valid_action_binding_v3,
+                          valid_action_binding_v3, valid_action_state_v3, V3_PRODUCTION_ACTIONS,
                           strict_json_loads)
 
 PORT = 18765
@@ -373,7 +373,7 @@ class Broker:
                 return self._command_reply(old)
             if version == WIRE_VERSION and (body["action"] != ACTION or body["arguments"] != {}):
                 raise ProtocolError(400, "action_not_allowed")
-            if version == WIRE_VERSION_V3 and (body["action"] != ACTION or body["arguments"] != {}):
+            if version == WIRE_VERSION_V3 and body["action"] not in V3_PRODUCTION_ACTIONS:
                 raise ProtocolError(400, "action_not_allowed")
             if self.closed or not self._connected():
                 raise ProtocolError(503, "game_disconnected")
@@ -399,11 +399,17 @@ class Broker:
             if version == WIRE_VERSION_V3 and not valid_action_binding_v3(
                     self.state["business"], body["action"], body["arguments"]):
                 raise ProtocolError(409, "stale_business_reference")
+            if version == WIRE_VERSION_V3 and not valid_action_state_v3(
+                    self.state, body["action"], body["arguments"]):
+                raise ProtocolError(409, "precondition")
             now_wall = self.clock()
             now_monotonic = self.monotonic()
             request = copy.deepcopy(body)
+            action_timeout_ms = {"start_business": 15_000,
+                                 "receive_next_customer": 30_000}.get(body["action"], 0)
+            execution_timeout_ms = max(self.execution_timeout_ms, action_timeout_ms)
             command = dict(request, start_deadline_unix_ms=int((now_wall + self.ttl) * 1000),
-                           execution_timeout_ms=self.execution_timeout_ms)
+                           execution_timeout_ms=execution_timeout_ms)
             if not self._command_valid(command, version):
                 raise ProtocolError(500, "invalid_broker_command")
             now_ms = int(now_wall * 1000)

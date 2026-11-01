@@ -23,6 +23,7 @@ namespace PawnPilot
         private readonly ReadyFrameTracker readyFrames = new ReadyFrameTracker();
         private readonly BusinessProjection businessProjection = new BusinessProjection();
         private GameBusinessActions businessActions;
+        private GamePurchaseActions purchaseActions;
         private UnityWebRequest current;
         private bool stopped, subscribed;
         private int activeSceneHandle = -1;
@@ -107,6 +108,7 @@ namespace PawnPilot
             log = logger;
             actionDriver = new ActionDriver(gate);
             businessActions = new GameBusinessActions(businessProjection);
+            purchaseActions = new GamePurchaseActions(businessProjection);
             ModHook.OnGameLoadedLate += OnGameLoaded;
             SceneManager.activeSceneChanged += SceneChanged;
             activeSceneHandle = SceneManager.GetActiveScene().handle;
@@ -296,6 +298,7 @@ namespace PawnPilot
                 schema_version = Protocol.BusinessSchemaVersion,
                 world_epoch = worldVersion.Epoch,
                 revision = worldVersion.Revision,
+                version = worldVersion.Epoch + ":" + worldVersion.Revision,
                 scene = scene.name, loaded = loaded, ready = ready,
                 cash = loaded ? PlayerStore.Instance.GetCash() : 0,
                 phase = latestReadiness.phase,
@@ -318,6 +321,39 @@ namespace PawnPilot
             state.interaction.operable = ready && state.interaction.consistency == "consistent";
             if (state.can_close_menu)
                 state.legal_actions.Add(new LegalAction { action = "close_menu", arguments = new ActionArguments() });
+            if (ready && !open)
+            {
+                state.legal_actions.AddRange(businessActions.BuildLegalActions(state));
+                var purchase = purchaseActions.GetLegalAction(state);
+                var purchaseCandidate = state.business.details.candidates.Find(candidate => candidate.action == "purchase_visible_offer");
+                if (purchaseCandidate != null)
+                {
+                    purchaseCandidate.status = purchase == null ? "blocked" : "candidate";
+                    purchaseCandidate.reason = purchase == null ? purchaseActions.LastUnavailableReason ?? "purchase_preflight_unverified" : "native_preflight_verified";
+                }
+                if (purchase != null)
+                {
+                    state.legal_actions.Add(purchase);
+                    state.business.details.capacity.status = "sufficient";
+                    state.business.details.capacity.reason = "native_grid_placement_verified";
+                    state.business.details.capacity.scope = "current_normal_purchase";
+                    state.business.details.eligibility.purchase_enabled = true;
+                    state.business.details.eligibility.missing.Clear();
+                }
+                else
+                {
+                    state.business.details.eligibility.missing = new List<string> { purchaseActions.LastUnavailableReason ?? "purchase_preflight_unverified" };
+                    if (purchaseActions.LastUnavailableReason?.StartsWith("capacity_", StringComparison.Ordinal) == true)
+                    {
+                        state.business.details.capacity.reason = purchaseActions.LastUnavailableReason;
+                        state.business.details.capacity.scope = "current_normal_purchase";
+                        if (purchaseActions.LastUnavailableReason == "capacity_capacityinsufficient" ||
+                            purchaseActions.LastUnavailableReason == "capacity_lockedtarget")
+                            state.business.details.capacity.status = "insufficient";
+                    }
+                }
+            }
+            state.interaction.operable = ready && !open && state.legal_actions.Count > 0;
             state.revision = 0;
             state.version = null;
             string signature = ToJson(state);
@@ -327,6 +363,7 @@ namespace PawnPilot
                 state.interaction.consistency = "unverified";
                 state.interaction.reason = "snapshot_size_limit";
                 state.interaction.operable = false;
+                state.legal_actions.RemoveAll(action => action.action != "close_menu");
                 signature = ToJson(state);
             }
             state.version = worldVersion.Observe(signature);
@@ -346,12 +383,14 @@ namespace PawnPilot
         private void InvokeNativeAction(Command command)
         {
             if (command.action == "close_menu") { ResumeMenu(); return; }
+            if (command.action == "purchase_visible_offer") { purchaseActions.Invoke(command, Capture()); return; }
             // The adapter rechecks local native evidence. A wire candidate never enables it.
             businessActions.Invoke(command, Capture());
         }
 
         private VerificationDecision VerifyAction(Command command, Snapshot before, Snapshot after) =>
             command.action == "close_menu" ? ActionGate.VerifyCloseMenu(command, before, after) :
+            command.action == "purchase_visible_offer" ? purchaseActions.Verify(command, before, after) :
             businessActions.Verify(command, before, after);
 
         private static long MonotonicMilliseconds() =>

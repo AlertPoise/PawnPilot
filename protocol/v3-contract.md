@@ -6,7 +6,8 @@ No historical snapshot/result is relabelled. Broker accepts v2 and v3 sessions, 
 snapshot/command/result versions. MCP models explicitly distinguish both versions.
 
 v3 retains v2 envelopes and canonical request hashing. The only snapshot shape change is
-`business`: the five v2 keys plus mandatory `details` (business schema_version 1).
+`business`: the five v2 keys plus mandatory `details`. The broker reads both historical business
+details schema 1 and current schema 2; the outer wire version remains 3.
 The authoritative field names are `Runtime/BusinessState.cs`; all fields including nullable ones
 are serialized, collections are bounded to 64 items/rows and 3 containers, and text to 256 characters.
 `support` is unsupported / partial / available. Partial observations are never economic authority.
@@ -29,6 +30,17 @@ offer/collection/dialogue refs. Direct collection references must exactly match 
 Unknown/filtered containers are not represented as complete empty containers. Item identity follows
 reference identity, never name, price, list position or a mutating game ID getter.
 
+Current business details schema 2 adds `front_collection_fingerprint` for the exact front collection,
+and `customer.dialogue_text`, `is_typing`, `waiting_for_advance`, plus ordered visible `options` with
+text. `option_refs` remains for compatibility and must equal the option references in the same order.
+`quote.wholesale_total` is separate from `displayed_total`; the latter is always the normal OnBuyAll
+total used by `purchase_visible_offer`.
+Schema 1 remains strict and readable for existing journal results. In schema 2, the top-level
+`business.item_refs` and `collection_fingerprint` identify the current native purchase subset
+(non-owned back items, in native order); `back.item_refs` and `items` continue to describe the full
+back collection, including player-owned objects. `prepare_purchase_items` binds to the front list and
+`front_collection_fingerprint` instead.
+
 `shape_status=known` describes the current orientation-aware bounding width/height only, not the
 occupied-cell mask, grid placement, transfer rule or proven receiving capacity. Runtime capture
 uses a stricter conservative escaped-text budget than the wire maximum and degrades oversized
@@ -38,6 +50,8 @@ Action argument extension (v3 only): optional `dialogue_ref`, `mode`, `amount`, 
 `authorization_ref`, in addition to the five existing optional fields. Amount/max_spend are nonnegative
 integers, not bool. Strings use the reference grammar. Explicit null and extra properties are rejected.
 Fingerprint includes every supplied argument, with normal sorted canonical JSON, and ordered arrays.
+Production action shapes are action-specific. In particular `purchase_visible_offer` does not accept or
+require `authorization_ref`; the field remains only in the generic fingerprinted request vocabulary.
 
 Registered non-economic/business-interaction policies:
 - close_menu: {}; user-directed diagnostic only, never automatic pause recovery.
@@ -51,25 +65,27 @@ Registered non-economic/business-interaction policies:
 - dismiss_customer: customer_ref.
 
 Registration does not establish runtime availability. A command must exactly match a legal_actions
-entry of the same snapshot, pass the action's pure policy, then pass the native adapter immediately
-before its single invocation. The snapshot must provide verified scene-specific UI/callback evidence;
-unknown coverage remains closed. Any native boundary may have effects, including dialogue callbacks.
-Postconditions are action-specific and immutable evidence is retained under the existing ACK/unknown rules.
-In this PARTIAL build **all new business policies remain disabled**; the actual v3 command/dispatch
-and legal_actions allowlist contains only close_menu. The listed business arguments can be validated
-and fingerprinted as candidates/rejected requests, but cannot reach a native call.
+entry of the same snapshot, pass that action's snapshot-local reference and phase checks, then pass the
+native adapter immediately before its single invocation. Actions are enabled independently; unrelated
+observation completeness does not close opening or receiving. `refuse_trade` and `cancel_confirmation` remain descriptive and
+are not enabled for production dispatch. `purchase_visible_offer` additionally requires a
+schema 2 complete normal quote, the current non-owned back subset, sufficient capacity, fresh cash, and
+the current customer. A candidate alone never makes an action executable. Postconditions are
+action-specific and immutable evidence is retained under the existing ACK/unknown rules.
 
 `wait_for_update(operable)` preserves v2's basic UI/lifecycle meaning. It is not an assertion that
 legal_actions is nonempty; every write still requires a fresh legal entry and its own policy.
 
-`purchase_visible_offer` arguments: customer_ref, offer_ref, item_refs, collection_fingerprint, mode
-(normal), amount, max_spend, authorization_ref. **Not production-enabled** until Q/C/V and runtime
-scope are independently established. Purchase preflight/verifier are developed independently; neither
-candidate data nor an agent-supplied spending limit can enable the native dispatch.
+`purchase_visible_offer` arguments: customer_ref, offer_ref, item_refs, collection_fingerprint,
+mode (`normal`), amount, max_spend. The amount must equal the current normal total, and `amount <= max_spend <= cash`.
+No separate approval token is required; exact current snapshot legality and the native purchase
+preflight/verifier remain mandatory.
 
-v2 validators, schema and fixture remain unchanged. Strict v3 schemas and tests must reject unknown
-keys, cross-version results, invalid collection references, nonmatching legal arguments, and claims
-of economic availability without the production policy. No generic unknown reconciliation is added.
+v2 validators, schema and fixture remain unchanged. Strict v3 schemas and tests reject unknown keys,
+cross-version results, invalid collection references, and legal arguments that do not exactly match
+the current snapshot. Business schema 1 retains its original stricter quote semantics; schema 2 scopes
+quote validity to the visible normal total and current purchasable subset. No generic unknown
+reconciliation is added.
 
 ## Transport size budgets
 
@@ -84,4 +100,8 @@ HTTP clients may omit `X-PawnPilot-Wire-Version` for requests no larger than 64 
 request must predeclare `X-PawnPilot-Wire-Version: 3`; if present, the header must be `2` or `3`
 and must match the body's exact integer `schema_version`. Requests over 256 KiB are rejected.
 
-Container `complete` describes direct-member enumeration and local geometry/known-mask checks only. It does not assert global unobstructed visibility. With UI `unverified` / `known_roots_only`, returned item attributes and quote rows remain candidates; global visibility and minimum exposure are unresolved. No business write is enabled from these candidates.
+Container `complete` describes direct-member enumeration and local geometry/known-mask checks only,
+not global unobstructed visibility. UI `unverified` / `known_roots_only` reports unresolved global
+coverage, without vetoing independently checked native actions. Current normal quote binding and
+known action-specific blockers are evaluated locally. Descriptive candidates never authorize a write;
+only the current legal action plus native preflight does.

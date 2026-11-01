@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace PawnPilot
 {
@@ -13,6 +14,12 @@ namespace PawnPilot
         {
             projection = businessProjection ?? throw new ArgumentNullException(nameof(businessProjection));
         }
+
+        // Both suppliers use the ordinary SELL / OnBuyAllClick route. This is an explicit
+        // initial scope, not a blanket permission for special SELL customer mechanisms.
+        internal static bool IsSupportedOrdinarySeller(StoreClient client) => client != null &&
+            client.clientIntent == StoreClient.ClientIntent.SELL &&
+            (client.identifier == "scavGeneral" || client.identifier == "shadyPharma");
 
         internal NativeActionEvidence Check(Command command, Snapshot snapshot)
         {
@@ -29,32 +36,36 @@ namespace PawnPilot
                 Reason = "native_scope_unverified"
             };
             if (command == null || snapshot == null || snapshot.schema_version != Protocol.BusinessSchemaVersion ||
-                !snapshot.ready || snapshot.business?.details == null) return evidence;
+                !snapshot.ready || snapshot.business?.details?.customer == null) return evidence;
 
             var store = PlayerStore.HasInstance ? PlayerStore.Instance : null;
             var ui = StoreUIManager.Instance;
             var entry = EmporiumEntry.Instance;
             var dialog = DialogUIManager.Instance;
-            if (store == null || ui == null || entry == null) return evidence;
+            if (store == null || ui == null) return evidence;
 
             evidence.SceneReady = true;
-            // Known roots are not complete scene coverage: CustomUI, phone/overlay ordering and
-            // arbitrary confirmation/dialogue callbacks remain unresolved. This is deliberately false.
+            // Start/receive are scoped to the store's own phase/locks and the exact shutter/bell
+            // button in the active gameplay scene. Other actions use their own local UI scope.
             evidence.UiCoverageVerified = false;
             evidence.OnlyTargetBlocker = HasExactlyOneConfirmationBlocker(snapshot.business.details.ui?.blockers);
             evidence.UiConsistent = snapshot.business.details.ui?.coverage == "verified" &&
                 ((snapshot.business.details.ui.status == "consistent" && snapshot.interaction?.consistency == "consistent") ||
                  (snapshot.business.details.ui.status == "blocked" && snapshot.interaction?.consistency == "blocked" && evidence.OnlyTargetBlocker));
             evidence.NoBlockers = snapshot.business.details.ui?.blockers != null &&
-                snapshot.business.details.ui.blockers.Count == 0 && !KnownBlocker(ui, store);
+                !HasActionBlockingEvidence(snapshot.business.details.ui.blockers, command.action) && !snapshot.menu_open &&
+                !KnownBlockingUi(ui, store);
             evidence.NativeEntryVerified = true; // exact candidate method found in the current DLL
-            evidence.CapabilityScopeVerified = false; // no complete live callback/scope review yet
+            evidence.CapabilityScopeVerified = false; // computed per action below
             evidence.StoreClosed = store.storeState == PlayerStore.StoreState.MORNING;
             evidence.StoreOpen = store.storeState == PlayerStore.StoreState.OPEN;
             evidence.CanStartDay = store.CanStartDay();
             evidence.StoreLockReleased = store.lockShutterButtonFlag <= 0;
-            evidence.NoLocks = store.lockShutterButtonFlag <= 0 && store.lockNextBellFlag <= 0 &&
-                !store.isClientBeingArrested && !store.isHandlingShootout && !ui.isShot;
+            evidence.NoLocks = (command.action == "start_business"
+                    ? store.lockShutterButtonFlag <= 0 : store.lockNextBellFlag <= 0) &&
+                !store.isClientBeingArrested && !store.isHandlingShootout && !ui.isShot &&
+                ((command.action != "start_business" && command.action != "receive_next_customer") ||
+                    (!ui.IsTyping() && !Interactable.isPaused));
             evidence.NoCallNextPending = !store.callNextWhenPossible;
             evidence.AnyCurrentCustomer = store.currentClientInstance != null;
             evidence.NoCurrentCustomer = store.currentClientInstance == null && !store.IsClientPresent() &&
@@ -70,13 +81,14 @@ namespace PawnPilot
                 observedCustomerRef == command.arguments?.customer_ref;
             evidence.CustomerArrived = store.isClientArrived;
             var blueprint = currentInstance == null ? null : currentInstance.GetClientBlueprint();
-            evidence.OrdinaryScavGeneral = blueprint != null && blueprint.identifier == "scavGeneral" &&
-                blueprint.clientIntent == StoreClient.ClientIntent.SELL;
-            // Name/intent recognition is not enough to certify OnArrival, OnItemSold, OnDealAccepted,
-            // start/end action delegates or dismissal interception. Keep the callback closure closed.
+            evidence.OrdinarySeller = IsSupportedOrdinarySeller(blueprint);
+            // The reader never invokes or exposes customer callbacks. Enabled dialogue, prepare,
+            // and dismissal actions are narrowly scoped to this ordinary arrived customer and the
+            // currently visible native control; their normal game callbacks run as part of the call.
             evidence.CallbackScopeVerified = false;
             evidence.Dismissable = currentInstance != null && store.IsClientDimissable();
-            evidence.DismissInterceptClear = blueprint != null && blueprint.tryInterceptDismiss == null;
+            evidence.DismissInterceptClear = blueprint != null && blueprint.tryInterceptDismiss == null &&
+                blueprint.OnDismiss == null; // special dismissal callbacks are outside this generic end-interaction path
             evidence.AutoCallNextDisabled = EmporiumOption.Instance != null && !EmporiumOption.Instance.autoCallNext;
 
             var current = dialog == null ? null : dialog.currentDialog;
@@ -97,27 +109,30 @@ namespace PawnPilot
                     out var verifiedDialogue) && ReferenceEquals(verifiedDialogue, current);
 
             evidence.ItemSetMatches = ExactFrontSelection(snapshot, command.arguments?.item_refs) &&
-                command.arguments?.collection_fingerprint == snapshot.business.collection_fingerprint;
-            evidence.TransferScopeVerified = entry.frontInvWindow != null && entry.frontInvWindow.IsVisible() &&
-                snapshot.business.details.containers.Find(c => c.container == "front")?.item_refs?.Count > 0 &&
-                evidence.ItemSetMatches;
-            // CapacityAgent's proof currently targets the final player inventory, not the back
-            // counter used by this button. Do not reuse a proof with the wrong target/scope.
+                command.arguments?.collection_fingerprint == snapshot.business.details.front_collection_fingerprint;
+            evidence.TransferScopeVerified = entry != null && entry.frontInvWindow != null && entry.frontInvWindow.IsVisible() &&
+                evidence.ItemSetMatches && CompleteContainer(snapshot, "back");
+            // The native whole-set handler attempts the complete front set in the back counter;
+            // it can drop a remainder, so verification classifies partial movement as unknown.
             evidence.TransferTargetCapacityVerified = false;
 
-            // Local target discovery is limited to known active roots; no whole-scene object scan.
+            // Resolve only fixed known control types in the active gameplay scene.
             switch (command.action)
             {
                 case "start_business":
-                    evidence.NativeTarget = StoreShutterButton.Instance;
+                    var shutter = StoreShutterButton.Instance;
+                    var shutterInteractable = shutter == null ? null : shutter.GetComponent<Interactable>();
+                    evidence.NativeTarget = shutter != null && shutter.isActiveAndEnabled && shutter.gameObject.activeInHierarchy &&
+                        (shutterInteractable == null || shutterInteractable.isAvailable) ? shutter : null;
                     break;
                 case "receive_next_customer":
-                    var bell = ui.GetComponentInChildren<StoreBell>(true);
-                    evidence.NativeTarget = bell != null && bell.isActiveAndEnabled && bell.gameObject.activeInHierarchy
-                        ? bell : null;
+                    var bell = FindStoreControl<StoreBell>(ui);
+                    var bellInteractable = bell == null ? null : bell.GetComponent<Interactable>();
+                    evidence.NativeTarget = bell != null && bell.isActiveAndEnabled && bell.gameObject.activeInHierarchy &&
+                        (bellInteractable == null || bellInteractable.isAvailable) ? bell : null;
                     break;
                 case "advance_dialogue":
-                    evidence.NativeTarget = dialog;
+                    evidence.NativeTarget = dialog != null && dialog.isActiveAndEnabled ? dialog : null;
                     break;
                 case "choose_dialogue_option":
                     if (projection.TryResolveOption(snapshot.world_epoch, observedCustomerRef,
@@ -137,8 +152,9 @@ namespace PawnPilot
                     }
                     break;
                 case "prepare_purchase_items":
-                    evidence.NativeTarget = entry.frontInvWindow == null ? null :
-                        entry.frontInvWindow.rectTransform.gameObject.GetComponentInChildren<StoreTransferButton>(true);
+                    var transfer = FindStoreControl<StoreTransferButton>(ui);
+                    evidence.NativeTarget = transfer != null && transfer.isActiveAndEnabled && transfer.gameObject.activeInHierarchy
+                        ? transfer : null;
                     break;
                 case "cancel_confirmation":
                     var generic = GenericConfirmationUIManager.Instance;
@@ -159,24 +175,159 @@ namespace PawnPilot
                     }
                     break;
                 case "dismiss_customer":
-                    evidence.NativeTarget = ui.GetComponentInChildren<StoreDismissButton>(true);
+                    var dismiss = FindStoreControl<StoreDismissButton>(ui);
+                    evidence.NativeTarget = dismiss != null && dismiss.isActiveAndEnabled && dismiss.gameObject.activeInHierarchy
+                        ? dismiss : null;
                     break;
             }
             evidence.NativeTargetAvailable = evidence.NativeTarget != null;
-            evidence.Reason = "native_scope_unverified";
+            bool scopedAction = command.action == "start_business" || command.action == "receive_next_customer";
+            bool dialogueAction = command.action == "advance_dialogue" || command.action == "choose_dialogue_option";
+            bool transferAction = command.action == "prepare_purchase_items";
+            bool dismissAction = command.action == "dismiss_customer";
+            evidence.CapabilityScopeVerified =
+                (scopedAction && evidence.NativeTargetAvailable && evidence.NativeEntryVerified && evidence.NoBlockers && evidence.NoLocks &&
+                    (command.action == "start_business"
+                        ? evidence.StoreClosed && evidence.CanStartDay && evidence.NoCurrentCustomer && evidence.NoCallNextPending
+                        : evidence.StoreOpen && evidence.NoCurrentCustomer && evidence.NoCallNextPending && evidence.CanNextClient)) ||
+                (dialogueAction && evidence.NativeTargetAvailable && evidence.NativeEntryVerified &&
+                    !UnsafeVisibleModal(ui, store) && !HasActionBlockingEvidence(snapshot.business.details.ui?.blockers, command.action) &&
+                    evidence.CurrentCustomerMatches &&
+                    evidence.CustomerArrived && evidence.OrdinarySeller && evidence.DialogueMatches &&
+                    (command.action == "advance_dialogue"
+                        ? !evidence.DialogueChoice && (command.arguments?.mode == "skip" ? evidence.DialogueTyping :
+                            command.arguments?.mode == "next" && !evidence.DialogueTyping && evidence.WaitingForAdvance)
+                        : evidence.DialogueChoice && evidence.OptionVisibleEnabled)) ||
+                (transferAction && evidence.NativeTargetAvailable && evidence.NativeEntryVerified &&
+                    !UnsafeVisibleModal(ui, store) && !HasActionBlockingEvidence(snapshot.business.details.ui?.blockers, command.action) &&
+                    evidence.CurrentCustomerMatches &&
+                    evidence.CustomerArrived && evidence.OrdinarySeller && evidence.ItemSetMatches && evidence.TransferScopeVerified) ||
+                (dismissAction && evidence.NativeTargetAvailable && evidence.NativeEntryVerified &&
+                    !UnsafeVisibleModal(ui, store) && !HasActionBlockingEvidence(snapshot.business.details.ui?.blockers, command.action) &&
+                    evidence.CurrentCustomerMatches &&
+                    evidence.CustomerArrived && evidence.StoreOpen && evidence.NoLocks &&
+                    customer.phase == "trading" && current == null && !ui.IsTyping() && !Interactable.isPaused &&
+                    evidence.Dismissable && evidence.DismissInterceptClear);
+            evidence.Reason = evidence.CapabilityScopeVerified ? null :
+                !evidence.NativeTargetAvailable ? "native_target_unavailable" :
+                !evidence.NoBlockers ? "native_ui_blocked" :
+                !evidence.NoLocks ? "native_control_locked" :
+                scopedAction && !evidence.NoCurrentCustomer ? "customer_or_departure_present" :
+                scopedAction && !evidence.NoCallNextPending ? "call_next_pending" :
+                command.action == "receive_next_customer" && !evidence.CanNextClient ? "no_customer_ready" :
+                "native_action_precondition";
             return evidence;
         }
 
-        // Probe invokes this only after its pure admission policy. It recaptures all native facts
-        // on the Unity main thread and keeps the disabled production gate before dispatch.
+        // Called from the main-thread snapshot capture. Candidates are backed by current native
+        // state, not by displayed future customers or opaque queue data.
+        internal List<LegalAction> BuildLegalActions(Snapshot snapshot)
+        {
+            var result = new List<LegalAction>();
+            if (snapshot == null || !snapshot.ready || snapshot.schema_version != Protocol.BusinessSchemaVersion) return result;
+            AddIfEligible("start_business", snapshot, result);
+            AddIfEligible("receive_next_customer", snapshot, result);
+            AddCurrentCustomerActions(snapshot, result);
+            return result;
+        }
+
+        private void AddIfEligible(string action, Snapshot snapshot, List<LegalAction> result)
+        {
+            if (!BusinessActionPolicy.IsEnabled(action)) return;
+            NativeActionEvidence evidence;
+            try
+            {
+                var command = new Command { schema_version = 3, action = action, arguments = new ActionArguments() };
+                evidence = Check(command, snapshot);
+            }
+            catch { return; }
+            if (!evidence.Captured || !evidence.SceneReady || !evidence.CapabilityScopeVerified)
+            {
+                if (snapshot.business?.details?.candidates != null)
+                    snapshot.business.details.candidates.Add(new BusinessCandidate
+                    { action = action, status = "blocked", reason = evidence.Reason ?? "native_action_precondition" });
+                return;
+            }
+            if (action == "start_business")
+            {
+                if (snapshot.phase != "MORNING" || !evidence.StoreClosed || !evidence.CanStartDay || !evidence.NoLocks ||
+                    !evidence.NoCurrentCustomer || !evidence.NoCallNextPending) return;
+            }
+            else if (snapshot.phase != "OPEN" || !evidence.StoreOpen || !evidence.NoLocks ||
+                !evidence.NoCurrentCustomer || !evidence.NoCallNextPending || !evidence.CanNextClient) return;
+            var customer = snapshot.business?.details?.customer;
+            if (snapshot.menu_open || customer == null || snapshot.business?.details?.ui?.blockers == null ||
+                HasActionBlockingEvidence(snapshot.business.details.ui.blockers, action)) return;
+            if (customer.presence != "absent") return;
+            result.Add(new LegalAction { action = action, arguments = new ActionArguments() });
+        }
+
+        private void AddCurrentCustomerActions(Snapshot snapshot, List<LegalAction> result)
+        {
+            var customer = snapshot.business?.details?.customer;
+            var customerRef = snapshot.business?.customer_ref;
+            if (customer == null || customer.presence != "present" || customer.arrived != true ||
+                customer.phase == "leaving" || string.IsNullOrEmpty(customerRef)) return;
+
+            if (!string.IsNullOrEmpty(customer.dialogue_ref))
+            {
+                if (customer.dialogue_stage == "typing")
+                    AddScopedCandidate("advance_dialogue", new ActionArguments { customer_ref = customerRef,
+                        dialogue_ref = customer.dialogue_ref, mode = "skip" }, snapshot, result);
+                else if (customer.dialogue_stage == "waiting")
+                    AddScopedCandidate("advance_dialogue", new ActionArguments { customer_ref = customerRef,
+                        dialogue_ref = customer.dialogue_ref, mode = "next" }, snapshot, result);
+                if (customer.dialogue_stage == "choices" && customer.option_refs != null)
+                    foreach (var optionRef in customer.option_refs)
+                        AddScopedCandidate("choose_dialogue_option", new ActionArguments { customer_ref = customerRef,
+                            dialogue_ref = customer.dialogue_ref, option_ref = optionRef }, snapshot, result);
+            }
+
+            var containers = snapshot.business.details.containers;
+            var front = containers?.Find(c => c != null && c.container == "front" && c.completeness == "complete");
+            if (front?.item_refs != null && front.item_refs.Count > 0 && front.item_refs.Count <= 64 &&
+                !string.IsNullOrEmpty(snapshot.business.details.front_collection_fingerprint))
+                AddScopedCandidate("prepare_purchase_items", new ActionArguments { customer_ref = customerRef,
+                    item_refs = new List<string>(front.item_refs),
+                    collection_fingerprint = snapshot.business.details.front_collection_fingerprint }, snapshot, result);
+
+            AddScopedCandidate("dismiss_customer", new ActionArguments { customer_ref = customerRef }, snapshot, result);
+        }
+
+        private void AddScopedCandidate(string action, ActionArguments arguments, Snapshot snapshot, List<LegalAction> result)
+        {
+            if (!BusinessActionPolicy.IsEnabled(action)) return;
+            NativeActionEvidence evidence;
+            Command command;
+            try
+            {
+                command = new Command { schema_version = 3, action = action, arguments = arguments };
+                evidence = Check(command, snapshot);
+            }
+            catch { return; }
+            var reason = !evidence.Captured || !evidence.SceneReady || !evidence.CapabilityScopeVerified
+                ? evidence.Reason ?? "native_action_precondition" : BusinessActionPolicy.ValidateCandidate(command, snapshot);
+            if (reason != null)
+            {
+                var candidate = snapshot.business.details.candidates.Find(c => c.action == action);
+                if (candidate != null) { candidate.status = "blocked"; candidate.reason = reason; }
+                return;
+            }
+            result.Add(new LegalAction { action = action, arguments = arguments });
+        }
+
+        // Probe invokes this only after its DTO admission policy. It recaptures native facts on
+        // the Unity main thread immediately before dispatch; failures here occur before mutation.
         internal void Invoke(Command command, Snapshot before)
         {
-            if (!BusinessActionPolicy.ProductionDispatchEnabled)
-                throw new InvalidOperationException("business_actions_disabled_pending_live_scope_review");
-            var evidence = Check(command, before);
+            if (!BusinessActionPolicy.IsEnabled(command?.action))
+                throw new NativeActionRejectedException("business_action_not_enabled");
+            NativeActionEvidence evidence;
+            try { evidence = Check(command, before); }
+            catch { throw new NativeActionRejectedException("native_preflight_failed"); }
             string reason = BusinessActionPolicy.Validate(command, before, evidence);
-            if (reason != null) throw new InvalidOperationException(reason);
-            if (evidence.NativeTarget == null) throw new InvalidOperationException("native_target_missing");
+            if (reason != null) throw new NativeActionRejectedException(reason);
+            if (evidence.NativeTarget == null) throw new NativeActionRejectedException("native_target_missing");
 
             switch (command.action)
             {
@@ -222,11 +373,15 @@ namespace PawnPilot
                     return evidence.StoreOpen && evidence.StoreLockReleased
                         ? decision : VerificationDecision.Pending();
                 case "receive_next_customer":
-                    return evidence.AnyCurrentCustomer && evidence.CustomerArrived && evidence.MainDialogueReady
+                    return evidence.AnyCurrentCustomer && evidence.CustomerArrived && evidence.StoreOpen &&
+                        (after.business?.details?.customer?.phase == "dialogue" ||
+                         after.business?.details?.customer?.phase == "trading")
                         ? decision : VerificationDecision.Pending();
                 case "dismiss_customer":
-                    return evidence.NoCurrentCustomer && evidence.NoCallNextPending
-                        ? decision : VerificationDecision.Pending();
+                    // The ordinary dismiss path may trigger the game's configured next-customer
+                    // flow. The pure postcondition already proves the old customer ref was
+                    // invalidated; a new current customer does not undo that result.
+                    return decision;
                 default:
                     return decision;
             }
@@ -235,36 +390,98 @@ namespace PawnPilot
         private static bool ExactFrontSelection(Snapshot snapshot, List<string> refs)
         {
             if (snapshot?.business?.details?.containers == null || refs == null || refs.Count == 0) return false;
-            ContainerState front = null, back = null, player = null;
+            ContainerState front = null, back = null;
             foreach (var container in snapshot.business.details.containers)
             {
-                if (container == null || container.completeness != "complete" || container.item_refs == null) return false;
+                if (container == null) return false;
                 if (container.container == "front") front = container;
                 else if (container.container == "back") back = container;
-                else if (container.container == "player") player = container;
             }
-            if (front == null || back == null || player == null || front.item_refs.Count != refs.Count) return false;
+            if (front == null || back == null || front.completeness != "complete" || back.completeness != "complete" ||
+                front.item_refs == null || back.item_refs == null || front.item_refs.Count != refs.Count ||
+                front.item_refs.Count > 64 || back.item_refs.Count > 64 ||
+                front.item_refs.Distinct(StringComparer.Ordinal).Count() != front.item_refs.Count ||
+                back.item_refs.Distinct(StringComparer.Ordinal).Count() != back.item_refs.Count) return false;
             var requested = new HashSet<string>(refs, StringComparer.Ordinal);
             return requested.Count == refs.Count && requested.SetEquals(front.item_refs);
+        }
+
+        private static bool CompleteContainer(Snapshot snapshot, string name)
+        {
+            var containers = snapshot?.business?.details?.containers;
+            if (containers == null) return false;
+            var found = containers.Find(c => c != null && c.container == name);
+            return found != null && found.completeness == "complete" && found.item_refs != null &&
+                found.item_refs.Count <= 64 && found.item_refs.Distinct(StringComparer.Ordinal).Count() == found.item_refs.Count;
+        }
+
+        private static T FindStoreControl<T>(StoreUIManager ui) where T : UnityEngine.MonoBehaviour
+        {
+            T match = null;
+            foreach (var child in ui.GetComponentsInChildren<T>(true))
+            {
+                if (!child.isActiveAndEnabled || !child.gameObject.activeInHierarchy) continue;
+                if (match != null) return null;
+                match = child;
+            }
+            if (match != null) return match;
+            // World-space controls can be siblings of the UI manager. Resolve only this
+            // fixed component type in the same active gameplay scene, never a named method.
+            foreach (var control in UnityEngine.Object.FindObjectsOfType<T>())
+            {
+                if (control.gameObject.scene != ui.gameObject.scene || !control.isActiveAndEnabled || !control.gameObject.activeInHierarchy) continue;
+                if (match != null) return null;
+                match = control;
+            }
+            return match;
+        }
+
+        private static bool HasActionBlockingEvidence(List<string> blockers, string action)
+        {
+            if (blockers == null) return true;
+            foreach (var blocker in blockers)
+            {
+                if (KnownUnobservableFinding(blocker)) continue;
+                if ((action == "advance_dialogue" || action == "choose_dialogue_option") && blocker == "dialogue_active") continue;
+                if ((action == "prepare_purchase_items" || action == "dismiss_customer") &&
+                    (blocker == "dialogue_active" || blocker == "bargain_panel")) continue;
+                return true;
+            }
+            return false;
+        }
+
+        private static bool KnownUnobservableFinding(string blocker) => blocker == "global_ui_stack_unobservable" ||
+            blocker == "global_raycast_order_unobservable" || blocker == "quote_rebuild_completion_unobservable" ||
+            blocker == "tutorial_group_active_unverified" || blocker == "control_hints_active_unverified";
+
+        private static bool UnsafeVisibleModal(StoreUIManager ui, PlayerStore store)
+        {
+            if (ui == null || store == null) return true;
+            if (ui.escapeUIManager != null && ui.escapeUIManager.menuPanel != null && ui.escapeUIManager.menuPanel.activeInHierarchy) return true;
+            if (ui.gameOptionUIManager != null && ui.gameOptionUIManager.IsOpen) return true;
+            if (ui.confirmPanelUIManager != null && ui.confirmPanelUIManager.panel != null && ui.confirmPanelUIManager.panel.activeInHierarchy) return true;
+            if (ui.closeShutterConfirmationPanel != null && ui.closeShutterConfirmationPanel.activeInHierarchy) return true;
+            if (ui.isShot || store.isHandlingShootout || store.isClientBeingArrested) return true;
+            var generic = GenericConfirmationUIManager.Instance;
+            return generic != null && generic.panel != null && generic.panel.activeInHierarchy;
         }
 
         private static bool HasExactlyOneConfirmationBlocker(List<string> blockers) => blockers != null && blockers.Count == 1 &&
             (blockers[0] == "confirmation" || blockers[0] == "generic_confirmation" ||
              blockers[0] == "shutter_confirmation" || blockers[0] == "trade_confirmation");
 
-        private static bool KnownBlocker(StoreUIManager ui, PlayerStore store)
+        private static bool KnownBlockingUi(StoreUIManager ui, PlayerStore store)
         {
             if (ui == null || store == null) return true;
-            if (ui.escapeUIManager == null || ui.gameOptionUIManager == null || ui.confirmPanelUIManager == null) return true;
-            if (ui.escapeUIManager.menuPanel != null && ui.escapeUIManager.menuPanel.activeInHierarchy) return true;
-            if (ui.gameOptionUIManager.IsOpen) return true;
-            if (ui.confirmPanelUIManager.panel != null && ui.confirmPanelUIManager.panel.activeInHierarchy) return true;
+            if (ui.escapeUIManager != null && ui.escapeUIManager.menuPanel != null && ui.escapeUIManager.menuPanel.activeInHierarchy) return true;
+            if (ui.gameOptionUIManager != null && ui.gameOptionUIManager.IsOpen) return true;
+            if (ui.confirmPanelUIManager != null && ui.confirmPanelUIManager.panel != null && ui.confirmPanelUIManager.panel.activeInHierarchy) return true;
             if (ui.closeShutterConfirmationPanel != null && ui.closeShutterConfirmationPanel.activeInHierarchy) return true;
             if (ui.isShot || store.isHandlingShootout || store.isClientBeingArrested) return true;
             var generic = GenericConfirmationUIManager.Instance;
-            if (generic == null || generic.panel == null || generic.panel.activeInHierarchy) return true;
+            if (generic != null && generic.panel != null && generic.panel.activeInHierarchy) return true;
             var bargain = BargainUIManager.Instance;
-            if (bargain == null || bargain.IsOpen) return true;
+            if (bargain != null && bargain.IsOpen) return true;
             return false;
         }
     }

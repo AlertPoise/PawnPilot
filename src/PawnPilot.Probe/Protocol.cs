@@ -6,6 +6,12 @@ using System.Text;
 
 namespace PawnPilot
 {
+    // Only a local adapter that has not entered the native action may use this signal.
+    // Exceptions raised by/after the native entry must remain outcome_unknown.
+    internal sealed class NativeActionRejectedException : Exception
+    {
+        internal NativeActionRejectedException(string reason) : base(reason) { }
+    }
     public static class Protocol
     {
         public const int SchemaVersion = 2;
@@ -243,6 +249,13 @@ namespace PawnPilot
                     started_at_unix_ms = active.startedUnixMs, execution_deadline_unix_ms = active.deadlineUnixMs
                 };
                 try { invokeNative(Clone(active.command)); }
+                catch (NativeActionRejectedException ex)
+                {
+                    active.invocationStarted = false;
+                    Finish(active, "rejected", ValidText(ex.Message, 256) ? ex.Message : "native_precondition_changed",
+                        snapshot, Completed(active.command, false, Next(active.progress.sequence)));
+                    return CurrentStep();
+                }
                 catch
                 {
                     FinishUnknown(active, "execution_exception", snapshot);
@@ -449,10 +462,9 @@ namespace PawnPilot
                     if (!ArgumentsEmpty(legal.arguments) || !snapshot.loaded || !snapshot.menu_open) return false;
                     close = true;
                 }
-                else if (snapshot.schema_version != 3 || !BusinessActionPolicy.ProductionDispatchEnabled || !BusinessActionPolicy.IsRegistered(legal.action) ||
+                else if (snapshot.schema_version != 3 || !BusinessActionPolicy.IsEnabled(legal.action) || !BusinessActionPolicy.IsRegistered(legal.action) ||
                     !BusinessActionPolicy.ArgumentsValid(legal.action, legal.arguments) ||
-                    snapshot.interaction.consistency != "consistent" || !snapshot.interaction.operable || snapshot.menu_open ||
-                    snapshot.business.details.ui.coverage != "verified" || snapshot.business.details.ui.status != "consistent") return false;
+                    snapshot.menu_open) return false;
             }
             if (snapshot.can_close_menu != close) return false;
             return true;

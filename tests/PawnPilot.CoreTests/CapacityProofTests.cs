@@ -36,15 +36,84 @@ public static class CapacityProofTests
         check("capacity_shortage_is_distinct_from_unverified", shortage.Status == CapacityProofStatus.Insufficient &&
             shortage.Reason == CapacityProofReason.CapacityInsufficient && shortage.FreeCellCount == 1 && shortage.RequiredCellCount == 2);
 
-        CheckRejected(check, "feature_state_unknown", Item("item:feature", SourceRef, false, feature: CapacityFeatureProfile.Present), CapacityProofReason.UnsupportedFeatures);
+        CapacityProofResult presentFeatures = CapacityProof.Evaluate(Snapshot(
+            new[] { Item("item:feature", SourceRef, false, feature: CapacityFeatureProfile.Present) },
+            new[] { "item:feature" }));
+        check("capacity_existing_features_do_not_block_geometric_proof",
+            presentFeatures.Status == CapacityProofStatus.Sufficient &&
+            presentFeatures.Reason == CapacityProofReason.None && presentFeatures.RequiredCellCount == 1);
+        CheckRejected(check, "feature_state_unknown",
+            Item("item:unknown_features", SourceRef, false, feature: CapacityFeatureProfile.Unknown),
+            CapacityProofReason.UnsupportedFeatures);
         CheckRejected(check, "item_callbacks_unknown", Item("item:callback", SourceRef, false, callback: CapacityItemCallbackProfile.Unknown), CapacityProofReason.UnsupportedCallbacks);
         CheckRejected(check, "stack_callback_unknown", Item("item:stack", SourceRef, false, stack: CapacityFact.Unknown), CapacityProofReason.UnsupportedCallbacks);
+        CheckRejected(check, "search_passthrough_unknown", Item("item:passthrough", SourceRef, false,
+            passthrough: CapacityFact.Unknown), CapacityProofReason.UnsupportedCallbacks);
         CheckRejected(check, "unit_count_two_rejected", Item("item:count", SourceRef, false, unitCount: 2), CapacityProofReason.UnsupportedUnitCount);
-        CheckRejected(check, "unknown_item_type_rejected", Item("item:unknown", SourceRef, false, identifier: "unknown_item"), CapacityProofReason.UnsupportedItem);
+        CapacityProofResult noIdentifierAllowlist = CapacityProof.Evaluate(Snapshot(
+            new[] { Item("item:unknown", SourceRef, false, identifier: "plain_rect_goods") }, new[] { "item:unknown" }));
+        check("capacity_simple_incoming_items_are_not_identifier_whitelisted",
+            noIdentifierAllowlist.Status == CapacityProofStatus.Sufficient);
         CheckRejected(check, "nested_contents_unknown", Item("item:nested", SourceRef, false, nested: CapacityNestedProfile.Unknown), CapacityProofReason.UnsupportedNestedContent);
         CheckRejected(check, "rotated_shape_rejected", Item("item:rotated", SourceRef, false, orientation: 1), CapacityProofReason.UnsupportedOrientation);
         CheckRejected(check, "flipped_shape_rejected", Item("item:flipped", SourceRef, false, flipped: true), CapacityProofReason.UnsupportedOrientation);
-        CheckRejected(check, "multi_cell_shape_rejected_even_with_free_area", Item("item:wide", SourceRef, false, shapeWidth: 2), CapacityProofReason.UnsupportedShape);
+        CapacityProofResult multiCell = CapacityProof.Evaluate(Snapshot(
+            new[] { Item("item:wide", SourceRef, false, identifier: "plain_rect_goods", shapeWidth: 2) },
+            new[] { "item:wide" }));
+        check("capacity_multi_cell_rectangle_supported", multiCell.Status == CapacityProofStatus.Sufficient &&
+            multiCell.RequiredCellCount == 2 && multiCell.FreeCellCount == 240);
+        CapacityProofResult rotatedOnly = CapacityProof.Evaluate(Snapshot(
+            new[] { Item("item:rotated_only", SourceRef, false, shapeWidth: 1, shapeHeight: 11) },
+            new[] { "item:rotated_only" }));
+        check("capacity_rotation_only_fit_is_unverified", rotatedOnly.Status == CapacityProofStatus.Unverified &&
+            rotatedOnly.Reason == CapacityProofReason.UnsupportedOrientation);
+
+        var arbitraryExisting = Item("occupant:old-type", TargetRef, true, identifier: "unlisted_storage_item",
+            unitCount: 8, callback: CapacityItemCallbackProfile.Unknown, feature: CapacityFeatureProfile.Present,
+            nested: CapacityNestedProfile.Present, x: 0, y: 0, shapeWidth: 2);
+        var rectangleAfterExisting = Item("item:rectangle", SourceRef, false,
+            identifier: "unlisted_plain_goods", shapeWidth: 2);
+        CapacityProofResult existingTypeAgnostic = CapacityProof.Evaluate(Snapshot(
+            new[] { rectangleAfterExisting }, new[] { "item:rectangle" }, new[] { arbitraryExisting }));
+        check("capacity_existing_items_use_real_occupancy_without_type_whitelist",
+            existingTypeAgnostic.Status == CapacityProofStatus.Sufficient &&
+            existingTypeAgnostic.FreeCellCount == 238);
+
+        var rectangleBatch = new[]
+        {
+            Item("item:horizontal", SourceRef, false, shapeWidth: 2),
+            Item("item:vertical", SourceRef, false, shapeHeight: 2)
+        };
+        CapacityProofResult nativeOrderRectangles = CapacityProof.Evaluate(Snapshot(
+            rectangleBatch, new[] { "item:horizontal", "item:vertical" }));
+        check("capacity_multicell_batch_reserves_shared_space_in_native_reverse_order",
+            nativeOrderRectangles.Status == CapacityProofStatus.Sufficient &&
+            nativeOrderRectangles.AcceptanceOrderRefs.SequenceEqual(new[] { "item:vertical", "item:horizontal" }) &&
+            nativeOrderRectangles.RequiredCellCount == 4);
+
+        var lShape = MaskItem("item:l", SourceRef, 2, 2,
+            true, true,
+            true, false);
+        CapacityProofResult exactMaskFit = CapacityProof.Evaluate(Snapshot(
+            new[] { lShape }, new[] { "item:l" }, OccupantsExcept(0, 1, 24)));
+        check("capacity_nonrectangular_mask_fits_exact_three_cell_cavity",
+            exactMaskFit.Status == CapacityProofStatus.Sufficient && exactMaskFit.FreeCellCount == 3 &&
+            exactMaskFit.RequiredCellCount == 3);
+
+        var oneCell = Item("item:small", SourceRef, false);
+        CapacityProofResult lBeforeSmall = CapacityProof.Evaluate(Snapshot(
+            new[] { oneCell, lShape }, new[] { "item:small", "item:l" }, OccupantsExcept(0, 1, 24, 25)));
+        CapacityProofResult smallBeforeL = CapacityProof.Evaluate(Snapshot(
+            new[] { lShape, oneCell }, new[] { "item:l", "item:small" }, OccupantsExcept(0, 1, 24, 25)));
+        check("capacity_nonrectangular_first_fit_shares_mask_cells_in_native_reverse_order",
+            lBeforeSmall.Status == CapacityProofStatus.Sufficient && lBeforeSmall.RequiredCellCount == 4 &&
+            lBeforeSmall.AcceptanceOrderRefs.SequenceEqual(new[] { "item:l", "item:small" }));
+        check("capacity_different_native_order_that_needs_rotation_is_unverified",
+            smallBeforeL.Status == CapacityProofStatus.Unverified &&
+            smallBeforeL.Reason == CapacityProofReason.UnsupportedOrientation);
+
+        var emptyMask = MaskItem("item:empty-shape", SourceRef, 1, 1, false);
+        CheckRejected(check, "empty_shape_mask", emptyMask, CapacityProofReason.UnsupportedShape);
 
         var duplicateOccupants = new[]
         {
@@ -68,10 +137,11 @@ public static class CapacityProofTests
         check("capacity_incomplete_inventory_snapshot_is_unverified", partial.Status == CapacityProofStatus.Unverified &&
             partial.Reason == CapacityProofReason.IncompleteSnapshot);
 
-        var unknownClient = CopySnapshot(incomplete, clientCallback: CapacityFact.Unknown);
-        CapacityProofResult unknownCallback = CapacityProof.Evaluate(unknownClient);
-        check("capacity_unknown_client_callback_is_unverified", unknownCallback.Status == CapacityProofStatus.Unverified &&
-            unknownCallback.Reason == CapacityProofReason.UnknownClientCallback);
+        var callbackPresent = CopySnapshot(incomplete, clientCallback: CapacityFact.Yes);
+        CapacityProofResult callbackPlacement = CapacityProof.Evaluate(callbackPresent);
+        check("capacity_client_callbacks_do_not_change_grid_placement_proof",
+            callbackPlacement.Status == CapacityProofStatus.Sufficient &&
+            callbackPlacement.Reason == CapacityProofReason.None);
 
         var cells = Enumerable.Repeat(true, 240).ToArray();
         var sourceList = new List<CapacityItemSnapshot> { Item("item:one", SourceRef, false) };
@@ -139,6 +209,25 @@ public static class CapacityProofTests
         return items;
     }
 
+    private static CapacityItemSnapshot[] OccupantsExcept(params int[] freeCells)
+    {
+        var free = new HashSet<int>(freeCells);
+        var items = new List<CapacityItemSnapshot>(240 - free.Count);
+        for (int cell = 0; cell < 240; cell++)
+        {
+            if (free.Contains(cell)) continue;
+            items.Add(Item("occupant:" + cell, TargetRef, true, x: cell % 24, y: cell / 24));
+        }
+        return items.ToArray();
+    }
+
+    private static CapacityItemSnapshot MaskItem(string itemRef, string parentRef,
+        int width, int height, params bool[] occupiedCells)
+    {
+        return Item(itemRef, parentRef, false, shape: new CapacityShapeSnapshot(true,
+            width, height, 0, 0, false, 0, occupiedCells));
+    }
+
     private static CapacityItemSnapshot Item(string itemRef, string parentRef, bool owned,
         string identifier = "common_medical", int unitCount = 1,
         CapacityItemCallbackProfile callback = CapacityItemCallbackProfile.VanillaCommonMedicalOrToiletPaper,
@@ -146,11 +235,20 @@ public static class CapacityProofTests
         CapacityNestedProfile nested = CapacityNestedProfile.EmptyByNativeFactory,
         CapacityFact stack = CapacityFact.Yes, int x = 0, int y = 0,
         int shapeWidth = 1, int shapeHeight = 1, int orientation = 0, bool flipped = false,
-        CapacityShapeSnapshot shape = null)
+        CapacityShapeSnapshot shape = null, CapacityFact passthrough = CapacityFact.Yes)
     {
         shape ??= new CapacityShapeSnapshot(true, shapeWidth, shapeHeight, x, y, flipped, orientation,
             Enumerable.Repeat(true, shapeWidth * shapeHeight));
+        IEnumerable<int> occupiedGridCells = null;
+        if (parentRef == TargetRef)
+        {
+            var cells = new List<int>();
+            for (int localY = 0; localY < shapeHeight; localY++)
+                for (int localX = 0; localX < shapeWidth; localX++)
+                    cells.Add((y + localY) * 24 + x + localX);
+            occupiedGridCells = cells;
+        }
         return new CapacityItemSnapshot(itemRef, identifier, parentRef, true, unitCount, owned,
-            callback, feature, nested, stack, shape);
+            callback, feature, nested, stack, shape, occupiedGridCells, passthrough);
     }
 }

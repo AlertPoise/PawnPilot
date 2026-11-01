@@ -58,10 +58,8 @@ namespace PawnPilot
                 {
                     failed = true;
                 }
-                else if (HasDialogueSurface(dialogue))
-                {
-                    blockers.Add("dialogue_active");
-                }
+                // Dialogue is action-local state. The customer projection exposes its
+                // visible text/options; each dialogue or trade action checks its own phase.
 
                 if (UIDragHandler.isDraggingAnyUI) blockers.Add("ui_window_drag_active");
 
@@ -81,20 +79,6 @@ namespace PawnPilot
             }
 
             return BusinessUiEvidence.Evaluate(blockers, failed, unverifiedFindings);
-        }
-
-        private static bool HasDialogueSurface(DialogUIManager dialogue)
-        {
-            if (dialogue.currentDialog != null || dialogue.isWaitingForManualAdvance ||
-                Active(dialogue.clientNameBubble) || Active(dialogue.secNameBubble) ||
-                (dialogue.clientBubble != null && Active(dialogue.clientBubble.gameObject)) ||
-                (dialogue.playerBubble != null && Active(dialogue.playerBubble.gameObject)) ||
-                (dialogue.secBubble != null && Active(dialogue.secBubble.gameObject))) return true;
-            if (dialogue.dialogChoiceBubbles == null || dialogue.dialogChoiceBubbles.Count > 16)
-                throw new InvalidOperationException();
-            foreach (var choice in dialogue.dialogChoiceBubbles)
-                if (choice != null && Active(choice.gameObject)) return true;
-            return false;
         }
 
         private static void AddIfActive(List<string> blockers, GameObject root, string reason)

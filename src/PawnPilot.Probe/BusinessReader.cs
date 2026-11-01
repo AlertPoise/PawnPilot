@@ -28,7 +28,7 @@ namespace PawnPilot
                 ReadInventory("player", entry == null ? null : entry.invWindow,
                     entry == null ? null : entry.invElement, uiBlocked, ref totalItems)
             };
-            input.Quote = ReadQuote();
+            input.Quote = ReadQuote(input.Customer, input.Containers);
             return input;
         }
 
@@ -165,7 +165,7 @@ namespace PawnPilot
             }
         }
 
-        private static BusinessQuoteInput ReadQuote()
+        private static BusinessQuoteInput ReadQuote(BusinessCustomerInput customer, BusinessContainerInput[] containers)
         {
             var unavailable = new BusinessQuoteInput { Status = "unverified", Mode = "unknown",
                 Reason = "quote_binding_unverified", BindingVerified = false,
@@ -179,8 +179,7 @@ namespace PawnPilot
                     return unavailable;
                 }
                 var negotiation = NegociationUIManager.Instance;
-                if (negotiation == null || negotiation.uiObject == null || !negotiation.uiObject.activeInHierarchy ||
-                    !VisibleUiReader.RectVisible(negotiation.uiObject.GetComponent<RectTransform>()))
+                if (negotiation == null || negotiation.uiObject == null || !negotiation.uiObject.activeInHierarchy)
                 {
                     unavailable.Reason = "quote_surface_unavailable";
                     return unavailable;
@@ -192,13 +191,41 @@ namespace PawnPilot
                     return unavailable;
                 }
 
+                if (customer == null || customer.Presence != "present" || customer.Arrived != true ||
+                    customer.TradeType != "sell" || customer.Phase != "trading")
+                {
+                    unavailable.Reason = "normal_sell_context_unverified";
+                    return unavailable;
+                }
+                BusinessContainerInput back = null;
+                foreach (var container in containers ?? Array.Empty<BusinessContainerInput>())
+                    if (container != null && container.Container == "back") back = container;
+                if (back == null || back.Completeness != "complete" || back.Items == null)
+                {
+                    unavailable.Reason = "purchase_container_incomplete";
+                    return unavailable;
+                }
+                var backPurchaseItems = new List<BusinessItemInput>();
+                foreach (var item in back.Items) if (item != null && !item.Owned) backPurchaseItems.Add(item);
+                if (backPurchaseItems.Count == 0)
+                {
+                    unavailable.Reason = "purchase_set_empty";
+                    return unavailable;
+                }
+
                 var rows = new List<BusinessQuoteRowInput>();
+                var negotiationContentRows = new List<TabletListRow>();
+                int renderedRowCount = 0;
                 bool filtered = false;
                 int visitedRows = 0;
                 foreach (Transform child in frame.content)
                 {
                     if (++visitedRows > 64) { filtered = true; break; }
-                    if (!child.gameObject.activeInHierarchy || child.GetComponent<TabletListRow>() == null) continue;
+                    if (!child.gameObject.activeInHierarchy) continue;
+                    var rowComponent = child.GetComponent<TabletListRow>();
+                    if (rowComponent == null) continue;
+                    renderedRowCount++;
+                    negotiationContentRows.Add(rowComponent);
                     if (rows.Count >= 64) { filtered = true; break; }
                     string host = child.name == "SelectedRow" ? "Texts/" : child.name == "Row" ? "Visuals/" : null;
                     if (host == null) { filtered = true; continue; }
@@ -212,32 +239,90 @@ namespace PawnPilot
                         filtered = true;
                         continue;
                     }
-                    rows.Add(new BusinessQuoteRowInput { ItemIdentity = null,
+                    VisibleQuoteBinding.TryGetItem(rowComponent, out var visibleItem);
+                    rows.Add(new BusinessQuoteRowInput { ItemIdentity = visibleItem,
                         Name = VisibleUiReader.RenderedText(nameText), PriceText = VisibleUiReader.RenderedText(priceText), Amount = null });
                 }
 
-                int? total = null;
-                bool sawTotal = false;
-                bool ambiguousTotal = false;
+                string visibleTotal = null;
+                string visibleWholesale = null;
                 int visitedFooter = 0;
+                int footerRowCount = 0;
                 foreach (Transform child in frame.footer)
                 {
                     if (++visitedFooter > 8) { filtered = true; break; }
-                    if (!child.gameObject.activeInHierarchy || child.name != "FooterRow") continue;
+                    if (!child.gameObject.activeInHierarchy) continue;
+                    if (child.name != "FooterRow") continue;
+                    footerRowCount++;
+                    if (footerRowCount > 2) { filtered = true; continue; }
                     var labelTransform = child.Find("Label");
                     var valueTransform = child.Find("Value");
                     var label = labelTransform == null ? null : labelTransform.GetComponent<TMP_Text>();
                     var value = valueTransform == null ? null : valueTransform.GetComponent<TMP_Text>();
                     if (!VisibleUiReader.TextVisible(label) || !VisibleUiReader.TextVisible(value)) { filtered = true; continue; }
                     string labelValue = VisibleUiReader.RenderedText(label);
-                    if (!BusinessQuoteParsing.IsTotalLabel(labelValue)) continue;
-                    if (sawTotal) { ambiguousTotal = true; continue; }
-                    sawTotal = true;
-                    total = BusinessQuoteParsing.ParseVisibleTotal(VisibleUiReader.RenderedText(value));
+                    string valueText = VisibleUiReader.RenderedText(value);
+                    if (string.IsNullOrEmpty(labelValue) || string.IsNullOrEmpty(valueText)) { filtered = true; continue; }
+                    // BuildSelling emits exactly two direct footer rows: funds, then total.
+                    // The total row's wholesale variant displays normal / wholesale (discount).
+                    if (footerRowCount == 2) { visibleTotal = valueText; visibleWholesale = valueText; }
                 }
                 unavailable.Rows = rows.ToArray();
-                unavailable.DisplayedTotal = sawTotal && !ambiguousTotal ? total : null;
-                unavailable.Reason = filtered ? "quote_rows_partially_visible_binding_unverified" : "quote_binding_unverified";
+                unavailable.Mode = "normal";
+                unavailable.DisplayedTotal = BusinessQuoteParsing.ParseVisibleNormalTotal(visibleTotal);
+                unavailable.WholesaleTotal = BusinessQuoteParsing.ParseVisibleWholesaleTotal(visibleWholesale);
+                bool rowSetMatches = renderedRowCount == backPurchaseItems.Count;
+                var boundItems = new HashSet<object>();
+                foreach (var row in negotiationContentRows)
+                {
+                    if (!VisibleQuoteBinding.TryGetItem(row, out var boundItem) || !boundItems.Add(boundItem) ||
+                        !backPurchaseItems.Exists(item => ReferenceEquals(item.Identity, boundItem))) rowSetMatches = false;
+                }
+                bool supportedSelection = false;
+                var purchaseIdentities = new List<object>();
+                if (customer.MultiBuyDisabled.HasValue)
+                {
+                    if (!customer.MultiBuyDisabled.Value || backPurchaseItems.Count == 1)
+                    {
+                        foreach (var item in backPurchaseItems) purchaseIdentities.Add(item.Identity);
+                        supportedSelection = true;
+                    }
+                    else if (negotiationContentRows.Count == backPurchaseItems.Count)
+                    {
+                        int selectedIndex = -1;
+                        bool ambiguous = false;
+                        for (int i = 0; i < negotiationContentRows.Count; i++)
+                            if (negotiationContentRows[i].selected)
+                            {
+                                if (selectedIndex >= 0) ambiguous = true;
+                                selectedIndex = i;
+                            }
+                        if (!ambiguous)
+                        {
+                            if (selectedIndex < 0)
+                            {
+                                purchaseIdentities.Add(backPurchaseItems[0].Identity); // native fallback
+                                supportedSelection = true;
+                            }
+                            else if (VisibleQuoteBinding.TryGetItem(negotiationContentRows[selectedIndex], out var selectedItem))
+                            {
+                                purchaseIdentities.Add(selectedItem);
+                                supportedSelection = true;
+                            }
+                        }
+                    }
+                }
+                unavailable.PurchaseIdentities = purchaseIdentities.ToArray();
+                bool footerMatches = footerRowCount == 2 && unavailable.DisplayedTotal.HasValue;
+                unavailable.BindingVerified = rowSetMatches && footerMatches && supportedSelection;
+                if (unavailable.BindingVerified)
+                {
+                    unavailable.Status = "complete";
+                    unavailable.Reason = null;
+                }
+                else unavailable.Reason = !footerMatches ? "normal_total_unverified" :
+                    !rowSetMatches ? "quote_row_set_unverified" : filtered ? "quote_visible_rows_partial" :
+                    "purchase_selection_unverified";
                 return unavailable;
             }
             catch

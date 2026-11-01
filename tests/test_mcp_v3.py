@@ -10,12 +10,23 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from pawnpilot_mcp import server as mcp_server
 from bridge.client import ResponseError, read_response
+from bridge.protocol import V3_ACTION_ARGUMENTS, V3_PRODUCTION_ACTIONS
 
 V2 = json.loads((ROOT / "protocol/fixtures/v2-close-menu.json").read_text(encoding="utf-8"))
 V3 = json.loads((ROOT / "protocol/fixtures/v3-business-observation.json").read_text(encoding="utf-8"))
+V3_DIALOGUE = json.loads((ROOT / "protocol/fixtures/v3-dialogue-snapshot.json").read_text(encoding="utf-8"))
 
 
 class McpV3Tests(unittest.TestCase):
+    def test_observe_reply_accepts_all_production_action_names(self):
+        # The nested snapshot already accepted purchase, but its top-level projection
+        # used to throw validation errors exactly when a real purchase became legal.
+        response = mcp_server.ObserveReply(ok=True, error_source="none",
+            broker_connected=True, bridge_connected=True,
+            legal_actions=sorted(V3_PRODUCTION_ACTIONS))
+        self.assertIn("purchase_visible_offer", response.legal_actions)
+
+
     def test_v3_broker_response_may_exceed_legacy_limit_but_v2_cannot(self):
         class Headers:
             def get_content_type(self): return "application/json"
@@ -38,6 +49,11 @@ class McpV3Tests(unittest.TestCase):
         parsed = mcp_server._parse_snapshot(v3_snapshot)
         self.assertIsInstance(parsed, mcp_server.SnapshotV3)
         self.assertEqual(parsed.state.business["details"]["schema_version"], 1)
+        dialogue = mcp_server._parse_snapshot({"schema_version": 3, "broker_epoch": "broker",
+            "session_id": "mod", "connected": True, "state": V3_DIALOGUE,
+            "blocking_reason": None, "blocked_command_id": None, "can_act": True, "execution": None})
+        self.assertEqual(dialogue.state.business["details"]["customer"]["options"][0]["text"], "Yes, please")
+        self.assertEqual(dialogue.state.legal_actions[0].action, "choose_dialogue_option")
         self.assertEqual(mcp_server.GameState.model_validate(V2["before"]).schema_version, 2)
         self.assertEqual(mcp_server.ActionEvidenceV3.model_validate(V3["result"]).status, "succeeded")
         self.assertEqual(mcp_server.ActionEvidenceV2.model_validate(V2["result"]).schema_version, 2)
@@ -70,6 +86,28 @@ class McpV3Tests(unittest.TestCase):
         self.assertEqual(captured["path"], "/commands")
         self.assertEqual(captured["body"]["schema_version"], 3)
         self.assertEqual(captured["body"]["arguments"], {})
+
+    def test_act_can_submit_enabled_business_action_without_a_new_tool(self):
+        captured = {}
+        pending_reply = {"schema_version": 3, "id": "v3-open", "command_status": "pending",
+                         "status": "pending", "result": None, "resolved": False, "resolution": None,
+                         "execution": None, "record_schema_version": 3}
+        def fake_call(path, body=None):
+            captured["path"], captured["body"] = path, copy.deepcopy(body)
+            return 200, pending_reply
+        with patch.object(mcp_server, "_call", fake_call):
+            response = mcp_server.act(3, "v3-open", "start_business", mcp_server.ActionArgumentsV3(),
+                                      "broker", "world", 1, "world:1")
+        self.assertTrue(response.ok)
+        self.assertEqual(captured["path"], "/commands")
+        self.assertEqual(captured["body"]["schema_version"], 3)
+        self.assertEqual(captured["body"]["action"], "start_business")
+        self.assertEqual(captured["body"]["arguments"], {})
+
+    def test_purchase_arguments_have_no_authorization_token(self):
+        self.assertEqual(V3_ACTION_ARGUMENTS["purchase_visible_offer"], frozenset({
+            "customer_ref", "offer_ref", "item_refs", "collection_fingerprint", "mode", "amount", "max_spend"}))
+        self.assertNotIn("authorization_ref", mcp_server.ActionArgumentsV3.model_fields)
 
     def test_v2_act_cannot_silently_upgrade_into_v3_action_space(self):
         response = mcp_server.act(2, "v2-start", "start_business", mcp_server.ActionArgumentsV3(),

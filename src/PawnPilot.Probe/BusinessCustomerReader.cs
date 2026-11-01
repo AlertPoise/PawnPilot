@@ -1,4 +1,7 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using UnityEngine;
 
 namespace PawnPilot
@@ -37,7 +40,10 @@ namespace PawnPilot
             // callbacks, identifier, inventory, and dialog graph are never returned or serialized.
             var blueprint = instance.GetClientBlueprint();
             if (blueprint != null)
+            {
                 customer.TradeType = blueprint.clientIntent == StoreClient.ClientIntent.SELL ? "sell" : "other";
+                if (customer.TradeType == "sell") customer.MultiBuyDisabled = blueprint.isMultiBuyDisabled;
+            }
 
             var dialog = DialogUIManager.Instance;
             var negotiation = NegociationUIManager.Instance;
@@ -45,6 +51,11 @@ namespace PawnPilot
             var current = dialog.currentDialog;
             if (current == null)
             {
+                customer.DialogueText = null;
+                customer.IsTyping = null;
+                customer.WaitingForAdvance = null;
+                customer.OptionIdentities = Array.Empty<object>();
+                customer.OptionTexts = Array.Empty<string>();
                 if (store.isClientArrived && negotiation != null && negotiation.uiObject != null &&
                     negotiation.uiObject.activeInHierarchy)
                     customer.Phase = "trading";
@@ -56,23 +67,32 @@ namespace PawnPilot
             customer.Identity = instance;
             customer.DialogueIdentity = current;
             customer.Phase = "dialogue";
+            customer.IsTyping = dialog.IsLineStillDisplaying(current);
+            customer.WaitingForAdvance = dialog.isWaitingForManualAdvance;
+            customer.DialogueText = ReadCurrentVisibleDialogue(dialog);
 
             // These methods are direct comparisons/field reads in the reviewed IL. Do not read
             // Dialogue.plainText/text or invoke any action callback to infer display state.
             if (dialog.IsChoice())
             {
-                if (TryReadVisibleMainOptions(dialog, out var visibleOptions))
+                if (TryReadVisibleMainOptions(dialog, out var visibleOptions, out var visibleTexts))
                 {
                     customer.OptionIdentities = visibleOptions.ToArray();
+                    customer.OptionTexts = visibleTexts.ToArray();
                     customer.DialogueStage = "choices";
                 }
-                else customer.DialogueStage = "updating";
+                else
+                {
+                    customer.OptionIdentities = Array.Empty<object>();
+                    customer.OptionTexts = Array.Empty<string>();
+                    customer.DialogueStage = "updating";
+                }
             }
-            else if (dialog.IsLineStillDisplaying(current))
+            else if (customer.IsTyping == true)
             {
                 customer.DialogueStage = "typing";
             }
-            else if (dialog.isWaitingForManualAdvance)
+            else if (customer.WaitingForAdvance == true)
             {
                 customer.DialogueStage = "waiting";
             }
@@ -83,9 +103,10 @@ namespace PawnPilot
             return input;
         }
 
-        private static bool TryReadVisibleMainOptions(DialogUIManager dialog, out List<object> result)
+        private static bool TryReadVisibleMainOptions(DialogUIManager dialog, out List<object> result, out List<string> texts)
         {
             result = new List<object>();
+            texts = new List<string>();
             if (dialog == null || dialog.dialogChoiceBubbles == null || dialog.dialogChoiceBubbles.Count == 0 ||
                 dialog.dialogChoiceBubbles.Count > 64) return false;
             foreach (var bubble in dialog.dialogChoiceBubbles)
@@ -94,10 +115,55 @@ namespace PawnPilot
                 var rect = bubble.GetComponent<RectTransform>();
                 if (!bubble.IsInteractable() || rect == null || bubble.TMP == null ||
                     !VisibleUiReader.RectVisible(rect) || !VisibleUiReader.TextVisible(bubble.TMP, rect)) continue;
+                string visibleText = ReadRenderedText(bubble.TMP, allowPartial: false);
+                if (string.IsNullOrWhiteSpace(visibleText) || visibleText.Length > 256)
+                {
+                    result.Clear();
+                    texts.Clear();
+                    return false;
+                }
                 result.Add(bubble);
-                if (result.Count > 16) { result.Clear(); return false; }
+                texts.Add(visibleText);
+                if (result.Count > 16) { result.Clear(); texts.Clear(); return false; }
             }
             return result.Count > 0;
+        }
+
+        private static string ReadCurrentVisibleDialogue(DialogUIManager dialog)
+        {
+            if (dialog == null) return null;
+            var candidates = new[] { dialog.clientBubble, dialog.playerBubble, dialog.secBubble };
+            string visible = null;
+            foreach (var bubble in candidates)
+            {
+                if (bubble == null || bubble.textfield == null || !bubble.gameObject.activeInHierarchy) continue;
+                var rect = bubble.textfield.rectTransform;
+                if (rect == null || !VisibleUiReader.RectVisible(rect) || !VisibleUiReader.TextVisible(bubble.textfield, rect)) continue;
+                if (visible != null) return null; // Ambiguous active speaker; never guess which line to expose.
+                visible = ReadRenderedText(bubble.textfield, allowPartial: true);
+            }
+            return visible;
+        }
+
+        // Reads TMP's already-generated character buffer, not Dialogue.text/plainText. This
+        // respects maxVisibleCharacters during typewriter animation and never exports a future line.
+        private static string ReadRenderedText(TMPro.TMP_Text text, bool allowPartial)
+        {
+            if (text == null || text.textInfo == null) return null;
+            int count = text.textInfo.characterCount;
+            if (count <= 0) return null;
+            int visibleCount = text.maxVisibleCharacters < 0 ? count : Math.Min(count, text.maxVisibleCharacters);
+            if (!allowPartial && visibleCount < count) return null;
+            if (visibleCount <= 0) return null;
+            var builder = new StringBuilder(Math.Min(visibleCount, 256));
+            var characters = text.textInfo.characterInfo;
+            for (int i = 0; i < visibleCount && i < characters.Length; i++)
+            {
+                if (builder.Length >= 256) return null;
+                builder.Append(characters[i].character);
+            }
+            var value = builder.ToString();
+            return string.IsNullOrWhiteSpace(value) ? null : value;
         }
     }
 }

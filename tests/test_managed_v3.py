@@ -6,6 +6,7 @@ from pathlib import Path
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -19,10 +20,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ManagedV3EndToEndTests(unittest.TestCase):
     def test_v3_business_snapshot_and_close_menu_round_trip(self):
-        directory = ROOT / ".test-tmp" / "managed-v3"
-        directory.mkdir(parents=True, exist_ok=True)
-        config = directory / "session.json"
-        config.write_text(json.dumps({"port": 18765, "token": "e" * 64}), encoding="utf8")
         dll = ROOT / "tests/PawnPilot.CoreTests/bin/Release/net10.0/PawnPilot.CoreTests.dll"
         self.assertTrue(dll.exists(), "Build managed Release tests before running E2E")
         broker = Broker("e" * 64, heartbeat_timeout=.8)
@@ -36,6 +33,17 @@ class ManagedV3EndToEndTests(unittest.TestCase):
 
         broker.exchange = recorded_exchange
         server = Server(broker, port=0)
+        temp_root = ROOT / ".test-tmp"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="managed-v3-", dir=temp_root) as directory:
+            config = Path(directory) / "session.json"
+            # The production config parser accepts only the documented port. The test's
+            # broker is bound to an OS-assigned ephemeral port and the child client is
+            # redirected to it below, so this value does not bind or contact 18765.
+            config.write_text(json.dumps({"port": 18765, "token": "e" * 64}), encoding="utf8")
+            self._run_managed_v3(config, broker, server, observations, dll)
+
+    def _run_managed_v3(self, config, broker, server, observations, dll):
         thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .02}, daemon=True)
         thread.start()
         process = subprocess.Popen(["dotnet", str(dll), "--simulate-mod-v3", str(server.server_port)],
@@ -65,7 +73,7 @@ class ManagedV3EndToEndTests(unittest.TestCase):
             self.assertTrue(initial["connected"])
             self.assertEqual(initial["schema_version"], 3)
             self.assertEqual(initial["state"]["schema_version"], 3)
-            self.assertEqual(initial["state"]["business"]["details"]["schema_version"], 1)
+            self.assertEqual(initial["state"]["business"]["details"]["schema_version"], 2)
             self.assertEqual([a["action"] for a in initial["state"]["legal_actions"]], ["close_menu"])
 
             bootstrap = ("import bridge.client as c; " + f"c.PORT={server.server_port}; "
@@ -98,6 +106,7 @@ class ManagedV3EndToEndTests(unittest.TestCase):
                 stream.close()
             reader.join(timeout=2)
             server.shutdown(); server.server_close(); thread.join(timeout=2)
+            broker.close()
 
     async def _exercise(self, params, initial):
         async with Client(params, read_timeout_seconds=15) as client:
@@ -107,7 +116,7 @@ class ManagedV3EndToEndTests(unittest.TestCase):
             snapshot = observed.structured_content["snapshot"]
             self.assertEqual(snapshot["schema_version"], 3)
             state = snapshot["state"]
-            self.assertEqual(state["business"]["details"]["schema_version"], 1)
+            self.assertEqual(state["business"]["details"]["schema_version"], 2)
             acted = await client.call_tool("act", {"schema_version": 3, "command_id": "managed-v3-close",
                 "action": "close_menu", "arguments": {}, "broker_epoch": snapshot["broker_epoch"],
                 "expected_world_epoch": state["world_epoch"], "expected_revision": state["revision"],
@@ -123,7 +132,7 @@ class ManagedV3EndToEndTests(unittest.TestCase):
             status = await client.call_tool("get_action_status", {"command_id": "managed-v3-close"})
             self.assertFalse(status.is_error, status.content)
             self.assertEqual(status.structured_content["record_schema_version"], 3)
-            self.assertEqual(status.structured_content["result"]["before"]["business"]["details"]["schema_version"], 1)
+            self.assertEqual(status.structured_content["result"]["before"]["business"]["details"]["schema_version"], 2)
 
 
 if __name__ == "__main__": unittest.main()

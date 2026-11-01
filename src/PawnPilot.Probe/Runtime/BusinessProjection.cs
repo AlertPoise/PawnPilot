@@ -26,7 +26,10 @@ namespace PawnPilot
         public string Phase = "unknown";
         public object DialogueIdentity;
         public string DialogueStage = "unknown";
+        public string DialogueText;
+        public bool? IsTyping, WaitingForAdvance, MultiBuyDisabled;
         public object[] OptionIdentities = Array.Empty<object>();
+        public string[] OptionTexts = Array.Empty<string>();
     }
 
     public sealed class BusinessContainerInput
@@ -51,9 +54,10 @@ namespace PawnPilot
     {
         public string Status = "unavailable";
         public string Mode = "unknown";
-        public int? DisplayedTotal;
+        public int? DisplayedTotal, WholesaleTotal;
         public string Reason = "not_observed";
         public bool BindingVerified;
+        public object[] PurchaseIdentities = Array.Empty<object>();
         public BusinessQuoteRowInput[] Rows = Array.Empty<BusinessQuoteRowInput>();
     }
 
@@ -165,6 +169,30 @@ namespace PawnPilot
             return null;
         }
 
+        public static int? ParseVisibleNormalTotal(string rendered)
+        {
+            if (string.IsNullOrWhiteSpace(rendered)) return null;
+            int separator = rendered.IndexOf(" / ", StringComparison.Ordinal);
+            if (separator < 0) return ParseVisibleTotal(rendered);
+            if (rendered.IndexOf(" / ", separator + 3, StringComparison.Ordinal) >= 0) return null;
+            return ParseVisibleTotal(rendered.Substring(0, separator));
+        }
+
+        public static int? ParseVisibleWholesaleTotal(string rendered)
+        {
+            if (string.IsNullOrWhiteSpace(rendered)) return null;
+            int separator = rendered.IndexOf(" / ", StringComparison.Ordinal);
+            if (separator < 0 || rendered.IndexOf(" / ", separator + 3, StringComparison.Ordinal) >= 0) return null;
+            string wholesale = rendered.Substring(separator + 3).Trim();
+            int discount = wholesale.IndexOf(" (", StringComparison.Ordinal);
+            if (discount >= 0)
+            {
+                if (!wholesale.EndsWith(")", StringComparison.Ordinal)) return null;
+                wholesale = wholesale.Substring(0, discount).TrimEnd();
+            }
+            return ParseVisibleTotal(wholesale);
+        }
+
         private static bool IsCurrencySymbol(char value) => value == '$' || value == '€' || value == '£' || value == '¥';
         private static bool IsCurrencyGlyph(char value) => value >= '\uE000' && value <= '\uF8FF';
         private static bool AllDigits(string value)
@@ -188,6 +216,7 @@ namespace PawnPilot
 
         private sealed class ItemRecord
         {
+            public object identity;
             public string reference;
             public string container;
             public string name;
@@ -209,6 +238,14 @@ namespace PawnPilot
         private object customerIdentity, dialogueIdentity;
         private string customerRef, dialogueRef, dialogueFingerprint;
         private object[] dialogueOptions = Array.Empty<object>();
+        private string[] dialogueOptionTexts = Array.Empty<string>();
+        private string currentOfferRef, currentOfferFingerprint;
+        private int currentPurchaseAmount;
+        private object[] currentPurchaseIdentities = Array.Empty<object>();
+        private string[] currentPurchaseItemRefs = Array.Empty<string>();
+        private string currentFrontFingerprint;
+        private object[] currentFrontIdentities = Array.Empty<object>();
+        private string[] currentFrontItemRefs = Array.Empty<string>();
         private string world;
         private long nextReference;
 
@@ -254,6 +291,65 @@ namespace PawnPilot
                 return identity != null;
             }
             return false;
+        }
+
+        internal bool TryResolveItem(string worldEpoch, string expectedCustomerRef, string expectedContainer,
+            string itemRef, out object identity)
+        {
+            identity = null;
+            if (!string.Equals(world, worldEpoch, StringComparison.Ordinal) || customerRef == null ||
+                !string.Equals(customerRef, expectedCustomerRef, StringComparison.Ordinal) ||
+                !Allowed(expectedContainer, "front", "back", "player") || string.IsNullOrEmpty(itemRef)) return false;
+            foreach (var pair in itemRefs)
+            {
+                if (pair.Value.container != expectedContainer || pair.Value.reference != itemRef) continue;
+                identity = pair.Key;
+                return true;
+            }
+            return false;
+        }
+
+        internal bool TryGetItemReference(string worldEpoch, string expectedContainer, object identity,
+            out string itemRef)
+        {
+            itemRef = null;
+            if (identity == null || !string.Equals(world, worldEpoch, StringComparison.Ordinal) ||
+                !Allowed(expectedContainer, "front", "back", "player") ||
+                !itemRefs.TryGetValue(identity, out var record) || !ReferenceEquals(record.identity, identity) ||
+                !string.Equals(record.container, expectedContainer, StringComparison.Ordinal)) return false;
+            itemRef = record.reference;
+            return !string.IsNullOrEmpty(itemRef);
+        }
+
+        internal bool TryResolvePurchase(string worldEpoch, string expectedCustomerRef, string expectedOfferRef,
+            string expectedCollectionFingerprint, out object[] orderedItems, out string[] orderedItemRefs, out int amount)
+        {
+            orderedItems = Array.Empty<object>();
+            orderedItemRefs = Array.Empty<string>();
+            amount = 0;
+            if (!string.Equals(world, worldEpoch, StringComparison.Ordinal) || customerRef == null ||
+                !string.Equals(customerRef, expectedCustomerRef, StringComparison.Ordinal) ||
+                string.IsNullOrEmpty(currentOfferRef) || currentOfferRef != expectedOfferRef ||
+                string.IsNullOrEmpty(currentOfferFingerprint) || currentOfferFingerprint != expectedCollectionFingerprint ||
+                currentPurchaseIdentities.Length == 0 || currentPurchaseIdentities.Length != currentPurchaseItemRefs.Length) return false;
+            orderedItems = (object[])currentPurchaseIdentities.Clone();
+            orderedItemRefs = (string[])currentPurchaseItemRefs.Clone();
+            amount = currentPurchaseAmount;
+            return true;
+        }
+
+        internal bool TryResolveFrontCollection(string worldEpoch, string expectedCustomerRef,
+            string expectedFingerprint, out object[] orderedItems, out string[] orderedItemRefs)
+        {
+            orderedItems = Array.Empty<object>();
+            orderedItemRefs = Array.Empty<string>();
+            if (!string.Equals(world, worldEpoch, StringComparison.Ordinal) || customerRef == null ||
+                !string.Equals(customerRef, expectedCustomerRef, StringComparison.Ordinal) ||
+                string.IsNullOrEmpty(currentFrontFingerprint) || currentFrontFingerprint != expectedFingerprint ||
+                currentFrontIdentities.Length == 0 || currentFrontIdentities.Length != currentFrontItemRefs.Length) return false;
+            orderedItems = (object[])currentFrontIdentities.Clone();
+            orderedItemRefs = (string[])currentFrontItemRefs.Clone();
+            return true;
         }
 
         public BusinessObservation Capture(string worldEpoch, bool ready, Func<BusinessInput> read)
@@ -307,7 +403,7 @@ namespace PawnPilot
 
         private BusinessObservation Project(string worldEpoch, BusinessInput input)
         {
-            var details = new BusinessDetails();
+            var details = new BusinessDetails { schema_version = 2 };
             var customer = input.Customer;
             bool hasCustomer = customer.Identity != null && customer.Presence == "present";
             if (!ReferenceEquals(customerIdentity, customer.Identity) || (hasCustomer && customerRef == null))
@@ -331,15 +427,23 @@ namespace PawnPilot
             details.customer.dialogue_stage = customer.Presence == "absent" ? "absent" : hasCustomer ? customer.DialogueStage : "unknown";
             if (hasCustomer && customer.DialogueIdentity != null && customer.DialogueStage != "absent")
             {
+                details.customer.dialogue_text = customer.DialogueText;
+                details.customer.is_typing = customer.IsTyping;
+                details.customer.waiting_for_advance = customer.WaitingForAdvance;
+            }
+            if (hasCustomer && customer.DialogueIdentity != null && customer.DialogueStage != "absent")
+            {
                 string nextDialogueFingerprint = customer.DialogueStage;
                 if (!ReferenceEquals(dialogueIdentity, customer.DialogueIdentity) ||
                     !string.Equals(dialogueFingerprint, nextDialogueFingerprint, StringComparison.Ordinal) ||
-                    !SameIdentities(dialogueOptions, customer.OptionIdentities))
+                    !SameIdentities(dialogueOptions, customer.OptionIdentities) ||
+                    !SameStrings(dialogueOptionTexts, customer.OptionTexts))
                 {
                     ClearDialogueRefs();
                     dialogueIdentity = customer.DialogueIdentity;
                     dialogueFingerprint = nextDialogueFingerprint;
                     dialogueOptions = (object[])customer.OptionIdentities.Clone();
+                    dialogueOptionTexts = (string[])customer.OptionTexts.Clone();
                     dialogueRef = NewRef("dialogue");
                     for (int i = 0; i < customer.OptionIdentities.Length; i++)
                     {
@@ -350,7 +454,12 @@ namespace PawnPilot
                 }
                 details.customer.dialogue_ref = dialogueRef;
                 for (int i = 0; i < customer.OptionIdentities.Length; i++)
-                    details.customer.option_refs.Add(optionRefs[customer.OptionIdentities[i]].reference);
+                {
+                    string optionRef = optionRefs[customer.OptionIdentities[i]].reference;
+                    details.customer.option_refs.Add(optionRef);
+                    details.customer.options.Add(new DialogueOptionState { option_ref = optionRef,
+                        text = customer.OptionTexts[i] });
+                }
             }
             else ClearDialogueRefs();
 
@@ -358,7 +467,7 @@ namespace PawnPilot
             foreach (var container in input.Containers) containersByName.Add(container.Container, container);
             bool uiBlocksItems = input.Ui.Status == "blocked" || Array.IndexOf(input.Ui.Blockers, "ui_reader_failed") >= 0;
             var presentObservedItems = new HashSet<object>(RefComparer.Instance);
-            var allItemRefs = new List<string>();
+            var itemReferenceByIdentity = new Dictionary<object, string>(RefComparer.Instance);
             bool allContainersComplete = true;
             foreach (string name in new[] { "front", "back", "player" })
             {
@@ -384,7 +493,7 @@ namespace PawnPilot
                     presentObservedItems.Add(sourceItem.Identity);
                     itemRef = GetItemReference(sourceItem, name);
                     state.item_refs.Add(itemRef);
-                    allItemRefs.Add(itemRef);
+                    itemReferenceByIdentity[sourceItem.Identity] = itemRef;
                     details.items.Add(new ItemState { item_ref = itemRef, container = name,
                         name = sourceItem.Name, units = sourceItem.Units, owned = sourceItem.Owned,
                         shape_status = sourceItem.ShapeStatus, width = sourceItem.Width, height = sourceItem.Height });
@@ -392,80 +501,168 @@ namespace PawnPilot
             }
             RemoveUnobservedItemReferences(presentObservedItems);
 
-            details.status = input.Ui.Complete && input.Ui.Status == "consistent" &&
-                input.Ui.Coverage == "verified" && allContainersComplete ? "complete" : "partial";
+            // Schema 2 status reports the bounded business roots, not global UI coverage.
+            details.status = allContainersComplete ? "complete" : "partial";
             details.ui.status = input.Ui.Status;
             details.ui.coverage = input.Ui.Coverage;
             details.ui.blockers.AddRange(input.Ui.Blockers);
 
-            ProjectQuote(input.Quote, details.quote, details.items, details.containers, hasCustomer, allContainersComplete, uiBlocksItems);
-            string collectionFingerprint = null;
-            if (!uiBlocksItems && hasCustomer && containersByName.TryGetValue("back", out var back) && back.Completeness == "complete" && back.Items.Length > 0)
+            var purchaseRefs = new List<string>();
+            var purchaseIdentities = new List<object>();
+            bool purchaseSetKnown = TryBuildPurchaseSet(customer, input.Quote, containersByName,
+                itemReferenceByIdentity, purchaseIdentities, purchaseRefs);
+            bool quoteComplete = !uiBlocksItems && purchaseSetKnown && hasCustomer && customer.Arrived == true &&
+                string.Equals(customer.TradeType, "sell", StringComparison.Ordinal) &&
+                string.Equals(customer.Phase, "trading", StringComparison.Ordinal) &&
+                input.Quote.Status == "complete" && input.Quote.Mode == "normal" &&
+                input.Quote.BindingVerified && input.Quote.DisplayedTotal.HasValue && purchaseRefs.Count > 0;
+            ProjectQuote(input.Quote, details.quote, quoteComplete, uiBlocksItems);
+
+            string frontFingerprint = null;
+            var frontIdentities = new List<object>();
+            var frontRefs = new List<string>();
+            if (!uiBlocksItems && hasCustomer && customer.TradeType == "sell" &&
+                containersByName.TryGetValue("front", out var front) && front.Completeness == "complete")
             {
-                bool allUnowned = true;
-                var members = new List<BusinessCollectionMember>(back.Items.Length);
-                foreach (var item in back.Items)
+                var frontMembers = new List<BusinessCollectionMember>(front.Items.Length);
+                foreach (var item in front.Items)
                 {
-                    if (item.Owned) allUnowned = false;
-                    members.Add(new BusinessCollectionMember { item_ref = GetItemReference(item, "back"),
-                        container = "back", units = item.Units, owned = item.Owned });
+                    if (!itemReferenceByIdentity.TryGetValue(item.Identity, out string reference)) continue;
+                    frontIdentities.Add(item.Identity);
+                    frontRefs.Add(reference);
+                    frontMembers.Add(new BusinessCollectionMember { item_ref = reference, container = "front",
+                        units = item.Units, owned = item.Owned });
                 }
-                if (allUnowned)
-                    collectionFingerprint = BusinessCollection.Fingerprint(worldEpoch, customerRef, customer.TradeType,
-                        members, details.quote.mode, details.quote.status, details.quote.displayed_total);
+                frontFingerprint = BusinessCollection.Fingerprint(worldEpoch, customerRef, customer.TradeType,
+                    frontMembers, "unknown", "unverified", null);
             }
-            // The current runtime reader does not establish a full customer-specific native capacity
-            // proof, UI coverage or settlement evidence. Do not promote candidates to legal actions.
+            currentFrontFingerprint = frontFingerprint;
+            currentFrontIdentities = frontIdentities.ToArray();
+            currentFrontItemRefs = frontRefs.ToArray();
+
+            string collectionFingerprint = null;
+            string nextOfferRef = null;
+            if (quoteComplete)
+            {
+                var purchaseMembers = new List<BusinessCollectionMember>(purchaseRefs.Count);
+                var backItems = containersByName["back"].Items;
+                foreach (object identity in purchaseIdentities)
+                    foreach (var item in backItems)
+                        if (ReferenceEquals(item.Identity, identity))
+                        {
+                            purchaseMembers.Add(new BusinessCollectionMember { item_ref = itemReferenceByIdentity[identity],
+                                container = "back", units = item.Units, owned = item.Owned });
+                            break;
+                        }
+                collectionFingerprint = BusinessCollection.Fingerprint(worldEpoch, customerRef, customer.TradeType,
+                    purchaseMembers, "normal", "complete", details.quote.displayed_total);
+                if (collectionFingerprint != null)
+                {
+                    if (!string.Equals(currentOfferFingerprint, collectionFingerprint, StringComparison.Ordinal) || currentOfferRef == null)
+                        currentOfferRef = NewRef("offer");
+                    currentOfferFingerprint = collectionFingerprint;
+                    nextOfferRef = currentOfferRef;
+                    currentPurchaseIdentities = purchaseIdentities.ToArray();
+                    currentPurchaseItemRefs = purchaseRefs.ToArray();
+                    currentPurchaseAmount = details.quote.displayed_total.Value;
+                }
+                else quoteComplete = false;
+            }
+            if (!quoteComplete)
+            {
+                currentOfferRef = null;
+                currentOfferFingerprint = null;
+                currentPurchaseIdentities = Array.Empty<object>();
+                currentPurchaseItemRefs = Array.Empty<string>();
+                currentPurchaseAmount = 0;
+                collectionFingerprint = null;
+                nextOfferRef = null;
+            }
+            details.front_collection_fingerprint = frontFingerprint;
+            // Unity purchase adapter fills current-grid eligibility after projection.
             details.capacity.status = "unverified";
             details.capacity.scope = "none";
             details.capacity.reason = "native_rules_unverified";
             details.eligibility.purchase_enabled = false;
-            details.eligibility.missing = new List<string> { "quote_binding", "capacity", "settlement", "ui_coverage" };
+            details.eligibility.missing = new List<string> { quoteComplete ? "purchase_preflight_pending" : "quote_binding" };
             foreach (string action in new[] { "start_business", "receive_next_customer", "advance_dialogue",
                 "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation", "dismiss_customer" })
                 details.candidates.Add(new BusinessCandidate { action = action, status = uiBlocksItems ? "blocked" : "unverified",
                     reason = uiBlocksItems ? "ui_blocked_or_unverified" : "native_scope_not_verified" });
             details.candidates.Add(new BusinessCandidate { action = "refuse_trade", status = "blocked", reason = "unsupported_native_path" });
-            details.candidates.Add(new BusinessCandidate { action = "purchase_visible_offer", status = "blocked", reason = "q_c_v_not_verified" });
+            details.candidates.Add(new BusinessCandidate { action = "purchase_visible_offer", status = "unverified", reason = "purchase_preflight_pending" });
 
             return new BusinessObservation
             {
-                support = "partial",
+                support = quoteComplete ? "available" : "partial",
                 customer_ref = customerRef,
-                item_refs = allItemRefs,
-                offer_ref = null,
+                item_refs = purchaseRefs,
+                offer_ref = nextOfferRef,
                 collection_fingerprint = collectionFingerprint,
                 details = details
             };
         }
 
-        private void ProjectQuote(BusinessQuoteInput source, QuoteState target, List<ItemState> projectedItems,
-            List<ContainerState> containers, bool hasCustomer, bool allContainersComplete, bool uiBlocksItems)
+        private static bool TryBuildPurchaseSet(BusinessCustomerInput customer, BusinessQuoteInput quote,
+            Dictionary<string, BusinessContainerInput> containers,
+            Dictionary<object, string> itemReferenceByIdentity, List<object> identities, List<string> references)
         {
-            if (uiBlocksItems)
+            identities.Clear(); references.Clear();
+            if (customer == null || quote == null || customer.Presence != "present" || customer.Identity == null ||
+                customer.TradeType != "sell" || !customer.MultiBuyDisabled.HasValue || quote.PurchaseIdentities == null ||
+                !containers.TryGetValue("back", out var back) || back.Completeness != "complete") return false;
+
+            var expected = new List<BusinessItemInput>();
+            foreach (var item in back.Items) if (!item.Owned) expected.Add(item);
+            if (expected.Count == 0) return false;
+            if (!customer.MultiBuyDisabled.Value || expected.Count == 1)
+            {
+                if (quote.PurchaseIdentities.Length != expected.Count) return false;
+                for (int i = 0; i < expected.Count; i++)
+                    if (!ReferenceEquals(expected[i].Identity, quote.PurchaseIdentities[i])) return false;
+            }
+            else
+            {
+                // A disabled multi-buy button consumes one selected row. The reader supplies
+                // the one visible selected row in native list order; ambiguity is not guessed.
+                if (quote.PurchaseIdentities.Length != 1) return false;
+                bool found = false;
+                foreach (var item in expected)
+                    if (ReferenceEquals(item.Identity, quote.PurchaseIdentities[0])) { found = true; break; }
+                if (!found) return false;
+            }
+            foreach (object identity in quote.PurchaseIdentities)
+            {
+                if (identity == null || !itemReferenceByIdentity.TryGetValue(identity, out string reference))
+                    return false;
+                identities.Add(identity);
+                references.Add(reference);
+            }
+            return identities.Count > 0;
+        }
+
+        private static void ProjectQuote(BusinessQuoteInput source, QuoteState target, bool verified, bool uiBlocked)
+        {
+            if (uiBlocked)
             {
                 target.status = "unavailable";
                 target.mode = "unknown";
                 target.displayed_total = null;
+                target.wholesale_total = null;
                 target.reason = "ui_blocked_or_unverified";
                 return;
             }
-            // This projector has no production row-binding attestation. A caller-supplied bool
-            // cannot mint a verified offer, even if a future input claims complete evidence.
-            target.status = source.Status == "unavailable" ? "unavailable" : "unverified";
-            target.mode = "unknown";
+            target.status = verified ? "complete" : source.Status == "unavailable" ? "unavailable" : "unverified";
+            target.mode = string.Equals(source.Mode, "normal", StringComparison.Ordinal) ||
+                string.Equals(source.Mode, "wholesale", StringComparison.Ordinal) ? source.Mode : "unknown";
             target.displayed_total = source.DisplayedTotal;
-            target.reason = source.Reason;
-            // Quote row/item binding and freshness are not proven by visible text alone. Preserve
-            // rendered row text, but do not attach action-capable item references in this reader.
+            target.wholesale_total = source.WholesaleTotal;
+            target.reason = verified ? null : source.Reason;
+            // Rows are optional displayed text; whole-offer binding is to the normal total
+            // and the exact native purchase collection, not a fabricated row-to-item match.
             foreach (var row in source.Rows)
                 target.rows.Add(new QuoteRowState { item_ref = null, name = row.Name,
                     price_text = row.PriceText, amount = null });
-            if (!source.BindingVerified)
-            {
-                target.mode = "unknown";
-                target.reason = source.Reason;
-            }
         }
 
         private string GetItemReference(BusinessItemInput item, string container)
@@ -477,7 +674,7 @@ namespace PawnPilot
                 record.width != item.Width || record.height != item.Height)
             {
                 itemRefs.Remove(item.Identity);
-                record = new ItemRecord { reference = NewRef("item"), container = container,
+                record = new ItemRecord { identity = item.Identity, reference = NewRef("item"), container = container,
                     name = item.Name, units = item.Units, owned = item.Owned,
                     shapeStatus = item.ShapeStatus, width = item.Width, height = item.Height };
                 itemRefs.Add(item.Identity, record);
@@ -510,6 +707,7 @@ namespace PawnPilot
             dialogueIdentity = null;
             dialogueFingerprint = null;
             dialogueOptions = Array.Empty<object>();
+            dialogueOptionTexts = Array.Empty<string>();
             dialogueRef = null;
         }
 
@@ -519,8 +717,21 @@ namespace PawnPilot
         {
             ClearItemRefs();
             ClearDialogueRefs();
+            ClearCollectionRefs();
             customerIdentity = null;
             customerRef = null;
+        }
+
+        private void ClearCollectionRefs()
+        {
+            currentOfferRef = null;
+            currentOfferFingerprint = null;
+            currentPurchaseAmount = 0;
+            currentPurchaseIdentities = Array.Empty<object>();
+            currentPurchaseItemRefs = Array.Empty<string>();
+            currentFrontFingerprint = null;
+            currentFrontIdentities = Array.Empty<object>();
+            currentFrontItemRefs = Array.Empty<string>();
         }
 
         private BusinessObservation Unavailable(string reason) => new BusinessObservation
@@ -530,7 +741,7 @@ namespace PawnPilot
             item_refs = new List<string>(),
             offer_ref = null,
             collection_fingerprint = null,
-            details = new BusinessDetails { status = "unavailable",
+            details = new BusinessDetails { schema_version = 2, status = "unavailable",
                 customer = new CustomerState { presence = "unverified", phase = "unknown" },
                 containers = new List<ContainerState> {
                     new ContainerState { container = "front", completeness = "unavailable", reason = reason },
@@ -551,7 +762,9 @@ namespace PawnPilot
                 return "incomplete_sample";
             if (input.Containers.Length > 3 || input.Quote.Rows == null || input.Quote.Rows.Length > 64 ||
                 input.Ui.Blockers == null || input.Ui.Blockers.Length > 16 || input.Customer.OptionIdentities == null ||
-                input.Customer.OptionIdentities.Length > 16) return "sample_limit_exceeded";
+                input.Customer.OptionIdentities.Length > 16 || input.Customer.OptionTexts == null ||
+                input.Customer.OptionTexts.Length > 16 || input.Customer.OptionTexts.Length != input.Customer.OptionIdentities.Length ||
+                input.Quote.PurchaseIdentities == null || input.Quote.PurchaseIdentities.Length > 64) return "sample_limit_exceeded";
             if (!Allowed(input.Customer.Presence, "absent", "present", "unverified") ||
                 !Allowed(input.Customer.TradeType, "sell", "other", "unknown") ||
                 !Allowed(input.Customer.Phase, "absent", "arriving", "dialogue", "trading", "leaving", "unknown") ||
@@ -560,7 +773,10 @@ namespace PawnPilot
                 !Allowed(input.Ui.Coverage, "known_roots_only", "verified") ||
                 !Allowed(input.Quote.Status, "complete", "unverified", "unavailable") ||
                 !Allowed(input.Quote.Mode, "normal", "wholesale", "unknown") ||
-                !ValidText(input.Customer.Phase, 64) || !ValidText(input.Quote.Reason, 128)) return "invalid_sample";
+                !ValidText(input.Customer.Phase, 64) || !ValidText(input.Customer.DialogueText, 256) ||
+                !ValidText(input.Quote.Reason, 128) ||
+                (input.Quote.DisplayedTotal.HasValue && input.Quote.DisplayedTotal.Value < 0) ||
+                (input.Quote.WholesaleTotal.HasValue && input.Quote.WholesaleTotal.Value < 0)) return "invalid_sample";
             if (input.Customer.Presence == "present" && input.Customer.Identity == null) return "invalid_customer_identity";
             if (input.Customer.Presence != "present" && input.Customer.Identity != null) return "invalid_customer_identity";
             if ((input.Customer.Identity != null && !input.Customer.Identity.GetType().IsClass) ||
@@ -573,6 +789,7 @@ namespace PawnPilot
             AddText(ref stringBudget, input.Customer.TradeType);
             AddText(ref stringBudget, input.Customer.Phase);
             AddText(ref stringBudget, input.Customer.DialogueStage);
+            AddText(ref stringBudget, input.Customer.DialogueText);
             AddText(ref stringBudget, input.Quote.Status);
             AddText(ref stringBudget, input.Quote.Mode);
             AddText(ref stringBudget, input.Quote.Reason);
@@ -602,6 +819,11 @@ namespace PawnPilot
                 if (row == null || !ValidText(row.Name, 256) || !ValidText(row.PriceText, 256) ||
                     (row.Amount.HasValue && row.Amount.Value < 0)) return "invalid_quote_row";
             foreach (var row in input.Quote.Rows) { AddText(ref stringBudget, row.Name); AddText(ref stringBudget, row.PriceText); }
+            foreach (string optionText in input.Customer.OptionTexts)
+            {
+                if (!ValidText(optionText, 256) || string.IsNullOrEmpty(optionText)) return "invalid_option_text";
+                AddText(ref stringBudget, optionText);
+            }
             AddText(ref stringBudget, input.Ui.Status);
             AddText(ref stringBudget, input.Ui.Coverage);
             foreach (string blocker in input.Ui.Blockers)
@@ -610,11 +832,19 @@ namespace PawnPilot
                 AddText(ref stringBudget, blocker);
             }
             if (input.Customer.DialogueIdentity == null && input.Customer.OptionIdentities.Length != 0) return "invalid_dialogue_identity";
+            if (input.Customer.DialogueIdentity == null && (input.Customer.DialogueText != null ||
+                input.Customer.IsTyping.HasValue || input.Customer.WaitingForAdvance.HasValue)) return "invalid_dialogue_identity";
             var optionSet = new HashSet<object>(RefComparer.Instance);
             foreach (object option in input.Customer.OptionIdentities)
                 if (!optionSet.Add(option)) return "duplicate_option_identity";
             foreach (object option in input.Customer.OptionIdentities) if (option == null || !option.GetType().IsClass) return "invalid_option_identity";
+            var purchaseSet = new HashSet<object>(RefComparer.Instance);
+            foreach (object purchaseItem in input.Quote.PurchaseIdentities)
+                if (purchaseItem == null || !purchaseItem.GetType().IsClass || !purchaseSet.Add(purchaseItem)) return "invalid_purchase_identity";
             if (input.Quote.BindingVerified && input.Quote.Status != "complete") return "invalid_quote_binding";
+            if (input.Quote.Status == "complete" && (!input.Quote.BindingVerified || input.Quote.Mode != "normal" ||
+                !input.Quote.DisplayedTotal.HasValue || input.Quote.DisplayedTotal.Value < 0 ||
+                (input.Quote.WholesaleTotal.HasValue && input.Quote.WholesaleTotal.Value < 0))) return "invalid_quote_binding";
             if (stringBudget > 8192) return "sample_limit_exceeded";
             return null;
         }
@@ -628,6 +858,14 @@ namespace PawnPilot
         {
             if (left == null || right == null || left.Length != right.Length) return false;
             for (int i = 0; i < left.Length; i++) if (!ReferenceEquals(left[i], right[i])) return false;
+            return true;
+        }
+
+        private static bool SameStrings(string[] left, string[] right)
+        {
+            if (left == null || right == null || left.Length != right.Length) return false;
+            for (int i = 0; i < left.Length; i++)
+                if (!string.Equals(left[i], right[i], StringComparison.Ordinal)) return false;
             return true;
         }
 

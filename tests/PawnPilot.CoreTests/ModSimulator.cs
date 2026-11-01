@@ -90,7 +90,7 @@ internal static class ModSimulator
         interaction = new InteractionObservation { phase = confirmed ? "needs_agent" : updating ? "fixture_animation" : "menu",
             consistency = updating ? "updating" : "unverified", reason = "fixture_only", operable = !updating },
         business = wire == 2 ? new BusinessObservation() : new BusinessObservation
-        { support = "unsupported", item_refs = new List<string>(), details = new BusinessDetails() },
+        { support = "unsupported", item_refs = new List<string>(), details = new BusinessDetails { schema_version = 2 } },
         legal_actions = menuOpen && !updating ? new List<LegalAction> { new() { action = "close_menu", arguments = new ActionArguments() } } : new()
     };
 

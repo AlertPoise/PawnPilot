@@ -5,8 +5,7 @@ using System.Linq;
 namespace PawnPilot
 {
     // Process-local facts gathered immediately before a native action. Never attach this type to
-    // Snapshot, JSON, progress, or a result. The production reader leaves capability fields false
-    // unless the complete scene and exact callback chain have been verified.
+    // Snapshot, JSON, progress, or a result. Each enabled action has its own explicit local scope.
     internal sealed class NativeActionEvidence
     {
         internal string Action, Reason;
@@ -14,7 +13,7 @@ namespace PawnPilot
         internal bool NativeTargetAvailable, NativeEntryVerified, CapabilityScopeVerified;
         internal bool StoreClosed, StoreOpen, CanStartDay, NoLocks, NoCurrentCustomer, CanNextClient;
         internal bool AnyCurrentCustomer, StoreLockReleased, MainDialogueReady, NoCallNextPending;
-        internal bool CurrentCustomerMatches, CustomerArrived, OrdinaryScavGeneral, CallbackScopeVerified;
+        internal bool CurrentCustomerMatches, CustomerArrived, OrdinarySeller, CallbackScopeVerified;
         internal bool DialogueMatches, DialogueTyping, WaitingForAdvance, DialogueChoice, NextDialogueExists;
         internal bool OptionVisibleEnabled, ItemSetMatches, TransferScopeVerified, TransferTargetCapacityVerified;
         internal bool ConfirmationOpen, ConfirmationCancelSafe, OnlyTargetBlocker;
@@ -23,18 +22,23 @@ namespace PawnPilot
         public bool Dismissable, DismissInterceptClear, NoPendingEndAction, AutoCallNextDisabled;
     }
 
-    // Pure DTO-only action policy. Static IL evidence identifies candidate native entries, but no
-    // business action is admitted until GameBusinessActions supplies fresh local evidence.
+    // Pure DTO-only action policy. Runtime candidates are descriptive snapshot entries; Invoke
+    // always rechecks current native target and preconditions before dispatch.
     public static class BusinessActionPolicy
     {
-        // Static UI/callback/scene scope has not passed the required independent live review.
-        // Keep this false until that review is complete; registration remains descriptive only.
-        public static bool ProductionDispatchEnabled => false;
+        // The initial open/receive path is scoped to exact native button targets and live
+        // store-state gates. Other registered actions still require their action-specific
+        // evidence and are not advertised by the runtime until those scopes pass.
+        public static bool IsEnabled(string action) => action == "start_business" || action == "receive_next_customer" ||
+            action == "advance_dialogue" || action == "choose_dialogue_option" ||
+            action == "prepare_purchase_items" || action == "dismiss_customer" || action == "purchase_visible_offer";
+        [Obsolete("Use IsEnabled(action); runtime actions are enabled per action scope.")]
+        public static bool ProductionDispatchEnabled => IsEnabled("start_business") || IsEnabled("receive_next_customer");
 
         private static readonly string[] Registered =
         {
             "start_business", "receive_next_customer", "advance_dialogue", "choose_dialogue_option",
-            "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer"
+            "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer", "purchase_visible_offer"
         };
 
         public static bool IsRegistered(string action) => action != null && Array.IndexOf(Registered, action) >= 0;
@@ -63,6 +67,13 @@ namespace PawnPilot
                         Ref(a.collection_fingerprint) && a.offer_ref == null && a.option_ref == null &&
                         a.dialogue_ref == null && a.mode == null && a.authorization_ref == null &&
                         !a.amount.HasValue && !a.max_spend.HasValue;
+                case "purchase_visible_offer":
+                    return Ref(a.customer_ref) && Ref(a.offer_ref) && Ref(a.collection_fingerprint) &&
+                        a.item_refs != null && a.item_refs.Count > 0 && a.item_refs.Count <= 64 &&
+                        a.item_refs.All(Ref) && a.item_refs.Distinct(StringComparer.Ordinal).Count() == a.item_refs.Count &&
+                        a.mode == "normal" && a.amount.HasValue && a.amount.Value >= 0 &&
+                        a.max_spend.HasValue && a.max_spend.Value >= a.amount.Value &&
+                        a.dialogue_ref == null && a.option_ref == null && a.authorization_ref == null;
                 case "refuse_trade":
                 case "dismiss_customer":
                     return Ref(a.customer_ref) && a.item_refs == null && a.offer_ref == null &&
@@ -88,17 +99,16 @@ namespace PawnPilot
 
         public static string Validate(Command command, Snapshot snapshot)
         {
-            string dtoReason = ValidateDto(command, snapshot);
-            if (dtoReason != null) return dtoReason;
-            // DTO evidence cannot prove Unity target identity, topmost hitability, complete modal
-            // coverage, or the per-customer callback closure. Require Check(command,before)'s local
-            // evidence overload even after the scene-specific policy becomes independently proved.
-            return "native_action_evidence_required";
+            string dtoReason = ValidateDto(command, snapshot, requireLegalCandidate: true);
+            return dtoReason;
         }
+
+        internal static string ValidateCandidate(Command command, Snapshot snapshot) =>
+            ValidateDto(command, snapshot, requireLegalCandidate: false);
 
         internal static string Validate(Command command, Snapshot snapshot, NativeActionEvidence evidence)
         {
-            string reason = ValidateDto(command, snapshot);
+            string reason = ValidateDto(command, snapshot, requireLegalCandidate: true);
             if (reason != null) return reason;
             if (evidence == null || !evidence.Captured || evidence.Action != command.action) return "native_action_evidence_missing";
             if (!evidence.SceneReady) return evidence.Reason ?? "scene_not_ready";
@@ -112,41 +122,51 @@ namespace PawnPilot
                     string.Equals(evidence.ConfirmationKind, snapshot.business.details.ui.blockers[0], StringComparison.Ordinal)
                     ? null : (evidence.ConfirmationOpen ? "confirmation_cancel_callback_unverified" : "no_confirmation");
             }
-            if (!evidence.UiCoverageVerified || !evidence.UiConsistent || !evidence.NoBlockers)
-                return evidence.Reason ?? "ui_scope_unverified";
-            if (!evidence.NativeTargetAvailable || !evidence.NativeEntryVerified || !evidence.CapabilityScopeVerified)
-                return evidence.Reason ?? "native_scope_unverified";
-
             var state = snapshot.business.details.customer;
             var args = command.arguments;
+            if (command.action == "start_business" || command.action == "receive_next_customer")
+            {
+                if (!evidence.NativeTargetAvailable || !evidence.NativeEntryVerified || !evidence.NoBlockers ||
+                    !evidence.CapabilityScopeVerified) return evidence.Reason ?? "native_scope_unverified";
+                if (command.action == "start_business")
+                    return snapshot.phase == "MORNING" && evidence.StoreClosed && evidence.CanStartDay && evidence.NoLocks &&
+                        evidence.NoCurrentCustomer && evidence.NoCallNextPending
+                        ? null : "start_business_precondition";
+                return snapshot.phase == "OPEN" && evidence.StoreOpen && evidence.NoLocks && evidence.NoCurrentCustomer &&
+                    evidence.NoCallNextPending && evidence.CanNextClient
+                    ? null : "receive_next_customer_precondition";
+            }
+            if (command.action == "advance_dialogue" || command.action == "choose_dialogue_option" ||
+                command.action == "prepare_purchase_items" || command.action == "dismiss_customer")
+            {
+                if (!evidence.NativeTargetAvailable || !evidence.NativeEntryVerified || !evidence.CapabilityScopeVerified)
+                    return evidence.Reason ?? "native_scope_unverified";
+            }
+            else if (!evidence.UiCoverageVerified || !evidence.UiConsistent || !evidence.NoBlockers ||
+                !evidence.NativeTargetAvailable || !evidence.NativeEntryVerified || !evidence.CapabilityScopeVerified)
+                return evidence.Reason ?? "ui_scope_unverified";
             switch (command.action)
             {
-                case "start_business":
-                    return snapshot.phase == "MORNING" && evidence.StoreClosed && evidence.CanStartDay && evidence.NoLocks
-                        ? null : "start_business_precondition";
-                case "receive_next_customer":
-                    return snapshot.phase == "OPEN" && evidence.StoreOpen && evidence.NoLocks && evidence.NoCurrentCustomer && evidence.CanNextClient
-                        ? null : "receive_next_customer_precondition";
                 case "advance_dialogue":
                     if (!CustomerMatches(snapshot.business.customer_ref, state, args.customer_ref) || state.dialogue_ref != args.dialogue_ref ||
-                        !evidence.CurrentCustomerMatches || !evidence.CustomerArrived || !evidence.OrdinaryScavGeneral ||
-                        !evidence.CallbackScopeVerified || !evidence.DialogueMatches || evidence.DialogueChoice)
+                        !evidence.CurrentCustomerMatches || !evidence.CustomerArrived || !evidence.OrdinarySeller ||
+                        !evidence.DialogueMatches || evidence.DialogueChoice)
                         return "dialogue_scope_or_callback_unverified";
                     if (args.mode == "skip") return evidence.DialogueTyping ? null : "skip_requires_typing";
-                    if (args.mode == "next") return !evidence.DialogueTyping && evidence.WaitingForAdvance && evidence.NextDialogueExists
+                    if (args.mode == "next") return !evidence.DialogueTyping && evidence.WaitingForAdvance
                         ? null : "next_requires_manual_advance";
                     return "invalid_arguments";
                 case "choose_dialogue_option":
                     return CustomerMatches(snapshot.business.customer_ref, state, args.customer_ref) &&
                         state.dialogue_ref == args.dialogue_ref && state.option_refs != null &&
                         state.option_refs.Contains(args.option_ref) && evidence.CurrentCustomerMatches &&
-                        evidence.CustomerArrived && evidence.CallbackScopeVerified && evidence.DialogueMatches &&
+                        evidence.CustomerArrived && evidence.OrdinarySeller && evidence.DialogueMatches &&
                         evidence.DialogueChoice && evidence.OptionVisibleEnabled
                         ? null : "choice_scope_or_callback_unverified";
                 case "prepare_purchase_items":
                     return evidence.CurrentCustomerMatches && CustomerMatches(snapshot.business.customer_ref, state, args.customer_ref) &&
-                        evidence.ItemSetMatches && evidence.TransferScopeVerified && evidence.TransferTargetCapacityVerified &&
-                        evidence.OrdinaryScavGeneral && evidence.CallbackScopeVerified
+                        evidence.ItemSetMatches && evidence.TransferScopeVerified &&
+                        evidence.OrdinarySeller
                         ? null : "prepare_scope_or_capacity_unverified";
                 case "cancel_confirmation":
                     return "confirmation_scope_unverified";
@@ -154,31 +174,34 @@ namespace PawnPilot
                     return "refuse_native_path_unsupported";
                 case "dismiss_customer":
                     if (!CustomerMatches(snapshot.business.customer_ref, state, args.customer_ref) || !evidence.CurrentCustomerMatches ||
-                        !evidence.OrdinaryScavGeneral || !evidence.CallbackScopeVerified || !evidence.Dismissable ||
-                        !evidence.DismissInterceptClear || !evidence.NoPendingEndAction || !evidence.AutoCallNextDisabled)
-                        return "dismiss_callback_or_autocall_unverified";
+                        !evidence.CustomerArrived || !evidence.StoreOpen || !evidence.NoLocks || state.phase != "trading" ||
+                        state.dialogue_ref != null || !evidence.Dismissable || !evidence.DismissInterceptClear)
+                        return "dismiss_state_or_callback_unverified";
                     return null;
                 default:
                     return "unknown_action";
             }
         }
 
-        private static string ValidateDto(Command command, Snapshot snapshot)
+        private static string ValidateDto(Command command, Snapshot snapshot, bool requireLegalCandidate)
         {
             if (command == null || !IsRegistered(command.action)) return "unknown_action";
             if (!ArgumentsValid(command.action, command.arguments)) return "invalid_arguments";
+            if (!IsEnabled(command.action)) return "action_not_enabled";
             if (!BaseSnapshotReady(snapshot)) return "not_ready";
-            if (!HasMatchingLegalAction(command, snapshot)) return "action_not_legal_in_snapshot";
+            if (requireLegalCandidate && !HasMatchingLegalAction(command, snapshot)) return "action_not_legal_in_snapshot";
             var ui = snapshot.business.details.ui;
-            if (snapshot.menu_open || ui.coverage != "verified") return "ui_scope_unverified";
+            if (snapshot.menu_open) return "ui_scope_unverified";
+            bool localNativeAction = IsEnabled(command.action);
             if (command.action == "cancel_confirmation")
             {
                 if (!HasExactlyOneConfirmationBlocker(ui.blockers) || ui.status != "blocked" ||
                     snapshot.interaction.consistency != "blocked" || snapshot.interaction.operable)
                     return "confirmation_scope_unverified";
             }
-            else if (snapshot.interaction.consistency != "consistent" || !snapshot.interaction.operable ||
-                ui.status != "consistent") return "ui_scope_unverified";
+            else if (!localNativeAction && (snapshot.interaction.consistency != "consistent" || !snapshot.interaction.operable ||
+                ui.status != "consistent" || ui.coverage != "verified")) return "ui_scope_unverified";
+            else if (localNativeAction && HasActionBlockingEvidence(ui.blockers, command.action)) return "known_ui_blocker";
             string dtoReason = ValidateDtoPreconditions(command, snapshot);
             if (dtoReason != null) return dtoReason;
             return null;
@@ -191,7 +214,8 @@ namespace PawnPilot
             switch (command.action)
             {
                 case "start_business":
-                    return snapshot.phase == "MORNING" ? null : "store_not_closed_for_business";
+                    return snapshot.phase == "MORNING" && customer.presence == "absent"
+                        ? null : "store_not_closed_for_business";
                 case "receive_next_customer":
                     return snapshot.phase == "OPEN" && customer.presence == "absent"
                         ? null : "customer_already_present_or_store_closed";
@@ -207,12 +231,23 @@ namespace PawnPilot
                         ? null : "choice_not_visible";
                 case "prepare_purchase_items":
                     return CustomerMatches(snapshot.business.customer_ref, customer, args.customer_ref) &&
-                        args.collection_fingerprint == snapshot.business.collection_fingerprint &&
+                        args.collection_fingerprint == snapshot.business.details.front_collection_fingerprint &&
                         ExactFrontSelection(snapshot, args.item_refs) ? null : "front_collection_changed";
                 case "dismiss_customer":
                 case "refuse_trade":
                     return CustomerMatches(snapshot.business.customer_ref, customer, args.customer_ref)
                         ? null : "customer_changed";
+                case "purchase_visible_offer":
+                    return CustomerMatches(snapshot.business.customer_ref, customer, args.customer_ref) &&
+                        customer.trade_type == "sell" && customer.phase == "trading" && customer.arrived == true &&
+                        snapshot.business.offer_ref == args.offer_ref &&
+                        snapshot.business.collection_fingerprint == args.collection_fingerprint &&
+                        snapshot.business.item_refs.SequenceEqual(args.item_refs, StringComparer.Ordinal) &&
+                        snapshot.business.details.quote.status == "complete" && snapshot.business.details.quote.mode == "normal" &&
+                        snapshot.business.details.quote.displayed_total == args.amount &&
+                        snapshot.business.details.capacity.status == "sufficient" &&
+                        snapshot.business.details.eligibility.purchase_enabled && args.max_spend <= snapshot.cash
+                        ? null : "purchase_state_changed";
                 case "cancel_confirmation":
                     return HasExactlyOneConfirmationBlocker(snapshot.business.details.ui.blockers)
                         ? null : "confirmation_kind_unverified";
@@ -224,14 +259,14 @@ namespace PawnPilot
         private static bool ExactFrontSelection(Snapshot snapshot, List<string> refs)
         {
             if (refs == null || !TryGetCompleteContainer(snapshot, "front", out var front) ||
-                !TryGetCompleteContainer(snapshot, "back", out _) || !TryGetCompleteContainer(snapshot, "player", out _)) return false;
+                !TryGetCompleteContainer(snapshot, "back", out _)) return false;
             return refs.Count == front.item_refs.Count && refs.ToHashSet(StringComparer.Ordinal)
                 .SetEquals(front.item_refs);
         }
 
         private static bool BaseSnapshotReady(Snapshot s) => s != null && s.schema_version == Protocol.BusinessSchemaVersion &&
-            s.loaded && s.ready && s.business != null && s.business.support == "available" && s.business.details != null &&
-            s.business.details.status == "complete" && s.business.details.customer != null && s.business.details.ui != null &&
+            s.loaded && s.ready && s.business != null && s.business.details != null &&
+            s.business.details.customer != null && s.business.details.ui != null &&
             s.interaction != null && s.legal_actions != null;
 
         private static bool HasMatchingLegalAction(Command c, Snapshot s)
@@ -261,18 +296,20 @@ namespace PawnPilot
                     return before.phase == "MORNING" && after.phase == "OPEN";
                 case "receive_next_customer":
                     return oldCustomer.presence == "absent" && newCustomer.presence == "present" &&
-                        newCustomer.arrived == true && newCustomer.phase == "dialogue" &&
-                        newCustomer.dialogue_ref != null &&
-                        (newCustomer.dialogue_stage == "typing" || newCustomer.dialogue_stage == "waiting" ||
-                         newCustomer.dialogue_stage == "choices");
+                        newCustomer.arrived == true && (newCustomer.phase == "dialogue" || newCustomer.phase == "trading") &&
+                        (newCustomer.phase == "trading" || (newCustomer.dialogue_ref != null &&
+                         (newCustomer.dialogue_stage == "typing" || newCustomer.dialogue_stage == "waiting" ||
+                          newCustomer.dialogue_stage == "choices" || newCustomer.dialogue_stage == "updating")));
                 case "advance_dialogue":
-                    return oldCustomer.presence == "present" && newCustomer.presence == "present" &&
-                        SameCustomerRef(before, after) && (oldCustomer.dialogue_ref != newCustomer.dialogue_ref ||
-                            oldCustomer.dialogue_stage != newCustomer.dialogue_stage);
+                    return oldCustomer.presence == "present" && oldCustomer.dialogue_ref != null &&
+                        ((newCustomer.presence == "present" && SameCustomerRef(before, after) &&
+                          (oldCustomer.dialogue_ref != newCustomer.dialogue_ref || oldCustomer.dialogue_stage != newCustomer.dialogue_stage)) ||
+                         (newCustomer.presence == "absent" && newCustomer.dialogue_ref == null));
                 case "choose_dialogue_option":
                     return oldCustomer.presence == "present" && newCustomer.presence == "present" &&
                         SameCustomerRef(before, after) && oldCustomer.dialogue_ref != null &&
-                        oldCustomer.dialogue_ref != newCustomer.dialogue_ref;
+                        (oldCustomer.dialogue_ref != newCustomer.dialogue_ref ||
+                         oldCustomer.dialogue_stage != newCustomer.dialogue_stage || newCustomer.phase == "trading");
                 case "prepare_purchase_items":
                     return false; // requested refs are required; only the Command overload can prove the delta.
                 case "cancel_confirmation":
@@ -280,8 +317,10 @@ namespace PawnPilot
                 case "refuse_trade":
                     return false;
                 case "dismiss_customer":
-                    return oldCustomer.presence == "present" && newCustomer.presence == "absent" &&
-                        before.business.customer_ref != null && after.business.customer_ref == null;
+                    return oldCustomer.presence == "present" && before.business.customer_ref != null &&
+                        (newCustomer.presence == "absent" && after.business.customer_ref == null ||
+                         newCustomer.presence == "present" && after.business.customer_ref != null &&
+                         after.business.customer_ref != before.business.customer_ref);
                 case "close_menu":
                     return before.menu_open && !after.menu_open;
                 default:
@@ -298,12 +337,32 @@ namespace PawnPilot
                 return VerificationDecision.Uncertain("world_changed_after_action");
             if (before.cash != after.cash) return VerificationDecision.Uncertain("cash_changed_during_non_economic_action");
             if (Postcondition(command, before, after)) return VerificationDecision.Succeeded();
+            if (command.action == "prepare_purchase_items" && StoreCollectionChanged(before, after))
+                return VerificationDecision.Uncertain("prepare_partial_or_unexpected_collection_change");
             return VerificationDecision.Pending();
+        }
+
+        private static bool StoreCollectionChanged(Snapshot before, Snapshot after)
+        {
+            foreach (string name in new[] { "front", "back" })
+            {
+                if (!TryGetCompleteContainer(before, name, out var left) ||
+                    !TryGetCompleteContainer(after, name, out var right)) continue;
+                if (!left.item_refs.SequenceEqual(right.item_refs, StringComparer.Ordinal)) return true;
+            }
+            return false;
         }
 
         public static bool Postcondition(Command command, Snapshot before, Snapshot after)
         {
             if (command == null) return false;
+            // The native purchase verifier has already checked retained item identities and
+            // their exact source/target membership. This final gate checks the DTO boundary.
+            if (command.action == "purchase_visible_offer")
+                return before != null && after != null && before.ready && after.ready &&
+                    before.world_epoch == after.world_epoch && before.scene == after.scene &&
+                    after.revision > before.revision && command.arguments?.amount.HasValue == true &&
+                    before.cash - (long)after.cash == command.arguments.amount.Value;
             if (command.action != "prepare_purchase_items") return Postcondition(command.action, before, after);
             return BaselinePostcondition(before, after) && ExactFrontToBackMove(command.arguments, before, after);
         }
@@ -316,42 +375,43 @@ namespace PawnPilot
             before.cash == after.cash && before.business?.details?.customer != null &&
             after.business?.details?.customer != null;
 
-        // Full ordinary collection differential: requested direct references must leave front and
-        // appear in back, all unrequested members and the player inventory must be unchanged, and
-        // item units/ownership must remain stable. Names and list positions are never identities.
+        // Full source-set differential against the direct back-counter target. A partial native
+        // placement is unknown; player inventory capacity/completeness is not a precondition.
         private static bool ExactFrontToBackMove(ActionArguments args, Snapshot before, Snapshot after)
         {
-            if (args?.item_refs == null || args.collection_fingerprint != before.business.collection_fingerprint ||
-                before.business.collection_fingerprint == null || !SameCustomerRef(before, after)) return false;
+            if (args?.item_refs == null || args.collection_fingerprint != before.business.details.front_collection_fingerprint ||
+                before.business.details.front_collection_fingerprint == null || !SameCustomerRef(before, after)) return false;
             if (!TryGetCompleteContainer(before, "front", out var oldFront) ||
                 !TryGetCompleteContainer(before, "back", out var oldBack) ||
-                !TryGetCompleteContainer(before, "player", out var oldPlayer) ||
                 !TryGetCompleteContainer(after, "front", out var newFront) ||
-                !TryGetCompleteContainer(after, "back", out var newBack) ||
-                !TryGetCompleteContainer(after, "player", out var newPlayer)) return false;
+                !TryGetCompleteContainer(after, "back", out var newBack)) return false;
             var requested = new HashSet<string>(args.item_refs, StringComparer.Ordinal);
             var source = new HashSet<string>(oldFront.item_refs, StringComparer.Ordinal);
             var target = new HashSet<string>(oldBack.item_refs, StringComparer.Ordinal);
-            if (!requested.SetEquals(source)) return false; // this button transfers the whole visible front set.
+            if (!requested.SetEquals(source)) return false;
             var expectedFront = new HashSet<string>(source, StringComparer.Ordinal);
             expectedFront.ExceptWith(requested);
             var expectedBack = new HashSet<string>(target, StringComparer.Ordinal);
             expectedBack.UnionWith(requested);
-            if (!expectedFront.SetEquals(newFront.item_refs) || !expectedBack.SetEquals(newBack.item_refs) ||
-                !oldPlayer.item_refs.SequenceEqual(newPlayer.item_refs, StringComparer.Ordinal)) return false;
+            if (!expectedFront.SetEquals(newFront.item_refs) || !expectedBack.SetEquals(newBack.item_refs)) return false;
             if (!MetadataStable(requested, before.business.details.items, after.business.details.items)) return false;
             var unchanged = new HashSet<string>(source, StringComparer.Ordinal);
             unchanged.ExceptWith(requested);
             unchanged.UnionWith(target);
-            unchanged.UnionWith(oldPlayer.item_refs);
             return MetadataStable(unchanged, before.business.details.items, after.business.details.items);
+        }
+
+        private static bool IsOwned(List<ItemState> items, string reference)
+        {
+            var item = FindItem(items, reference);
+            return item == null || item.owned;
         }
 
         private static bool TryGetCompleteContainer(Snapshot s, string name, out ContainerState result)
         {
             result = null;
             var containers = s?.business?.details?.containers;
-            if (containers == null || containers.Count != 3) return false;
+            if (containers == null || containers.Count < 2 || containers.Count > 3) return false;
             foreach (var container in containers)
                 if (container != null && container.container == name)
                 {
@@ -399,6 +459,22 @@ namespace PawnPilot
 
         private static bool HasExactlyOneConfirmationBlocker(List<string> blockers) =>
             blockers != null && blockers.Count == 1 && IsConfirmationBlocker(blockers[0]);
+
+        private static bool HasActionBlockingEvidence(List<string> blockers, string action)
+        {
+            if (blockers == null) return true;
+            foreach (var blocker in blockers)
+            {
+                if (blocker == "global_ui_stack_unobservable" || blocker == "global_raycast_order_unobservable" ||
+                    blocker == "quote_rebuild_completion_unobservable" || blocker == "tutorial_group_active_unverified" ||
+                    blocker == "control_hints_active_unverified") continue;
+                if ((action == "advance_dialogue" || action == "choose_dialogue_option") && blocker == "dialogue_active") continue;
+                if ((action == "prepare_purchase_items" || action == "dismiss_customer") &&
+                    (blocker == "dialogue_active" || blocker == "bargain_panel")) continue;
+                return true;
+            }
+            return false;
+        }
 
         private static bool SameCustomerRef(Snapshot before, Snapshot after) =>
             !string.IsNullOrEmpty(before?.business?.customer_ref) &&

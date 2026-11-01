@@ -1,15 +1,21 @@
 ---
 name: pawnpilot-player
-description: 使用 PawnPilot MCP 观察《深空当铺：可能是偷的》并执行已支持的原生关闭菜单动作。适用于已启动且已获授权的本机游戏桥接；不提供自主经营或交易策略。
+description: 使用 PawnPilot MCP 观察《深空当铺：可能是偷的》，按当前 legal_actions 执行已授权的普通经营动作。
 ---
 
-# PawnPilot M2-C / M2-D（PARTIAL）
+# PawnPilot M2-C / M2-D 基础普通买入
 
-仅使用 `health_check`、`observe`、`act`、`get_action_status`、`wait_for_update`。当前唯一正式写动作是原生 `close_menu`，新业务动作与购买仍被生产门禁关闭。`wait_for_update` 是有界只读等待。`act.schema_version` 必须等于同次观察的 `state.schema_version`（2 或 3），不能自行升版或混用会话。
+仅使用 `health_check`、`observe`、`act`、`get_action_status`、`wait_for_update`。动作按本次快照的精确 `legal_actions` 独立开放，包含已接入的开门、接待、普通对话、商品准备、正常购买及结束交互；注册名称或文档描述本身不代表当前可执行。`wait_for_update` 是有界只读等待。`act.schema_version` 必须等于同次观察的 `state.schema_version`（2 或 3），不能自行升版或混用会话。
 
 开始时先 `health_check`，再 `observe`。只有 broker/bridge 已连接、协议兼容、世界 `ready=true`、`can_act=true` 且 `legal_actions` 包含该动作时才可提交。`close_menu` 仅用于明确授权的诊断，不能作为自主经营遇到人工暂停的恢复策略。失联快照属于历史数据；`loaded=false` 的现金占位值无效。
 
-v3 `business.details` 必须结合 completeness/status/reason 解释。容器 incomplete/unavailable/unimplemented 的空 item_refs 不能解释成库存为空；未知名称、形状或报价金额不能推测补全。quote 行是已渲染候选，未绑定时 item_ref 为 null、offer_ref 为 null。collection_fingerprint 只是当前完整集合候选身份，不代表报价/容量/经济执行已合法。`candidates` 与 `legal_actions` 不同，purchase_enabled=false 或任一 Q/C/V/UI 未验证时不得购买。不要拼接多个查询的不同帧，冒充同一决策快照。
+v3 `business.details` 必须结合 completeness/status/reason 解释。容器 incomplete/unavailable/unimplemented 的空 item_refs 不能解释成库存为空；未知名称、形状或报价金额不能推测补全。quote行来自当前渲染文本，单行item_ref可为null而整单绑定仍完整；普通displayed_total与wholesale_total必须区分。purchase item_refs/collection_fingerprint绑定实际非owned待购子集，完整back可同时包含owned物品；front_collection_fingerprint独立绑定prepare来源。指纹存在本身不授权购买。`candidates` 与 `legal_actions` 不同，购买要求 purchase_enabled=true、当前正常报价完整、容量 sufficient、金额不超过用户范围和现有现金，并精确匹配 legal_actions；开门、接待和对话只检查各自相关条件，不依赖报价或库存完整。不要拼接多个查询的不同帧，冒充同一决策快照。
+
+本轮已实机完成普通拾荒客scavGeneral的一次正常购买，普通价444、现金550→106、13件入库并自有、顾客离场。报价和商品由观察决定，不可复用这些示例值。普通购买/准备/对话另支持shadyPharma，但尚未单独实机成交。复杂非空子窗口、未知接收条件、批发、议价、卖出、特殊业务、日结均不支持。cancel_confirmation和独立refuse_trade不可调用；需要正常结束时，仅使用当前legal_actions中的dismiss_customer或等待离场。
+
+读取当前已显示对话和选项文字，不读取未来台词或隐藏客户信息。自动播放中的对话优先等待并重新observe；只有确需跳过当前打字或处于manual-wait且对应动作合法时提交advance_dialogue。选项只能从当前可见、可交互且有文本的option_ref选择；不循环盲点。手动advance/choose尚缺成功实机样本。
+
+act参数为顶层schema_version、command_id、action、arguments、broker_epoch、expected_world_epoch、expected_revision、expected_version，不套request对象；wait_for_update参数才放在request内。revision等待同时携带broker/world/revision身份，command_terminal按原命令ID等待。每次写操作前立即重新observe，不能把wait/status中的较旧快照直接当作最新决策。
 
 每个动作生成唯一 `command_id` 并保留，原样传入刚观察到的 `broker_epoch`、`world_epoch`、`revision`、`version`（对应 `expected_*` 参数）。每次只提交一个动作，然后查询同一 ID 的状态及 `before/after`。菜单必须通过正常游戏入口打开；MCP 不提供打开菜单操作。
 

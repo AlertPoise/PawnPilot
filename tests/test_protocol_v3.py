@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -16,12 +17,15 @@ from bridge.protocol import (canonical_request, request_fingerprint, valid_comma
 
 FIXTURE = json.loads((ROOT / "protocol/fixtures/v3-business-observation.json").read_text(encoding="utf-8"))
 V2_FIXTURE = json.loads((ROOT / "protocol/fixtures/v2-close-menu.json").read_text(encoding="utf-8"))
+V3_DIALOGUE_FIXTURE = json.loads((ROOT / "protocol/fixtures/v3-dialogue-snapshot.json").read_text(encoding="utf-8"))
+SCHEMA = json.loads((ROOT / "protocol/schemas/wire-v3.json").read_text(encoding="utf-8"))
 
 
 class ProtocolV3Tests(unittest.TestCase):
     def test_fixture_is_valid_and_fingerprint_covers_v3_arguments(self):
         self.assertTrue(valid_snapshot_v3(FIXTURE["before"]))
         self.assertTrue(valid_request_v3(FIXTURE["request"]))
+        Draft202012Validator({**SCHEMA, "$ref": "#/$defs/Snapshot"}).validate(FIXTURE["before"])
         self.assertTrue(valid_command_v3(FIXTURE["command"]))
         self.assertTrue(valid_success_result_v3(FIXTURE["command"], FIXTURE["result"]))
         self.assertGreaterEqual(len(FIXTURE["fingerprint_cases"]), 3)
@@ -34,6 +38,42 @@ class ProtocolV3Tests(unittest.TestCase):
             else:
                 self.assertNotEqual(case["request"]["action"], "close_menu")
 
+    @staticmethod
+    def schema2_dialogue_snapshot():
+        state = copy.deepcopy(FIXTURE["before"])
+        state.update(phase="OPEN", menu_open=False, can_close_menu=False)
+        state["interaction"].update(phase="dialogue", consistency="unverified", operable=True)
+        business = state["business"]
+        business.update(support="partial", customer_ref="customer-1", item_refs=[],
+                        offer_ref=None, collection_fingerprint=None)
+        details = business["details"]
+        details["schema_version"] = 2
+        details["front_collection_fingerprint"] = None
+        details["quote"]["wholesale_total"] = None
+        details["status"] = "partial"
+        details["customer"].update(presence="present", arrived=True, trade_type="sell", phase="dialogue",
+            dialogue_ref="dialogue-1", dialogue_stage="choices", option_refs=["option-1"],
+            dialogue_text="Would you like to sell?", is_typing=False, waiting_for_advance=None,
+            options=[{"option_ref": "option-1", "text": "Yes, please"}])
+        state["legal_actions"] = [{"action": "choose_dialogue_option", "arguments": {
+            "customer_ref": "customer-1", "dialogue_ref": "dialogue-1", "option_ref": "option-1"}}]
+        return state
+
+    def test_business_schema2_exposes_visible_dialogue_and_legal_action(self):
+        Draft202012Validator.check_schema(SCHEMA)
+        Draft202012Validator({**SCHEMA, "$ref": "#/$defs/Snapshot"}).validate(V3_DIALOGUE_FIXTURE)
+        self.assertTrue(valid_snapshot_v3(V3_DIALOGUE_FIXTURE))
+        self.assertEqual(V3_DIALOGUE_FIXTURE["business"]["details"]["schema_version"], 2)
+        state = self.schema2_dialogue_snapshot()
+        self.assertTrue(valid_snapshot_v3(state))
+        customer = state["business"]["details"]["customer"]
+        self.assertEqual(customer["dialogue_text"], "Would you like to sell?")
+        self.assertEqual(customer["options"][0]["text"], "Yes, please")
+        self.assertEqual(customer["option_refs"], [row["option_ref"] for row in customer["options"]])
+        malformed = copy.deepcopy(state)
+        malformed["business"]["details"]["customer"]["option_refs"] = []
+        self.assertFalse(valid_snapshot_v3(malformed))
+
     def test_v2_validation_is_unchanged_and_rejects_v3_fields(self):
         self.assertTrue(valid_snapshot(V2_FIXTURE["before"]))
         self.assertTrue(valid_request(V2_FIXTURE["request"]))
@@ -42,7 +82,7 @@ class ProtocolV3Tests(unittest.TestCase):
         self.assertTrue(valid_command(V2_FIXTURE["command"]))
         self.assertFalse(valid_command(FIXTURE["command"]))
 
-    def test_business_extension_is_closed_and_purchase_never_enabled(self):
+    def test_schema1_business_extension_stays_strict_and_candidates_do_not_enable_purchase(self):
         malformed = copy.deepcopy(FIXTURE["before"])
         malformed["business"]["details"]["customer"]["surprise"] = True
         self.assertFalse(valid_snapshot_v3(malformed))
@@ -64,22 +104,33 @@ class ProtocolV3Tests(unittest.TestCase):
         business["item_refs"] = ["item-1"]
         business["collection_fingerprint"] = "collection-1"
         details = business["details"]
+        details["schema_version"] = 2
+        details["front_collection_fingerprint"] = "front-1"
+        details["quote"]["wholesale_total"] = None
         details["status"] = "partial"
-        details["customer"].update(presence="present", dialogue_ref="dialogue-1", dialogue_stage="choices",
-                                    option_refs=["option-1"])
-        details["containers"] = [{"container": "back", "completeness": "complete", "reason": None,
-                                   "item_refs": ["item-1"]}]
-        details["items"] = [{"item_ref": "item-1", "container": "back", "name": "Item", "units": 1,
-                             "owned": False, "shape_status": "unverified", "width": None, "height": None}]
+        details["customer"].update(presence="present", trade_type="sell", dialogue_ref="dialogue-1", dialogue_stage="choices",
+                                    option_refs=["option-1"], dialogue_text="visible line", is_typing=False,
+                                    waiting_for_advance=False, options=[{"option_ref": "option-1", "text": "Sell"}])
+        details["containers"] = [
+            {"container": "front", "completeness": "complete", "reason": None,
+             "item_refs": ["front-item"]},
+            {"container": "back", "completeness": "complete", "reason": None,
+             "item_refs": ["item-1"]}]
+        details["items"] = [
+            {"item_ref": "front-item", "container": "front", "name": "Front Item", "units": 1,
+             "owned": True, "shape_status": "unverified", "width": None, "height": None},
+            {"item_ref": "item-1", "container": "back", "name": "Item", "units": 1,
+             "owned": False, "shape_status": "unverified", "width": None, "height": None}]
         details["quote"].update(status="unverified", rows=[{"item_ref": "item-1", "name": "Item",
                                   "price_text": None, "amount": None}])
-        args = {"customer_ref": "cust-1", "item_refs": ["item-1"], "collection_fingerprint": "collection-1"}
+        args = {"customer_ref": "cust-1", "item_refs": ["front-item"], "collection_fingerprint": "front-1"}
         self.assertTrue(valid_snapshot_v3(state))
         self.assertTrue(valid_action_binding_v3(business, "prepare_purchase_items", args))
         changed = dict(args, item_refs=["different-item"])
         self.assertFalse(valid_action_binding_v3(business, "prepare_purchase_items", changed))
+        state.update(menu_open=False, can_close_menu=False)
         state["legal_actions"] = [{"action": "prepare_purchase_items", "arguments": args}]
-        self.assertFalse(valid_snapshot_v3(state))  # registration and candidate data do not enable production dispatch
+        self.assertTrue(valid_snapshot_v3(state))  # exact action legalizes only this front-set transfer
 
     def test_complete_quote_requires_verified_full_back_collection_and_total(self):
         state = copy.deepcopy(FIXTURE["before"])
@@ -105,6 +156,126 @@ class ProtocolV3Tests(unittest.TestCase):
         bad_offer = copy.deepcopy(state)
         bad_offer["business"]["offer_ref"] = None
         self.assertFalse(valid_snapshot_v3(bad_offer))
+
+    def test_schema2_purchase_quote_binds_normal_total_to_non_owned_back_subset(self):
+        state = copy.deepcopy(self.schema2_dialogue_snapshot())
+        business = state["business"]
+        business.update(support="available", item_refs=["npc-item"], offer_ref="offer-1",
+                        collection_fingerprint="buy-set-1")
+        details = business["details"]
+        details.update(status="partial", front_collection_fingerprint=None)
+        details["customer"].update(phase="trading", dialogue_ref=None, dialogue_stage="unknown",
+            option_refs=[], dialogue_text=None, is_typing=None, waiting_for_advance=None, options=[])
+        details["containers"] = [
+            {"container":"front","completeness":"unavailable","reason":"front root not present","item_refs":[]},
+            {"container":"back","completeness":"complete","reason":None,
+             "item_refs":["npc-item","npc-other","owned-item"]},
+            {"container":"player","completeness":"complete","reason":None,"item_refs":[]}]
+        details["items"] = [
+            {"item_ref":"npc-item","container":"back","name":"Visible Item","units":1,
+             "owned":False,"shape_status":"unverified","width":None,"height":None},
+            {"item_ref":"npc-other","container":"back","name":"Other Item","units":1,
+             "owned":False,"shape_status":"unverified","width":None,"height":None},
+            {"item_ref":"owned-item","container":"back","name":"Player Item","units":1,
+             "owned":True,"shape_status":"unverified","width":None,"height":None}]
+        details["quote"] = {"status":"complete","mode":"normal","displayed_total":10,
+            "wholesale_total":25,"rows":[{"item_ref":None,"name":"Visible Item",
+            "price_text":"$10","amount":None}],"reason":None}
+        details["capacity"] = {"status":"sufficient","reason":"normal_grid_fit","scope":"current_purchase_subset"}
+        details["eligibility"] = {"purchase_enabled":True,"missing":[]}
+        state["legal_actions"] = [{"action":"purchase_visible_offer","arguments":{
+            "customer_ref":"customer-1","item_refs":["npc-item"],"offer_ref":"offer-1",
+            "collection_fingerprint":"buy-set-1","mode":"normal","amount":10,"max_spend":10}}]
+        self.assertTrue(valid_snapshot_v3(state))
+        missing_legal_action = copy.deepcopy(state)
+        missing_legal_action["legal_actions"] = []
+        self.assertFalse(valid_snapshot_v3(missing_legal_action))
+        action = copy.deepcopy(state["legal_actions"][0])
+        tampered = copy.deepcopy(state)
+        tampered["business"]["item_refs"].append("owned-item")
+        self.assertFalse(valid_snapshot_v3(tampered))
+        tampered = copy.deepcopy(state)
+        tampered["legal_actions"][0]["arguments"]["amount"] = 25
+        self.assertFalse(valid_snapshot_v3(tampered))
+        self.assertEqual(action["arguments"]["amount"], details["quote"]["displayed_total"])
+
+        request = {"schema_version":3,"id":"buy-once","broker_epoch":"broker-1",
+            "action":"purchase_visible_offer","arguments":action["arguments"],
+            "expected_world_epoch":state["world_epoch"],"expected_revision":state["revision"],
+            "expected_version":state["version"],"start_deadline_unix_ms":105000,"execution_timeout_ms":5000}
+        after = copy.deepcopy(state)
+        after.update(revision=2, version=f"{state['world_epoch']}:2", cash=540, legal_actions=[])
+        post_business = after["business"]
+        post_business.update(support="partial", customer_ref=None, item_refs=[], offer_ref=None,
+                             collection_fingerprint=None)
+        post_details = post_business["details"]
+        post_details["status"] = "partial"
+        post_details["front_collection_fingerprint"] = None
+        post_details["customer"].update(presence="absent", arrived=None, trade_type="unknown", phase="leaving",
+            dialogue_ref=None, dialogue_stage="absent", option_refs=[], dialogue_text=None,
+            is_typing=None, waiting_for_advance=None, options=[])
+        post_details["containers"] = [
+            {"container":"back","completeness":"complete","reason":None,
+             "item_refs":["npc-other","owned-item"]},
+            {"container":"player","completeness":"complete","reason":None,"item_refs":["new-player-item"]}]
+        post_details["items"] = [
+            {"item_ref":"npc-other","container":"back","name":"Other Item","units":1,
+             "owned":False,"shape_status":"unverified","width":None,"height":None},
+            {"item_ref":"owned-item","container":"back","name":"Player Item","units":1,
+             "owned":True,"shape_status":"unverified","width":None,"height":None},
+            {"item_ref":"new-player-item","container":"player","name":"Visible Item","units":1,
+             "owned":True,"shape_status":"unverified","width":None,"height":None}]
+        post_details["quote"] = {"status":"unavailable","mode":"unknown","displayed_total":None,
+            "wholesale_total":None,"rows":[],"reason":"customer_left"}
+        post_details["capacity"] = {"status":"unverified","reason":"native_rules_unverified","scope":"none"}
+        post_details["eligibility"] = {"purchase_enabled":False,"missing":["quote_binding"]}
+        self.assertTrue(valid_snapshot_v3(after))
+        progress = {"id":"buy-once","broker_epoch":"broker-1","stage":"completed","sequence":4,
+            "may_have_side_effects":True,"started_at_unix_ms":100100,"execution_deadline_unix_ms":105100}
+        result = {"schema_version":3,"id":"buy-once","broker_epoch":"broker-1","status":"succeeded",
+            "reason":"normal_trade_verified","before":state,"after":after,"execution":progress}
+        self.assertTrue(valid_success_result_v3(request,result))
+
+    def test_dismiss_success_requires_customer_absent_or_a_distinct_replacement(self):
+        before = self.schema2_dialogue_snapshot()
+        self.assertTrue(valid_snapshot_v3(before))
+
+        def after_state(replacement=False, leaving_same_customer=False):
+            after = copy.deepcopy(before)
+            after["revision"] = before["revision"] + 1
+            after["version"] = f'{after["world_epoch"]}:{after["revision"]}'
+            after["legal_actions"] = []
+            after["interaction"].update(phase="idle", reason="customer_departed")
+            business = after["business"]
+            details = business["details"]
+            customer = details["customer"]
+            if replacement:
+                business["customer_ref"] = "customer-2"
+                customer.update(presence="present", arrived=False, trade_type="unknown", phase="arriving",
+                    dialogue_ref=None, dialogue_stage="unknown", option_refs=[], dialogue_text=None,
+                    is_typing=None, waiting_for_advance=None, options=[])
+            elif leaving_same_customer:
+                customer["phase"] = "leaving"
+            else:
+                business.update(customer_ref=None, item_refs=[], offer_ref=None, collection_fingerprint=None)
+                customer.update(presence="absent", arrived=None, trade_type="unknown", phase="leaving",
+                    dialogue_ref=None, dialogue_stage="absent", option_refs=[], dialogue_text=None,
+                    is_typing=None, waiting_for_advance=None, options=[])
+            return after
+
+        command = copy.deepcopy(FIXTURE["command"])
+        command.update(action="dismiss_customer", arguments={"customer_ref": "customer-1"})
+        for after in (after_state(), after_state(replacement=True)):
+            self.assertTrue(valid_snapshot_v3(after))
+            result = copy.deepcopy(FIXTURE["result"])
+            result["before"], result["after"] = before, after
+            self.assertTrue(valid_success_result_v3(command, result))
+
+        unchanged_customer = after_state(leaving_same_customer=True)
+        self.assertTrue(valid_snapshot_v3(unchanged_customer))
+        result = copy.deepcopy(FIXTURE["result"])
+        result["before"], result["after"] = before, unchanged_customer
+        self.assertFalse(valid_success_result_v3(command, result))
 
     @staticmethod
     def sized_snapshot(full=False, revision=1, menu_open=True):

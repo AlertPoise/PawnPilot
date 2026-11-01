@@ -1,0 +1,90 @@
+{
+  "schema_version": 3,
+  "version": "dialogue-world:1",
+  "world_epoch": "dialogue-world",
+  "revision": 1,
+  "phase": "OPEN",
+  "scene": "StoreScene",
+  "loaded": true,
+  "ready": true,
+  "not_ready_reason": null,
+  "cash": 550,
+  "menu_open": false,
+  "can_close_menu": false,
+  "interaction": {
+    "phase": "dialogue",
+    "consistency": "unverified",
+    "reason": "visible_local_business_state",
+    "operable": true
+  },
+  "business": {
+    "support": "partial",
+    "customer_ref": "customer-1",
+    "item_refs": [],
+    "offer_ref": null,
+    "collection_fingerprint": null,
+    "details": {
+      "schema_version": 2,
+      "status": "partial",
+      "front_collection_fingerprint": null,
+      "customer": {
+        "presence": "present",
+        "arrived": true,
+        "trade_type": "sell",
+        "phase": "dialogue",
+        "dialogue_ref": "dialogue-1",
+        "dialogue_stage": "choices",
+        "option_refs": [
+          "option-1"
+        ],
+        "dialogue_text": "Would you like to sell anything today?",
+        "is_typing": false,
+        "waiting_for_advance": null,
+        "options": [
+          {
+            "option_ref": "option-1",
+            "text": "Yes, please"
+          }
+        ]
+      },
+      "containers": [],
+      "items": [],
+      "quote": {
+        "status": "unavailable",
+        "mode": "unknown",
+        "displayed_total": null,
+        "wholesale_total": null,
+        "rows": [],
+        "reason": "not_in_trade"
+      },
+      "ui": {
+        "status": "unverified",
+        "blockers": [],
+        "coverage": "known_roots_only"
+      },
+      "capacity": {
+        "status": "unverified",
+        "reason": "native_rules_unverified",
+        "scope": "none"
+      },
+      "eligibility": {
+        "purchase_enabled": false,
+        "missing": [
+          "quote_binding",
+          "capacity"
+        ]
+      },
+      "candidates": []
+    }
+  },
+  "legal_actions": [
+    {
+      "action": "choose_dialogue_option",
+      "arguments": {
+        "customer_ref": "customer-1",
+        "dialogue_ref": "dialogue-1",
+        "option_ref": "option-1"
+      }
+    }
+  ]
+}

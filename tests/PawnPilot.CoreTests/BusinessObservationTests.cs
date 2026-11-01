@@ -92,6 +92,10 @@ namespace PawnPilot
             other.Customer.DialogueIdentity = new Identity();
             other.Customer.DialogueStage = "choices";
             other.Customer.OptionIdentities = new object[] { new Identity(), new Identity() };
+            other.Customer.OptionTexts = new[] { "Buy", "Leave" };
+            other.Customer.DialogueText = "A visible customer line.";
+            other.Customer.IsTyping = false;
+            other.Customer.WaitingForAdvance = false;
             var transitionB = transitionProjection.Capture("w", true, () => other);
             string oldDialogue = transitionB.details.customer.dialogue_ref;
             string oldOption = transitionB.details.customer.option_refs[0];
@@ -104,15 +108,22 @@ namespace PawnPilot
             check("business_refs_resolve_to_current_opaque_identities", resolvesCurrentCustomer && resolvesCurrentDialogue && resolvesCurrentOption);
             other.Customer.DialogueStage = "waiting";
             other.Customer.OptionIdentities = Array.Empty<object>();
+            other.Customer.OptionTexts = Array.Empty<string>();
+            other.Customer.DialogueText = "The next visible line.";
+            other.Customer.IsTyping = false;
+            other.Customer.WaitingForAdvance = true;
             var transitionC = transitionProjection.Capture("w", true, () => other);
             check("business_dialogue_transition_reissues_refs", oldDialogue != transitionC.details.customer.dialogue_ref &&
                 transitionC.details.customer.option_refs.Count == 0 &&
                 !transitionProjection.TryResolveDialogue("w", transitionB.customer_ref, oldDialogue, out _));
             other.Customer.DialogueStage = "choices";
             other.Customer.OptionIdentities = new object[] { new Identity(), new Identity() };
+            other.Customer.OptionTexts = new[] { "Accept", "Decline" };
             var transitionD = transitionProjection.Capture("w", true, () => other);
             check("business_quote_and_dialogue_revision_changes_are_observed", transitionA.details.quote.status == "unverified" &&
-                transitionD.details.customer.option_refs[0] != oldOption);
+                transitionD.details.customer.option_refs[0] != oldOption &&
+                transitionD.details.customer.dialogue_text == "The next visible line." &&
+                transitionD.details.customer.options[0].text == "Accept");
             other.Quote.DisplayedTotal = 987;
             var quoteRevision = transitionProjection.Capture("w", true, () => other);
             check("business_visible_quote_total_revision_is_reflected_without_authority", quoteRevision.details.quote.displayed_total == 987 &&
@@ -122,19 +133,73 @@ namespace PawnPilot
             collectionInput.Containers[1].Items = new[] { new BusinessItemInput { Identity = new Identity(), Units = 2, Owned = false } };
             var collectionProjection = new BusinessProjection();
             var collectionA = collectionProjection.Capture("w", true, () => collectionInput);
-            string collectionRefA = collectionA.collection_fingerprint;
-            collectionInput.Quote.DisplayedTotal++;
-            var collectionB = collectionProjection.Capture("w", true, () => collectionInput);
-            check("business_complete_unowned_back_collection_gets_opaque_fingerprint", collectionRefA != null &&
+            check("business_unverified_quote_has_no_action_collection_fingerprint", collectionA.collection_fingerprint == null &&
                 collectionA.details.quote.status == "unverified" && collectionA.offer_ref == null);
-            check("business_quote_terms_change_invalidates_collection_fingerprint", collectionB.collection_fingerprint != collectionRefA);
+
+            var completeTrade = CompleteTradeSample();
+            var completeTradeProjection = new BusinessProjection();
+            var boundTrade = completeTradeProjection.Capture("trade-world", true, () => completeTrade);
+            check("schema2_binds_normal_total_to_nonowned_back_subset_with_global_ui_unverified",
+                BusinessWire.Validate(boundTrade) && boundTrade.details.schema_version == 2 &&
+                boundTrade.details.quote.status == "complete" && boundTrade.details.quote.mode == "normal" &&
+                boundTrade.details.quote.displayed_total == 1234 && boundTrade.details.quote.wholesale_total == 900 &&
+                boundTrade.details.ui.status == "unverified" && boundTrade.item_refs.Count == 2 &&
+                boundTrade.details.containers[1].item_refs.Count == 3 && boundTrade.details.items.Count == 4 &&
+                boundTrade.details.items[2].owned && boundTrade.details.front_collection_fingerprint != null);
+            bool purchaseResolved = completeTradeProjection.TryResolvePurchase("trade-world", boundTrade.customer_ref,
+                boundTrade.offer_ref, boundTrade.collection_fingerprint, out var purchaseObjects, out var purchaseRefs,
+                out int purchaseAmount);
+            bool frontResolved = completeTradeProjection.TryResolveFrontCollection("trade-world", boundTrade.customer_ref,
+                boundTrade.details.front_collection_fingerprint, out var frontObjects, out var frontRefs);
+            check("schema2_runtime_purchase_and_prepare_resolvers_return_current_copies", purchaseResolved &&
+                purchaseAmount == 1234 && purchaseObjects.Length == 2 && purchaseRefs.Length == 2 &&
+                frontResolved && frontObjects.Length == 1 && frontRefs.Length == 1);
+            bool backRefResolved = completeTradeProjection.TryGetItemReference("trade-world", "back",
+                completeTrade.Containers[1].Items[0].Identity, out string resolvedBackRef);
+            check("schema2_capacity_identity_reverse_mapping_is_world_and_container_scoped", backRefResolved &&
+                resolvedBackRef == boundTrade.details.containers[1].item_refs[0] &&
+                !completeTradeProjection.TryGetItemReference("other-world", "back",
+                    completeTrade.Containers[1].Items[0].Identity, out _) &&
+                !completeTradeProjection.TryGetItemReference("trade-world", "player",
+                    completeTrade.Containers[1].Items[0].Identity, out _));
+            purchaseObjects[0] = null; purchaseRefs[0] = "changed";
+            check("schema2_resolver_outputs_are_detached", completeTradeProjection.TryResolvePurchase("trade-world",
+                boundTrade.customer_ref, boundTrade.offer_ref, boundTrade.collection_fingerprint,
+                out var purchaseObjectsAgain, out var purchaseRefsAgain, out _) &&
+                purchaseObjectsAgain[0] != null && purchaseRefsAgain[0] != "changed");
+
+            string boundFingerprint = boundTrade.collection_fingerprint;
+            string boundOffer = boundTrade.offer_ref;
+            completeTrade.Quote.DisplayedTotal++;
+            var repricedTrade = completeTradeProjection.Capture("trade-world", true, () => completeTrade);
+            check("schema2_normal_price_change_invalidates_offer_and_collection_refs",
+                repricedTrade.collection_fingerprint != boundFingerprint && repricedTrade.offer_ref != boundOffer);
+
+            completeTrade.Customer.MultiBuyDisabled = true;
+            completeTrade.Quote.PurchaseIdentities = new[] { completeTrade.Containers[1].Items[2].Identity };
+            var selectedTrade = completeTradeProjection.Capture("trade-world", true, () => completeTrade);
+            check("schema2_native_single_selection_excludes_other_nonowned_back_items",
+                BusinessWire.Validate(selectedTrade) && selectedTrade.details.quote.status == "complete" && selectedTrade.item_refs.Count == 1 &&
+                selectedTrade.item_refs[0] == selectedTrade.details.containers[1].item_refs[2]);
+            var forgedOwnedPurchase = new BusinessObservation
+            {
+                support = selectedTrade.support,
+                customer_ref = selectedTrade.customer_ref,
+                item_refs = new List<string>(selectedTrade.item_refs),
+                offer_ref = selectedTrade.offer_ref,
+                collection_fingerprint = selectedTrade.collection_fingerprint,
+                details = BusinessWire.Clone(selectedTrade.details)
+            };
+            forgedOwnedPurchase.item_refs = new List<string> { forgedOwnedPurchase.details.containers[1].item_refs[1] };
+            check("schema2_wire_rejects_owned_item_as_purchase_subset", !BusinessWire.Validate(forgedOwnedPurchase));
+
             collectionInput.Containers[1].Items[0].Units++;
             var collectionC = collectionProjection.Capture("w", true, () => collectionInput);
-            check("business_collection_quantity_change_invalidates_fingerprint", collectionC.collection_fingerprint != collectionB.collection_fingerprint);
+            check("business_unverified_collection_has_no_fingerprint_after_quantity_change", collectionC.collection_fingerprint == null);
             collectionInput.Containers[1].Items = new[] { collectionInput.Containers[1].Items[0],
                 new BusinessItemInput { Identity = new Identity(), Units = 1, Owned = false } };
             var collectionD = collectionProjection.Capture("w", true, () => collectionInput);
-            check("business_collection_membership_change_invalidates_fingerprint", collectionD.collection_fingerprint != collectionC.collection_fingerprint);
+            check("business_unverified_collection_has_no_fingerprint_after_membership_change", collectionD.collection_fingerprint == null);
             collectionInput.Containers[1].Completeness = "incomplete";
             collectionInput.Containers[1].Reason = "member_visibility_unverified";
             var collectionIncomplete = collectionProjection.Capture("w", true, () => collectionInput);
@@ -148,6 +213,9 @@ namespace PawnPilot
             check("business_total_parser_rejects_compound_or_malformed_visible_values", !BusinessQuoteParsing.IsTotalLabel("总计／批发价") &&
                 BusinessQuoteParsing.ParseVisibleTotal("285\uE000 / 223\uE000 (-22%)") == null &&
                 BusinessQuoteParsing.ParseVisibleTotal("12,34") == null);
+            check("business_total_parser_separates_visible_normal_and_wholesale_amounts",
+                BusinessQuoteParsing.ParseVisibleNormalTotal("285\uE000 / 223\uE000 (-22%)") == 285 &&
+                BusinessQuoteParsing.ParseVisibleWholesaleTotal("285\uE000 / 223\uE000 (-22%)") == 223);
 
             var shaped = Sample();
             shaped.Containers[0].Items[0].ShapeStatus = "known";
@@ -217,6 +285,35 @@ namespace PawnPilot
                 Ui = new BusinessUiInput { Status = "unverified", Coverage = "known_roots_only", Complete = false,
                     Blockers = new[] { "global_ui_stack_unobservable" } }
             };
+        }
+
+        private static BusinessInput CompleteTradeSample()
+        {
+            var input = Sample();
+            input.Customer.MultiBuyDisabled = false;
+            input.Containers[1].Items = new[]
+            {
+                new BusinessItemInput { Identity = new Identity(), Name = "Visible cup", Units = 1, Owned = false },
+                new BusinessItemInput { Identity = new Identity(), Name = "Owned paper", Units = 1, Owned = true },
+                new BusinessItemInput { Identity = new Identity(), Name = "Visible lamp", Units = 2, Owned = false }
+            };
+            input.Quote.Status = "complete";
+            input.Quote.Mode = "normal";
+            input.Quote.DisplayedTotal = 1234;
+            input.Quote.WholesaleTotal = 900;
+            input.Quote.Reason = null;
+            input.Quote.BindingVerified = true;
+            input.Quote.PurchaseIdentities = new[]
+            {
+                input.Containers[1].Items[0].Identity,
+                input.Containers[1].Items[2].Identity
+            };
+            input.Quote.Rows = new[]
+            {
+                new BusinessQuoteRowInput { Name = "Visible cup", PriceText = "$500" },
+                new BusinessQuoteRowInput { Name = "Visible lamp", PriceText = "$734" }
+            };
+            return input;
         }
 
         private static bool Whitelisted(Type type, HashSet<Type> seen)

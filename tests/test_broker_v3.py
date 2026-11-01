@@ -43,23 +43,64 @@ class BrokerV3Tests(unittest.TestCase):
                 "expected_revision": self.state["revision"], "expected_version": self.state["version"],
                 "arguments": {} if arguments is None else arguments}
 
-    def test_dispatch_requires_exact_current_legal_action_pair(self):
+    def test_dispatch_rejects_action_missing_from_exact_current_legal_actions(self):
         with self.assertRaises(ProtocolError) as caught:
             self.broker.enqueue(self.request("start_business"))
-        self.assertEqual(caught.exception.reason, "action_not_allowed")
+        self.assertEqual(caught.exception.reason, "precondition")
         queued = self.broker.enqueue(self.request())
         self.assertEqual(queued["schema_version"], 3)
         self.assertEqual(queued["record_schema_version"], 3)
         delivered = self.exchange()
         self.assertEqual(delivered["command"]["action"], "close_menu")
 
-    def test_purchase_action_is_rejected_even_when_client_names_it(self):
+    def test_start_business_is_legal_from_morning_without_complete_business_observation(self):
+        state = copy.deepcopy(FIXTURE["before"])
+        state.update(menu_open=False, can_close_menu=False,
+                     legal_actions=[{"action": "start_business", "arguments": {}}])
+        state["interaction"].update(phase="idle", consistency="unverified", operable=True)
+        self.state = state
+        self.exchange(state=state)
+        queued = self.broker.enqueue(self.request("start_business", command_id="open-store"))
+        self.assertEqual(queued["command_status"], "pending")
+        self.assertEqual(self.broker.records["open-store"]["command"]["execution_timeout_ms"], 15_000)
+        delivered = self.exchange()
+        command = delivered["command"]
+        self.assertEqual(command["action"], "start_business")
+        progress = {"id": command["id"], "broker_epoch": command["broker_epoch"],
+            "stage": "completed", "sequence": 4, "may_have_side_effects": True,
+            "started_at_unix_ms": 100100, "execution_deadline_unix_ms": 115100}
+        after = copy.deepcopy(state)
+        after.update(revision=2, version=f"{after['world_epoch']}:2", phase="OPEN", legal_actions=[])
+        result = {"schema_version": 3, "id": command["id"], "broker_epoch": command["broker_epoch"],
+            "status": "succeeded", "reason": "store_open", "before": state, "after": after,
+            "execution": progress}
+        ack = self.exchange(state=after, result=result, progress=progress)
+        self.assertEqual(ack["acknowledged_result_id"], "open-store")
+        self.assertEqual(self.broker.result("open-store")["result"]["status"], "succeeded")
+
+    def test_receive_customer_requires_open_store_and_produces_long_enough_command(self):
+        state = copy.deepcopy(FIXTURE["before"])
+        state.update(phase="OPEN", menu_open=False, can_close_menu=False,
+                     legal_actions=[{"action": "receive_next_customer", "arguments": {}}])
+        state["interaction"].update(phase="idle", consistency="unverified", operable=True)
+        customer = state["business"]["details"]["customer"]
+        customer.update(presence="absent", arrived=None, trade_type="unknown", phase="absent",
+                        dialogue_ref=None, dialogue_stage="absent", option_refs=[])
+        self.state = state
+        self.exchange(state=state)
+        queued = self.broker.enqueue(self.request("receive_next_customer", command_id="ring-bell"))
+        self.assertEqual(queued["command_status"], "pending")
+        self.assertEqual(self.broker.records["ring-bell"]["command"]["execution_timeout_ms"], 30_000)
+        delivered = self.exchange()
+        self.assertEqual(delivered["command"]["action"], "receive_next_customer")
+
+    def test_purchase_action_is_rejected_when_absent_from_current_legal_actions(self):
         request = self.request("purchase_visible_offer", {"customer_ref": "c", "offer_ref": "o",
             "item_refs": ["x"], "collection_fingerprint": "f", "mode": "normal", "amount": 1,
             "max_spend": 2, "authorization_ref": "auth"})
         with self.assertRaises(ProtocolError) as caught:
             self.broker.enqueue(request)
-        self.assertEqual(caught.exception.reason, "action_not_allowed")
+        self.assertEqual(caught.exception.reason, "precondition")
 
     def test_reused_id_with_well_formed_different_v3_arguments_conflicts_first(self):
         request = self.request(command_id="same-v3-id")
@@ -176,12 +217,16 @@ class BrokerV3Tests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            def post(raw, wire_version=None):
+            def post(raw, wire_version=None, declared_length=None):
                 conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
                 try:
                     headers = {"Authorization": "Bearer http-size-test", "Content-Type": "application/json"}
                     if wire_version is not None:
                         headers["X-PawnPilot-Wire-Version"] = str(wire_version)
+                    if declared_length is not None:
+                        # Oversize requests must be rejected from headers, before reading
+                        # a body. Sending that body races the early close on Windows.
+                        headers["Content-Length"] = str(declared_length)
                     conn.request("POST", "/exchange", body=raw, headers=headers)
                     response = conn.getresponse()
                     return response.status, response.read()
@@ -201,7 +246,7 @@ class BrokerV3Tests(unittest.TestCase):
             v2 = {**body, "schema_version": 2, "state": v2_state}
             v2_raw = json.dumps(v2, separators=(",", ":")).encode("utf-8")
             v2_padded = v2_raw + b" " * (MAX_V2_MESSAGE_BYTES + 1000 - len(v2_raw))
-            self.assertEqual(post(v2_padded)[0], 413)
+            self.assertEqual(post(b"", declared_length=len(v2_padded))[0], 413)
 
             small_v3 = json.dumps(body, separators=(",", ":")).encode("utf-8")
             self.assertEqual(post(small_v3, 2)[0], 400)
@@ -209,7 +254,7 @@ class BrokerV3Tests(unittest.TestCase):
 
             too_large = raw + b" " * (MAX_V3_MESSAGE_BYTES + 1 - len(raw))
             self.assertEqual(len(too_large), MAX_V3_MESSAGE_BYTES + 1)
-            self.assertEqual(post(too_large, 3)[0], 413)
+            self.assertEqual(post(b"", 3, declared_length=len(too_large))[0], 413)
         finally:
             server.shutdown()
             server.server_close()

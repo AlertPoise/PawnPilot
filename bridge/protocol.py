@@ -38,11 +38,13 @@ V3_ACTION_ARGUMENTS = {
     "prepare_purchase_items": frozenset({"customer_ref", "item_refs", "collection_fingerprint"}),
     "cancel_confirmation": frozenset(), "refuse_trade": frozenset({"customer_ref"}),
     "dismiss_customer": frozenset({"customer_ref"}),
+    "purchase_visible_offer": frozenset({"customer_ref", "offer_ref", "item_refs",
+        "collection_fingerprint", "mode", "amount", "max_spend"}),
 }
-V3_CANDIDATE_ARGUMENTS = {**V3_ACTION_ARGUMENTS, "purchase_visible_offer": frozenset({
-    "customer_ref", "offer_ref", "item_refs", "collection_fingerprint", "mode",
-    "amount", "max_spend", "authorization_ref"})}
-V3_PRODUCTION_ACTIONS = frozenset({"close_menu"})
+V3_CANDIDATE_ARGUMENTS = V3_ACTION_ARGUMENTS
+# Availability is asserted per snapshot by legal_actions, then bound to that snapshot below.
+# refuse_trade remains descriptive only until it has its own native operation.
+V3_PRODUCTION_ACTIONS = frozenset(V3_ACTION_ARGUMENTS) - {"refuse_trade"}
 V3_OPTIONAL_ARGUMENTS = frozenset({"customer_ref", "item_refs", "offer_ref",
                                     "collection_fingerprint", "option_ref", "dialogue_ref",
                                     "mode", "amount", "max_spend", "authorization_ref"})
@@ -272,6 +274,17 @@ def _v3_text_list(value, maximum=64):
     return type(value) is list and len(value) <= maximum and all(_v3_text(v) for v in value)
 
 
+def _is_ordered_subset(values, source):
+    at = 0
+    for value in values:
+        while at < len(source) and source[at] != value:
+            at += 1
+        if at == len(source):
+            return False
+        at += 1
+    return True
+
+
 def _valid_business_v3(business):
     """Strict validation for the C# BusinessState schema; kept separate from v2."""
     keys = {"support", "customer_ref", "item_refs", "offer_ref", "collection_fingerprint", "details"}
@@ -283,13 +296,25 @@ def _valid_business_v3(business):
             or not _v3_refs(business["item_refs"])):
         return False
     d = business["details"]
-    if not shape(d, {"schema_version", "status", "customer", "containers", "items", "quote",
-                     "ui", "capacity", "eligibility", "candidates"}):
+    if type(d) is not dict or type(d.get("schema_version")) is not int or d["schema_version"] not in {1, 2}:
         return False
-    if type(d["schema_version"]) is not int or d["schema_version"] != 1 or d["status"] not in {"unavailable", "partial", "complete"}:
+    schema = d["schema_version"]
+    detail_keys = {"schema_version", "status", "customer", "containers", "items", "quote",
+                   "ui", "capacity", "eligibility", "candidates"}
+    if schema == 2:
+        detail_keys.add("front_collection_fingerprint")
+    if not shape(d, detail_keys):
+        return False
+    if (d["status"] not in {"unavailable", "partial", "complete"}
+            or (schema == 2 and d["front_collection_fingerprint"] is not None
+                and (type(d["front_collection_fingerprint"]) is not str
+                     or REF.fullmatch(d["front_collection_fingerprint"]) is None))):
         return False
     c = d["customer"]
-    if not (shape(c, {"presence", "arrived", "trade_type", "phase", "dialogue_ref", "dialogue_stage", "option_refs"})
+    customer_keys = {"presence", "arrived", "trade_type", "phase", "dialogue_ref", "dialogue_stage", "option_refs"}
+    if schema == 2:
+        customer_keys |= {"dialogue_text", "is_typing", "waiting_for_advance", "options"}
+    if not (shape(c, customer_keys)
             and c["presence"] in {"absent", "present", "unverified"}
             and (c["arrived"] is None or type(c["arrived"]) is bool)
             and c["trade_type"] in {"sell", "other", "unknown"}
@@ -298,6 +323,27 @@ def _valid_business_v3(business):
             and c["dialogue_stage"] in {"absent", "typing", "waiting", "choices", "updating", "unknown"}
             and _v3_refs(c["option_refs"])):
         return False
+    if schema == 2:
+        options = c["options"]
+        if (not _v3_text(c["dialogue_text"], nullable=True)
+                or (c["is_typing"] is not None and type(c["is_typing"]) is not bool)
+                or (c["waiting_for_advance"] is not None and type(c["waiting_for_advance"]) is not bool)
+                or type(options) is not list or len(options) > 16):
+            return False
+        option_rows = []
+        for option in options:
+            if not (shape(option, {"option_ref", "text"})
+                    and type(option["option_ref"]) is str and REF.fullmatch(option["option_ref"]) is not None
+                    and _v3_text(option["text"])):
+                return False
+            option_rows.append(option["option_ref"])
+        if option_rows != c["option_refs"] or len(option_rows) != len(set(option_rows)):
+            return False
+        if option_rows and c["dialogue_stage"] != "choices":
+            return False
+        if c["dialogue_ref"] is None and (c["dialogue_text"] is not None
+                or c["is_typing"] is not None or c["waiting_for_advance"] is not None or options):
+            return False
     if (c["presence"] == "absent" and (business["customer_ref"] is not None or c["arrived"] is not None
             or c["phase"] not in {"absent", "leaving"} or c["trade_type"] != "unknown"
             or c["dialogue_ref"] is not None or c["option_refs"]
@@ -349,14 +395,34 @@ def _valid_business_v3(business):
         expected_refs = [item["item_ref"] for item in d["items"] if item["container"] == row["container"]]
         if row["item_refs"] != expected_refs:
             return False
-    if business["item_refs"] != item_refs:
-        return False
+    if schema == 1:
+        if business["item_refs"] != item_refs:
+            return False
+    else:
+        back = next((row for row in d["containers"] if row["container"] == "back"), None)
+        back_item_refs = ([ref for ref in back["item_refs"]
+                           if any(item["item_ref"] == ref and not item["owned"] for item in d["items"])]
+                          if c["presence"] == "present" and c["trade_type"] == "sell"
+                          and back is not None and back["completeness"] == "complete" else [])
+        if (not _is_ordered_subset(business["item_refs"], back_item_refs)
+                or (c["presence"] != "present" and business["item_refs"])):
+            return False
+        if d["front_collection_fingerprint"] is not None:
+            front = next((row for row in d["containers"] if row["container"] == "front"), None)
+            if (c["presence"] != "present" or c["trade_type"] != "sell" or front is None
+                    or front["completeness"] != "complete" or not front["item_refs"]):
+                return False
     q = d["quote"]
-    if not (shape(q, {"status", "mode", "displayed_total", "rows", "reason"})
+    quote_keys = {"status", "mode", "displayed_total", "rows", "reason"}
+    if schema == 2:
+        quote_keys.add("wholesale_total")
+    if not (shape(q, quote_keys)
             and q["status"] in {"complete", "unverified", "unavailable"}
             and q["mode"] in {"normal", "wholesale", "unknown"}
             and (q["displayed_total"] is None or integer(q["displayed_total"]))
             and type(q["rows"]) is list and len(q["rows"]) <= 64 and _v3_text(q["reason"], nullable=True)):
+        return False
+    if schema == 2 and (q["wholesale_total"] is not None and not integer(q["wholesale_total"])):
         return False
     quote_refs = []
     observed_total = 0
@@ -372,7 +438,8 @@ def _valid_business_v3(business):
             observed_total += row["amount"]
             if observed_total > MAX_INT:
                 return False
-    if len(quote_refs) != len(set(quote_refs)) or any(ref not in item_refs for ref in quote_refs):
+    quote_item_refs = set(business["item_refs"] if schema == 1 else item_refs)
+    if len(quote_refs) != len(set(quote_refs)) or any(ref not in quote_item_refs for ref in quote_refs):
         return False
     ui = d["ui"]
     if not (shape(ui, {"status", "blockers", "coverage"})
@@ -381,27 +448,42 @@ def _valid_business_v3(business):
         return False
     if q["status"] != "complete" and business["offer_ref"] is not None:
         return False
-    if q["status"] == "complete" and not (
-            d["status"] == "complete" and ui["status"] == "consistent"
-            and ui["coverage"] == "verified" and not ui["blockers"]
-            and c["presence"] == "present" and q["mode"] != "unknown"
-            and q["displayed_total"] is not None and len(q["rows"]) > 0
-            and all(row["price_text"] is not None for row in q["rows"])
-            and all(row["amount"] is not None and row["item_ref"] is not None for row in q["rows"])
-            and business["collection_fingerprint"] is not None and business["offer_ref"] is not None):
-        return False
+    if q["status"] == "complete":
+        if schema == 1:
+            if not (d["status"] == "complete" and ui["status"] == "consistent"
+                    and ui["coverage"] == "verified" and not ui["blockers"]
+                    and c["presence"] == "present" and q["mode"] != "unknown"
+                    and q["displayed_total"] is not None and len(q["rows"]) > 0
+                    and all(row["price_text"] is not None for row in q["rows"])
+                    and all(row["amount"] is not None and row["item_ref"] is not None for row in q["rows"])
+                    and business["collection_fingerprint"] is not None and business["offer_ref"] is not None):
+                return False
+        else:
+            back = next((row for row in d["containers"] if row["container"] == "back"), None)
+            if not (c["presence"] == "present"
+                    and c["trade_type"] == "sell" and c["phase"] == "trading"
+                    and q["mode"] == "normal" and q["displayed_total"] is not None
+                    and q["reason"] is None
+                    and business["offer_ref"] is not None
+                    and business["collection_fingerprint"] is not None
+                    and business["item_refs"]
+                    and back is not None and back["completeness"] == "complete"):
+                return False
     if q["status"] == "complete":
         back = next((row for row in d["containers"] if row["container"] == "back"), None)
         if back is None or back["completeness"] != "complete":
             return False
-        back_items = [item for item in d["items"] if item["container"] == "back"]
-        if (any(item["owned"] for item in back_items)
-                or [row["item_ref"] for row in q["rows"]] != back["item_refs"]):
-            return False
-        if q["mode"] == "normal":
-            total = sum(row["amount"] for row in q["rows"])
-            if total > MAX_INT or total != q["displayed_total"]:
+        if schema == 1:
+            back_items = [item for item in d["items"] if item["container"] == "back"]
+            if (any(item["owned"] for item in back_items)
+                    or [row["item_ref"] for row in q["rows"]] != back["item_refs"]):
                 return False
+            if q["mode"] == "normal":
+                total = sum(row["amount"] for row in q["rows"])
+                if total > MAX_INT or total != q["displayed_total"]:
+                    return False
+        if d["status"] == "unavailable" or ui["status"] in {"blocked", "updating"}:
+            return False
     cap = d["capacity"]
     if not (shape(cap, {"status", "reason", "scope"})
             and cap["status"] in {"sufficient", "insufficient", "unverified"}
@@ -413,8 +495,10 @@ def _valid_business_v3(business):
         return False
     if len(eligibility["missing"]) != len(set(eligibility["missing"])):
         return False
-    # No transport state may enable the economic purchase dispatcher.
-    if eligibility["purchase_enabled"]:
+    if eligibility["purchase_enabled"] and not (schema == 2 and q["status"] == "complete"
+            and cap["status"] == "sufficient" and not eligibility["missing"]
+            and c["presence"] == "present"
+            and c["trade_type"] == "sell" and c["phase"] == "trading"):
         return False
     if type(d["candidates"]) is not list or len(d["candidates"]) > 64:
         return False
@@ -461,9 +545,15 @@ def valid_snapshot_v3(value):
             return False
         if not valid_action_binding_v3(value["business"], action, arguments):
             return False
+        if not valid_action_state_v3(value, action, arguments):
+            return False
         seen.add(action)
     expected_close = {"action": "close_menu", "arguments": {}}
     if value["can_close_menu"] != (expected_close in actions):
+        return False
+    purchase_enabled = value["business"]["details"]["eligibility"]["purchase_enabled"]
+    purchase_is_legal = any(action["action"] == "purchase_visible_offer" for action in actions)
+    if purchase_enabled != purchase_is_legal:
         return False
     size = compact_json_size(value)
     return size is not None and size <= MAX_V3_SNAPSHOT_BYTES
@@ -471,22 +561,62 @@ def valid_snapshot_v3(value):
 
 def valid_action_binding_v3(business, action, arguments):
     """Tie every emitted opaque handle back to the same observed business snapshot."""
+    details = business["details"]
     if action in {"advance_dialogue", "choose_dialogue_option", "prepare_purchase_items",
                   "refuse_trade", "dismiss_customer"}:
         if arguments.get("customer_ref") != business["customer_ref"] or business["customer_ref"] is None:
             return False
     if action in {"advance_dialogue", "choose_dialogue_option"}:
-        customer = business["details"]["customer"]
+        if details["schema_version"] != 2:
+            return False
+        customer = details["customer"]
         if arguments.get("dialogue_ref") != customer["dialogue_ref"] or customer["dialogue_ref"] is None:
             return False
+        if action == "advance_dialogue":
+            if (arguments.get("mode") == "skip" and customer["is_typing"] is not True
+                    or arguments.get("mode") == "next"
+                    and (customer["is_typing"] is True or customer["waiting_for_advance"] is not True)):
+                return False
     if action == "choose_dialogue_option":
         if arguments.get("option_ref") not in business["details"]["customer"]["option_refs"]:
             return False
+    schema = details["schema_version"]
     if action == "prepare_purchase_items":
-        if (arguments.get("item_refs") != business["item_refs"] or business["item_refs"] is None
-                or arguments.get("collection_fingerprint") != business["collection_fingerprint"]
-                or business["collection_fingerprint"] is None):
+        front = next((row for row in details["containers"] if row["container"] == "front"), None)
+        if (schema != 2 or front is None or front["completeness"] != "complete"
+                or arguments.get("item_refs") != front["item_refs"]
+                or arguments.get("collection_fingerprint") != details["front_collection_fingerprint"]
+                or details["front_collection_fingerprint"] is None):
             return False
+    if action == "cancel_confirmation" and not details["ui"]["blockers"]:
+        return False
+    if action == "purchase_visible_offer":
+        quote = details["quote"]
+        if (schema != 2 or not details["eligibility"]["purchase_enabled"]
+                or quote["status"] != "complete" or quote["mode"] != "normal"
+                or arguments.get("customer_ref") != business["customer_ref"]
+                or arguments.get("offer_ref") != business["offer_ref"]
+                or arguments.get("collection_fingerprint") != business["collection_fingerprint"]
+                or arguments.get("item_refs") != business["item_refs"]
+                or arguments.get("mode") != "normal"
+                or arguments.get("amount") != quote["displayed_total"]
+                or arguments.get("amount", -1) > arguments.get("max_spend", -1)):
+            return False
+    return True
+
+
+def valid_action_state_v3(snapshot, action, arguments):
+    """Minimal per-action game-phase checks; unrelated business completeness is irrelevant."""
+    if action == "start_business":
+        return snapshot["ready"] and snapshot["phase"] == "MORNING"
+    if action == "receive_next_customer":
+        customer = snapshot["business"]["details"]["customer"]
+        return (snapshot["ready"] and snapshot["phase"] == "OPEN"
+                and customer["presence"] == "absent" and customer["phase"] == "absent")
+    if action == "purchase_visible_offer":
+        return (snapshot["business"]["details"]["eligibility"]["purchase_enabled"]
+                and arguments.get("max_spend", MAX_INT + 1) <= snapshot["cash"]
+                and arguments.get("amount", MAX_INT + 1) <= snapshot["cash"])
     return True
 
 
@@ -504,7 +634,9 @@ def valid_command_v3(value):
     return (shape(value, COMMAND_KEYS)
             and valid_request_v3({k: value[k] for k in REQUEST_KEYS})
             and value["action"] in V3_PRODUCTION_ACTIONS
-            and value["arguments"] == {}
+            and set(value["arguments"]) == V3_ACTION_ARGUMENTS[value["action"]]
+            and (value["action"] != "advance_dialogue" or value["arguments"]["mode"] in {"skip", "next"})
+            and (value["action"] != "purchase_visible_offer" or value["arguments"].get("mode") == "normal")
             and integer(value["start_deadline_unix_ms"], 1, MAX_TIME)
             and integer(value["execution_timeout_ms"], 1, 30_000))
 
@@ -544,10 +676,79 @@ def valid_success_result_v3(command, result):
             or after["world_epoch"] != before["world_epoch"]
             or after["revision"] <= before["revision"]):
         return False
-    # Until action-specific verifiers are registered, business commands cannot claim success.
-    if command["action"] != "close_menu":
-        return False
-    return valid_close_menu_evidence_v3(before, after)
+    return valid_action_success_evidence_v3(command, before, after)
+
+
+def valid_success_evidence_v3(before, after):
+    """Generic evidence shape for MCP history, which does not carry the action name."""
+    return (valid_snapshot_v3(before) and valid_snapshot_v3(after)
+            and before["world_epoch"] == after["world_epoch"]
+            and after["revision"] > before["revision"])
+
+
+def valid_action_success_evidence_v3(command, before, after):
+    """Validate only the observable postcondition for the command's own operation."""
+    action = command["action"]
+    if action == "close_menu":
+        return valid_close_menu_evidence_v3(before, after)
+    if action == "start_business":
+        return before["phase"] == "MORNING" and after["phase"] == "OPEN"
+    if action == "receive_next_customer":
+        old = before["business"]["details"]["customer"]
+        new = after["business"]["details"]["customer"]
+        return (before["phase"] == "OPEN" and old["presence"] == "absent"
+                and new["presence"] == "present" and new["arrived"] is True)
+    if action in {"advance_dialogue", "choose_dialogue_option"}:
+        old = before["business"]["details"]["customer"]
+        new = after["business"]["details"]["customer"]
+        if before["business"]["customer_ref"] != after["business"]["customer_ref"]:
+            return False
+        if old["dialogue_ref"] == new["dialogue_ref"]:
+            return (old["dialogue_text"] != new["dialogue_text"]
+                    or old["dialogue_stage"] != new["dialogue_stage"]
+                    or old["option_refs"] != new["option_refs"])
+        return new["presence"] == "present"
+    if action == "prepare_purchase_items":
+        old_front = next((r for r in before["business"]["details"]["containers"] if r["container"] == "front"), None)
+        new_front = next((r for r in after["business"]["details"]["containers"] if r["container"] == "front"), None)
+        old_back = next((r for r in before["business"]["details"]["containers"] if r["container"] == "back"), None)
+        new_back = next((r for r in after["business"]["details"]["containers"] if r["container"] == "back"), None)
+        return (old_front is not None and new_front is not None and old_back is not None and new_back is not None
+                and len(new_front["item_refs"]) < len(old_front["item_refs"])
+                and new_back["item_refs"] != old_back["item_refs"])
+    if action == "dismiss_customer":
+        old = before["business"]["details"]["customer"]
+        new = after["business"]["details"]["customer"]
+        old_ref = before["business"]["customer_ref"]
+        new_ref = after["business"]["customer_ref"]
+        return (old["presence"] == "present" and old_ref is not None
+                and ((new["presence"] == "absent" and new_ref is None)
+                     or (new["presence"] == "present" and new_ref is not None
+                         and new_ref != old_ref)))
+    if action == "cancel_confirmation":
+        old = before["business"]["details"]["ui"]["blockers"]
+        new = after["business"]["details"]["ui"]["blockers"]
+        return len(new) < len(old)
+    if action == "purchase_visible_offer":
+        args = command["arguments"]
+        old = before["business"]
+        new = after["business"]
+        purchased = set(args["item_refs"])
+        old_items = old["details"]["items"]
+        new_items = new["details"]["items"]
+        expected_units = sum(item["units"] for item in old_items
+                             if item["item_ref"] in purchased and item["container"] == "back" and not item["owned"])
+        old_player_units = sum(item["units"] for item in old_items if item["container"] == "player")
+        new_player_units = sum(item["units"] for item in new_items if item["container"] == "player")
+        old_purchase_units = sum(item["units"] for item in old_items
+                                 if item["container"] == "back" and not item["owned"])
+        new_purchase_units = sum(item["units"] for item in new_items
+                                 if item["container"] == "back" and not item["owned"])
+        return (before["cash"] - after["cash"] == args["amount"]
+                and expected_units > 0
+                and new_player_units - old_player_units == expected_units
+                and old_purchase_units - new_purchase_units == expected_units)
+    return False
 
 
 def valid_close_menu_evidence_v3(before, after):

@@ -43,7 +43,7 @@ public static class BusinessGateTests
         check("v3_native_exception_stays_unknown_after_ack", unknown.PendingResult?.status == "outcome_unknown" &&
             unknown.Acknowledge("v3-close") && unknown.IsWriteBlocked);
         var economic = Command(original); economic.action = "purchase_visible_offer";
-        check("v3_purchase_not_in_dispatch_allowlist", new ActionGate().Accept(economic, original, "broker", 1).reason == "unknown_action");
+        check("v3_purchase_rejects_missing_bound_arguments", new ActionGate().Accept(economic, original, "broker", 1).reason == "invalid_arguments");
         var extra = Command(original); extra.arguments.max_spend = 40;
         check("v3_close_rejects_business_args", new ActionGate().Accept(extra, original, "broker", 1).reason == "invalid_arguments");
         var fingerprint = ActionGate.Fingerprint(extra); extra.arguments.max_spend = 41;
@@ -56,6 +56,30 @@ public static class BusinessGateTests
             (_, _, _) => VerificationDecision.Succeeded()).result;
         check("invalid_v3_post_sample_cannot_be_waived_by_verifier", invalidResult.status == "outcome_unknown" &&
             invalidResult.after == null && invalidGate.IsWriteBlocked);
+
+        var morning = State(1, false);
+        morning.business.details.customer.presence = "absent";
+        morning.business.details.customer.phase = "absent";
+        morning.business.details.customer.dialogue_stage = "absent";
+        morning.legal_actions.Add(new LegalAction { action = "start_business", arguments = new ActionArguments() });
+        var opening = Command(morning); opening.id = "open-native"; opening.action = "start_business";
+        var openingGate = new ActionGate();
+        check("opening_gate_accepts_without_complete_inventory_or_quote", openingGate.Accept(opening, morning, "broker", 1) == null);
+        int openingCalls = 0;
+        openingGate.Advance("broker", morning, 2, 2, _ => openingCalls++, BusinessActionPolicy.Verify);
+        var opened = JsonSerializer.Deserialize<Snapshot>(JsonSerializer.Serialize(morning, options), options);
+        opened.revision = 2; opened.version = "world:2";
+        opened.phase = "OPEN"; opened.legal_actions.Clear();
+        openingGate.Advance("broker", opened, 3, 3, _ => openingCalls++, BusinessActionPolicy.Verify);
+        check("opening_gate_verifies_phase_transition_once", openingGate.PendingResult?.status == "succeeded" && openingCalls == 1);
+
+        var rejectedNative = new ActionGate(); rejectedNative.Accept(opening, morning, "broker", 1);
+        rejectedNative.Advance("broker", morning, 2, 2,
+            _ => throw new NativeActionRejectedException("native_lock_changed"), BusinessActionPolicy.Verify);
+        check("fresh_native_precondition_rejects_without_claiming_possible_effects",
+            rejectedNative.PendingResult?.status == "rejected" &&
+            rejectedNative.PendingResult.execution.may_have_side_effects == false &&
+            rejectedNative.Acknowledge(opening.id) && !rejectedNative.IsWriteBlocked);
     }
 
     private static Command Command(Snapshot state) => new Command

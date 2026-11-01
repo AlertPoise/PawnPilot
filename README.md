@@ -1,10 +1,10 @@
 # PawnPilot — M2-C / M2-D 开发分支
 
-《深空当铺：可能是偷的》的本机 MCP 工具链。正式支持基础与部分经营观察，以及通过原生 EscapeUIManager.OnResume 关闭已打开的 ESC 菜单。M2-C / M2-D 当前为 PARTIAL；新业务动作和经济购买保持禁用，不提供任意方法执行。
+《深空当铺：可能是偷的》的本机 MCP 工具链。M2-C/D 本轮基础普通买入闭环 **PASS**：真实 Codex CLI 已经 PawnPilot MCP 完成开门、接待、商品准备、读取普通报价、购买和结果核验，顾客正常离场后可继续接待。成交普通价444，现金550→106，13件商品进入玩家库存并变为自有。各动作仍按当前 legal_actions 和原生条件独立开放，不提供任意方法执行。
 
 Codex → MCP stdio Adapter → loopback HTTP broker ← Unity 主线程主动轮询 Mod。
 
-Adapter 与 broker 独立进程；Adapter 不启动 broker，Codex 退出不销毁结果。保留安装 ID pawnpilot_m0 和既有双层目录。默认 Mod 使用 [wire v3](protocol/v3-contract.md)，broker/MCP 显式兼容 v2；历史 journal 不重标版本。见 [M2-C 观察报告](docs/m2c-implementation.md)、[M2-D 动作报告](docs/m2d-implementation.md)、[冻结的 v2 契约](protocol/v2-contract.md)及 [M2-B 报告](docs/m2b-implementation.md)。
+Adapter 与 broker 独立进程；Adapter 不启动 broker，Codex 退出不销毁结果。保留安装 ID pawnpilot_m0 和既有双层目录。默认 Mod 使用 [wire v3](protocol/v3-contract.md)，broker/MCP 显式兼容 v2；新 business payload 使用 schema 2，历史 schema 1/journal 不重标版本。见 [M2-C 观察报告](docs/m2c-implementation.md)、[M2-D 动作报告](docs/m2d-implementation.md)、[冻结的 v2 契约](protocol/v2-contract.md)及 [M2-B 报告](docs/m2b-implementation.md)。
 
 ## 环境与构建
 
@@ -38,7 +38,7 @@ pyproject.toml 固定官方 MCP SDK 2.3.0、Pydantic 2.12.5 和异步等待使�
 ./scripts/install-mod.ps1 -GameRoot 'E:\SteamLibrary\steamapps\common\Probably Stolen'
 ~~~
 
-只安装 DLL、manifest、session.json，并保留清理收据。游戏内正常启用、批准 network 后重启，不使用开发者信任模式。
+只安装 DLL、manifest、session.json，并保留清理收据。游戏内正常启用，批准 network 与 reflection-external 后重启，不使用开发者信任模式。反射适配器只读取两种已确认报价行闭包的商品引用，不调用闭包或写字段。
 
 将[配置示例](docs/codex-config.example.toml)的表合并进项目 .codex/config.toml，填写绝对路径后新开 Codex 会话。不覆盖全局配置。stdio 命令为项目 .venv\Scripts\python.exe -m pawnpilot_mcp，cwd 为仓库；可用 PAWNPILOT_CONFIG 指定密钥文件，端口仍固定。broker 不在线也可注册工具、返回结构化不可连接状态。
 
@@ -46,9 +46,9 @@ pyproject.toml 固定官方 MCP SDK 2.3.0、Pydantic 2.12.5 和异步等待使�
 
 | 工具 | 行为 |
 |---|---|
-| health_check | 无参数；连接、兼容性、loaded/ready、阻塞原因；health_check.can_act 表示当前 close_menu 可用 |
+| health_check | 无参数；连接、兼容性、loaded/ready、阻塞原因；health_check.can_act 表示已连接、就绪、broker允许写入且存在当前合法动作 |
 | observe | 无参数；快照、legal_actions、等待/人工处理原因；失联快照是历史数据 |
-| act | schema_version 必须与当前快照一致（2 或 3）；command_id、action="close_menu"、arguments={}、broker_epoch、expected_world_epoch、expected_revision、expected_version；提交后返回状态 |
+| act | schema_version 必须与当前快照一致（2 或 3）；command_id、action 必须逐字匹配当前快照 legal_actions，arguments 遵循该动作形状，并携带 broker_epoch、expected_world_epoch、expected_revision、expected_version；提交后返回状态 |
 | get_action_status | 原 command_id；规范状态、before/after、原 broker epoch、人工对齐证据；not_found 不证明执行失败 |
 | wait_for_update | 只读；等待 revision/身份改变、指定命令终态或基础可操作状态；最长 30 秒，可取消 |
 
@@ -56,9 +56,13 @@ pyproject.toml 固定官方 MCP SDK 2.3.0、Pydantic 2.12.5 和异步等待使�
 
 诊断 CLI 的 close_menu/reconcile 必须显式传入与核对快照一致的 --schema-version 2 或 3；不自动猜测或降级。schema_version 是 wire 结构版本，不是能力授权。v1 wire 请求明确拒绝；历史 v1 journal 先备份再迁移，v1/v2/v3 查询保留原证据。broker_epoch 每次 broker 启动改变；session_id 是 Mod 进程身份；同会话禁止混用 wire 版本。world_epoch 在场景切换、载入 Hook 或存档身份改变时更新；revision 随观察快照变化递增；version 必须等于 world_epoch:revision。
 
-loaded 表示当前游戏场景中存档已初始化；ready 额外要求必要 UI/库存组件存在并稳定两个 Unity Update 帧。动作前再次核对身份和状态。loaded=false 时现金 0 是无效占位。两个 can_act 字段作用域不同：health_check.can_act 表示当前 close_menu 可用；observe.snapshot.can_act 保留 broker 门禁可用性，具体合法动作以 legal_actions 为准。菜单已关闭且没有其他阻塞时，前者 false，后者 true，而 legal_actions 为空。
+loaded 表示当前游戏场景中存档已初始化；ready 额外要求必要 UI/库存组件存在并稳定两个 Unity Update 帧。动作前再次核对身份和状态。loaded=false 时现金 0 是无效占位。两个 can_act 字段作用域不同：health_check.can_act 表示已连接、就绪、broker允许写入且存在当前合法动作；observe.snapshot.can_act 保留 broker 门禁可用性，具体合法动作以 legal_actions 为准。当broker门禁可用但legal_actions为空时，前者false、后者true；不能据此构造未列出的动作。
 
-初始化 ready 不证明业务/UI 同步。v3 的 business.details 明确区分完整、部分、不可读取的容器，提供短期客户/物品引用、已渲染报价候选和缺失证据。quote_binding、容量及全局 UI 覆盖尚未验证；没有 offer_ref 或经济 legal_actions。候选集合指纹不授权交易，未知容器不能解释成空库存。执行进度独立于游戏 revision，跨帧等待不停止心跳。
+初始化 ready 不证明所有业务/UI 同步。v3 新 business.details schema 2 提供当前客户与可见对话/选项、分容器直接成员、报价字段以及短期 opaque refs。`front_collection_fingerprint` 绑定 prepare 的完整前柜；顶层 purchase `item_refs`/`collection_fingerprint` 绑定非 owned 后柜中的实际购买子集，完整 back 仍包含 owned 项。`VisibleQuoteBinding` 使用已启用、受限的 normal reflection-external 只读路径，从已核实的 callback closure public item 字段绑定 whole-purchase subset；普通/批发报价分开读取，行级 `item_ref` 在无法无歧义绑定时可为 null。实机已分别读到普通/批发价119/93、298/224和最终成交报价444/338。绑定范围限已支持的 UI/callback 形态。
+
+`GamePurchaseActions` 已接通 legal-action 生成、即时原生复核、单次 OnBuyAllClick 和 settlement verifier。容量模型采用真实 occupied grid mask，既有物品不受类型白名单限制；待购物品限已支持的简单接收 profile，允许已核实的默认 onSlotAdd、现有 features 和无 childElement 的空窗口，非空复杂子窗口等仍不支持。购买前后用进程内对象身份核验13件转移及ownership变化，不因公开引用重发或正常顾客离场误判。跨帧等待不停止心跳。
+
+普通 SELL 支持范围为 scavGeneral 与 shadyPharma；本轮只实机成交验证了 scavGeneral。advance_dialogue / choose_dialogue_option 已接入，但手动推进的三次尝试因 stale_state 在执行前拒绝，选项选择未遇到样本；最终成功流程读取可见对话并等待其自动播放，不能算作这两个动作的成功验收。批发、议价、卖出、特殊顾客、日结，以及独立 cancel_confirmation / refuse_trade 仍不支持；结束交互使用受支持的 dismiss_customer 或正常离场。
 
 ## 命令状态与恢复
 
@@ -95,13 +99,16 @@ dotnet run --project tests/PawnPilot.CoreTests/PawnPilot.CoreTests.csproj -c Rel
 python scripts/verify-codex.py --label read-check
 # v3 经营观察验收（仅在本轮明确授权的独立测试槽中）：
 python scripts/verify-codex.py --business --label business-read-check
+# 已批准测试槽内的有界经营验收（最多六位顾客、只买一次，金额不超过明确上限）：
+python scripts/verify-codex.py --business-stage FLOW --max-spend 550 --label business-flow
+# 也可使用 --business-stage A/B/C 分阶段，C 必须提供 --max-spend。
 # 仅用于已批准的独立测试槽、正常打开的 ESC 菜单：
 python scripts/verify-codex.py --label live-check --close-menu
 ~~~
 
 先构建 managed Release 测试程序，Python 端到端测试会通过它运行测试专用跨帧模拟。验证脚本使用临时 CLI 配置，只对本次已授权的 PawnPilot 调用自动批准，不改全局设置。默认模型是此前账户可用的非 Astra gpt-5.6-luna，可用 --model 指定其他可用非 Astra 模型。基础证据位于 artifacts/m2b/codex，--business 证据位于 artifacts/m2cd/codex，同名标签不覆盖。Windows 沙箱若拒绝 SDK stdio 管道（WinError 5），在正常终端运行，不能把沙箱失败算 PASS。
 
-本轮 M2-C/D 回归为 276 managed + 127 Python = 403 通过、0 失败。三个真实 Codex 会话完成 v3 只读观察，实机修复库存逻辑根零面积误判，并核对前后柜搬运引用保持。报价绑定、混合归属集合、运行时容量和经济验证仍未完成；没有 MCP 购买或完整顾客流程。详见 [M2-C](docs/m2c-implementation.md) 与 [M2-D](docs/m2d-implementation.md)。
+当前 M2-C/D 自动化为 **317 managed + 135 Python = 452通过、0失败**。真实 MCP 已执行 start/receive/prepare/dismiss/purchase；最终正常报价444（另示批发338），cash550→106、back14→1、player14→27，顾客离场后 receive_next_customer 可用。两个测试槽save_8/save_9已通过UI删除，Mod停用并按收据移除，游戏和broker已退出；原save_0、两份历史备份及游戏程序集哈希不变。故障/去重/未知不重放验证来自自动化，没有实机经济故障注入。详见 [M2-C](docs/m2c-implementation.md) 与 [M2-D](docs/m2d-implementation.md)。
 
 结束时在游戏 UI 删除本次测试槽、禁用 Mod、正常退出，再按收据清理：
 

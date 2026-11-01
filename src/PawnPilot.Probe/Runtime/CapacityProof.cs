@@ -53,7 +53,10 @@ namespace PawnPilot
     public enum CapacityBuildProfile
     {
         Unknown = 0,
-        Vanilla26337366NoMods = 1
+        SupportedGame26337366CoreRules = 1,
+        // Compatibility alias for existing research fixtures. Runtime captures use the
+        // supported-build name because PawnPilot itself is loaded as a mod.
+        Vanilla26337366NoMods = SupportedGame26337366CoreRules
     }
 
     public enum CapacityTargetProfile
@@ -72,7 +75,8 @@ namespace PawnPilot
     public enum CapacityItemCallbackProfile
     {
         Unknown = 0,
-        VanillaCommonMedicalOrToiletPaper = 1
+        VanillaSimpleGridReceive = 1,
+        VanillaCommonMedicalOrToiletPaper = VanillaSimpleGridReceive
     }
 
     public enum CapacityFeatureProfile
@@ -127,6 +131,28 @@ namespace PawnPilot
             return Complete && Width == 1 && Height == 1 && occupiedCells.Count == 1 && occupiedCells[0];
         }
 
+        internal bool IsWellFormed()
+        {
+            return Complete && Width > 0 && Height > 0 && (long)Width * Height == occupiedCells.Count;
+        }
+
+        internal bool HasOccupiedCells()
+        {
+            if (!IsWellFormed()) return false;
+            foreach (bool occupied in occupiedCells)
+                if (occupied) return true;
+            return false;
+        }
+
+        internal int OccupiedCellCount()
+        {
+            if (!IsWellFormed()) return 0;
+            int count = 0;
+            foreach (bool occupied in occupiedCells)
+                if (occupied) count++;
+            return count;
+        }
+
         internal void AppendFingerprint(StringBuilder builder)
         {
             CapacitySnapshot.Append(builder, Complete);
@@ -148,6 +174,8 @@ namespace PawnPilot
 
     public sealed class CapacityItemSnapshot
     {
+        private readonly ReadOnlyCollection<int> occupiedGridCellIndexes;
+
         public string ItemRef { get; }
         public string Identifier { get; }
         public string ParentInventoryRef { get; }
@@ -158,12 +186,20 @@ namespace PawnPilot
         public CapacityFeatureProfile FeatureProfile { get; }
         public CapacityNestedProfile NestedProfile { get; }
         public CapacityFact StackCallbackAbsent { get; }
+        public CapacityFact SlotSearchPassthroughAbsent { get; }
         public CapacityShapeSnapshot Shape { get; }
+        public bool OccupiedGridCellsComplete { get; }
+        // Row-major indexes in the captured destination grid. These are captured directly
+        // from each existing item's transformed GridShape; existing item identifiers and
+        // other non-receiving properties do not whitelist or exclude occupied space.
+        public IReadOnlyList<int> OccupiedGridCellIndexes => occupiedGridCellIndexes;
 
         public CapacityItemSnapshot(string itemRef, string identifier, string parentInventoryRef,
             bool isDirectInventoryChild, int unitCount, bool isOwned,
             CapacityItemCallbackProfile callbackProfile, CapacityFeatureProfile featureProfile,
-            CapacityNestedProfile nestedProfile, CapacityFact stackCallbackAbsent, CapacityShapeSnapshot shape)
+            CapacityNestedProfile nestedProfile, CapacityFact stackCallbackAbsent, CapacityShapeSnapshot shape,
+            IEnumerable<int> occupiedGridCellIndexes = null,
+            CapacityFact slotSearchPassthroughAbsent = CapacityFact.Unknown)
         {
             ItemRef = itemRef;
             Identifier = identifier;
@@ -175,7 +211,10 @@ namespace PawnPilot
             FeatureProfile = featureProfile;
             NestedProfile = nestedProfile;
             StackCallbackAbsent = stackCallbackAbsent;
+            SlotSearchPassthroughAbsent = slotSearchPassthroughAbsent;
             Shape = shape;
+            OccupiedGridCellsComplete = occupiedGridCellIndexes != null;
+            this.occupiedGridCellIndexes = Copy(occupiedGridCellIndexes);
         }
 
         internal void AppendFingerprint(StringBuilder builder)
@@ -190,8 +229,17 @@ namespace PawnPilot
             CapacitySnapshot.Append(builder, (int)FeatureProfile);
             CapacitySnapshot.Append(builder, (int)NestedProfile);
             CapacitySnapshot.Append(builder, (int)StackCallbackAbsent);
+            CapacitySnapshot.Append(builder, (int)SlotSearchPassthroughAbsent);
             if (Shape == null) CapacitySnapshot.Append(builder, (string)null);
             else Shape.AppendFingerprint(builder);
+            CapacitySnapshot.Append(builder, OccupiedGridCellsComplete);
+            CapacitySnapshot.Append(builder, occupiedGridCellIndexes.Count);
+            foreach (int cell in occupiedGridCellIndexes) CapacitySnapshot.Append(builder, cell);
+        }
+
+        private static ReadOnlyCollection<int> Copy(IEnumerable<int> values)
+        {
+            return Array.AsReadOnly(values == null ? Array.Empty<int>() : new List<int>(values).ToArray());
         }
     }
 
@@ -397,7 +445,7 @@ namespace PawnPilot
             if (string.IsNullOrWhiteSpace(snapshot.WorldEpoch) || snapshot.WorldRevision < 0 ||
                 string.IsNullOrWhiteSpace(snapshot.TargetRef) || string.IsNullOrWhiteSpace(snapshot.SourceRef))
                 return Fail(CapacityProofStatus.Unverified, CapacityProofReason.MissingIdentity, snapshot);
-            if (snapshot.BuildProfile != CapacityBuildProfile.Vanilla26337366NoMods)
+            if (snapshot.BuildProfile != CapacityBuildProfile.SupportedGame26337366CoreRules)
                 return Fail(CapacityProofStatus.Unverified, CapacityProofReason.UnknownBuild, snapshot);
             if (snapshot.TargetProfile != CapacityTargetProfile.EmporiumMainInventoryInHours)
                 return Fail(CapacityProofStatus.Unverified, CapacityProofReason.WrongTarget, snapshot);
@@ -405,8 +453,8 @@ namespace PawnPilot
                 return Fail(CapacityProofStatus.Unverified, CapacityProofReason.UnknownTargetRules, snapshot);
             if (snapshot.SourceCallbackProfile != CapacityInventoryCallbackProfile.VanillaEmporiumBackInventory)
                 return Fail(CapacityProofStatus.Unverified, CapacityProofReason.UnknownSourceRules, snapshot);
-            if (snapshot.ClientOnItemSoldCallbackPresent != CapacityFact.No)
-                return Fail(CapacityProofStatus.Unverified, CapacityProofReason.UnknownClientCallback, snapshot);
+            // Client trading callbacks are intentionally outside this placement proof. The
+            // actual cash delta and item identity transfer are verified after the native handler.
             if (!snapshot.TargetSnapshotComplete || !snapshot.SourceSnapshotComplete)
                 return Fail(CapacityProofStatus.Unverified, CapacityProofReason.IncompleteSnapshot, snapshot);
             if (snapshot.TargetInsertLocked == CapacityFact.Yes)
@@ -435,12 +483,16 @@ namespace PawnPilot
             var occupied = new HashSet<int>();
             foreach (CapacityItemSnapshot item in snapshot.TargetDirectItems)
             {
-                CapacityProofReason reason = ValidateSimpleItem(item, snapshot.TargetRef, requireUnowned: false);
+                CapacityProofReason reason = ValidateExistingOccupant(item, snapshot.TargetRef,
+                    snapshot.GridWidth, snapshot.GridHeight);
                 if (reason != CapacityProofReason.None) return Fail(CapacityProofStatus.Unverified, reason, snapshot);
-                if (item.Shape.PositionX >= snapshot.GridWidth || item.Shape.PositionY >= snapshot.GridHeight)
-                    return Fail(CapacityProofStatus.Unverified, CapacityProofReason.UnsupportedShape, snapshot);
-                int cell = item.Shape.PositionY * snapshot.GridWidth + item.Shape.PositionX;
-                if (!occupied.Add(cell)) return Fail(CapacityProofStatus.Unverified, CapacityProofReason.DuplicateOccupiedCell, snapshot);
+                foreach (int cell in item.OccupiedGridCellIndexes)
+                {
+                    if (cell < 0 || cell >= snapshot.GridWidth * snapshot.GridHeight)
+                        return Fail(CapacityProofStatus.Unverified, CapacityProofReason.UnsupportedShape, snapshot);
+                    if (!occupied.Add(cell))
+                        return Fail(CapacityProofStatus.Unverified, CapacityProofReason.DuplicateOccupiedCell, snapshot);
+                }
             }
 
             foreach (string sourceItemRef in sourceItemsByRef.Keys)
@@ -450,6 +502,7 @@ namespace PawnPilot
             }
 
             var requested = new HashSet<string>(StringComparer.Ordinal);
+            long requiredCellsLong = 0;
             foreach (string itemRef in snapshot.PurchaseListOrderRefs)
             {
                 if (string.IsNullOrWhiteSpace(itemRef) || !requested.Add(itemRef))
@@ -457,9 +510,11 @@ namespace PawnPilot
                 CapacityItemSnapshot item;
                 if (!sourceItemsByRef.TryGetValue(itemRef, out item))
                     return Fail(CapacityProofStatus.Unverified, CapacityProofReason.InvalidSourceMembership, snapshot);
-                CapacityProofReason reason = ValidateSimpleItem(item, snapshot.SourceRef, requireUnowned: true);
+                CapacityProofReason reason = ValidateSimpleIncomingItem(item, snapshot.SourceRef);
                 if (reason != CapacityProofReason.None) return Fail(CapacityProofStatus.Unverified, reason, snapshot);
+                requiredCellsLong += item.Shape.OccupiedCellCount();
             }
+            int requiredCells = requiredCellsLong > int.MaxValue ? int.MaxValue : (int)requiredCellsLong;
 
             if (snapshot.SelectionProfile == CapacitySelectionProfile.AllNonOwnedBackInventoryItems)
             {
@@ -476,38 +531,155 @@ namespace PawnPilot
                 return Fail(CapacityProofStatus.Unverified, CapacityProofReason.PurchaseListMismatch, snapshot);
             }
 
-            int freeCells = snapshot.AllowedCells.Count - occupied.Count;
-            int requiredCells = snapshot.PurchaseListOrderRefs.Count;
-            if (freeCells < requiredCells)
-                return Fail(CapacityProofStatus.Insufficient, CapacityProofReason.CapacityInsufficient, snapshot, freeCells, requiredCells);
+            int freeCells = 0;
+            for (int cell = 0; cell < snapshot.AllowedCells.Count; cell++)
+                if (snapshot.AllowedCells[cell] && !occupied.Contains(cell)) freeCells++;
+
+            // BuyMultipleItem processes the native list from last to first. The target grid
+            // search checks positions row-major for the current item orientation before trying
+            // transformed candidates. Reserve the exact occupied mask from each chosen first
+            // fit, so later items see the same shared occupancy.
+            for (int requestIndex = snapshot.PurchaseListOrderRefs.Count - 1; requestIndex >= 0; requestIndex--)
+            {
+                CapacityItemSnapshot item = sourceItemsByRef[snapshot.PurchaseListOrderRefs[requestIndex]];
+                int x, y;
+                if (!TryFindMask(snapshot, occupied, item.Shape.Width, item.Shape.Height,
+                    item.Shape.OccupiedCells, out x, out y))
+                {
+                    // Native placement may rotate the item and change its stored shape. The
+                    // purchase verifier binds the original source transform, so any fit in a
+                    // rotated orientation remains Unverified rather than a claimed shortage.
+                    int rotatedWidth = item.Shape.Width;
+                    int rotatedHeight = item.Shape.Height;
+                    IReadOnlyList<bool> rotatedCells = item.Shape.OccupiedCells;
+                    for (int rotation = 1; rotation < 4; rotation++)
+                    {
+                        int nextWidth;
+                        int nextHeight;
+                        rotatedCells = RotateClockwise(rotatedCells, rotatedWidth, rotatedHeight,
+                            out nextWidth, out nextHeight);
+                        rotatedWidth = nextWidth;
+                        rotatedHeight = nextHeight;
+                        if (TryFindMask(snapshot, occupied, rotatedWidth, rotatedHeight,
+                            rotatedCells, out x, out y))
+                            return Fail(CapacityProofStatus.Unverified, CapacityProofReason.UnsupportedOrientation,
+                                snapshot, freeCells, requiredCells);
+                    }
+                    return Fail(CapacityProofStatus.Insufficient, CapacityProofReason.CapacityInsufficient,
+                        snapshot, freeCells, requiredCells);
+                }
+                for (int localY = 0; localY < item.Shape.Height; localY++)
+                    for (int localX = 0; localX < item.Shape.Width; localX++)
+                    {
+                        if (!item.Shape.OccupiedCells[localY * item.Shape.Width + localX]) continue;
+                        occupied.Add((y + localY) * snapshot.GridWidth + x + localX);
+                    }
+            }
+
             return Fail(CapacityProofStatus.Sufficient, CapacityProofReason.None, snapshot, freeCells, requiredCells);
         }
 
-        private static CapacityProofReason ValidateSimpleItem(CapacityItemSnapshot item, string expectedParentRef, bool requireUnowned)
+        private static CapacityProofReason ValidateExistingOccupant(CapacityItemSnapshot item, string expectedParentRef,
+            int gridWidth, int gridHeight)
         {
             if (item == null || string.IsNullOrWhiteSpace(item.ItemRef) || string.IsNullOrWhiteSpace(item.Identifier))
                 return CapacityProofReason.MissingIdentity;
             if (!item.IsDirectInventoryChild || !string.Equals(item.ParentInventoryRef, expectedParentRef, StringComparison.Ordinal))
                 return CapacityProofReason.InvalidSourceMembership;
-            if (requireUnowned && item.IsOwned) return CapacityProofReason.PurchaseListMismatch;
-            if (item.Identifier != "common_medical" && item.Identifier != "toilet_paper")
-                return CapacityProofReason.UnsupportedItem;
-            if (item.CallbackProfile != CapacityItemCallbackProfile.VanillaCommonMedicalOrToiletPaper ||
-                item.StackCallbackAbsent != CapacityFact.Yes)
+            // An existing item of any type contributes its observed grid cells. Its stack
+            // callback must be absent because native slot search runs stack checks first.
+            if (item.StackCallbackAbsent != CapacityFact.Yes ||
+                item.SlotSearchPassthroughAbsent != CapacityFact.Yes)
                 return CapacityProofReason.UnsupportedCallbacks;
-            if (item.FeatureProfile != CapacityFeatureProfile.Empty)
+            if (item.UnitCount < 1 || item.Shape == null || !item.Shape.IsWellFormed() ||
+                !item.OccupiedGridCellsComplete || item.OccupiedGridCellIndexes.Count == 0)
+                return CapacityProofReason.UnsupportedShape;
+            if (item.Shape.Orientation < 0 || item.Shape.Orientation > 3)
+                return CapacityProofReason.UnsupportedOrientation;
+            int globalWidth = item.Shape.Orientation % 2 == 1 ? item.Shape.Height : item.Shape.Width;
+            int globalHeight = item.Shape.Orientation % 2 == 1 ? item.Shape.Width : item.Shape.Height;
+            if (item.Shape.PositionX < 0 || item.Shape.PositionY < 0 ||
+                (long)item.Shape.PositionX + globalWidth > gridWidth ||
+                (long)item.Shape.PositionY + globalHeight > gridHeight)
+                return CapacityProofReason.UnsupportedShape;
+            return CapacityProofReason.None;
+        }
+
+        private static CapacityProofReason ValidateSimpleIncomingItem(CapacityItemSnapshot item, string expectedParentRef)
+        {
+            if (item == null || string.IsNullOrWhiteSpace(item.ItemRef) || string.IsNullOrWhiteSpace(item.Identifier))
+                return CapacityProofReason.MissingIdentity;
+            if (!item.IsDirectInventoryChild || !string.Equals(item.ParentInventoryRef, expectedParentRef, StringComparison.Ordinal))
+                return CapacityProofReason.InvalidSourceMembership;
+            if (item.IsOwned) return CapacityProofReason.PurchaseListMismatch;
+            if (item.CallbackProfile != CapacityItemCallbackProfile.VanillaSimpleGridReceive ||
+                item.StackCallbackAbsent != CapacityFact.Yes ||
+                item.SlotSearchPassthroughAbsent != CapacityFact.Yes)
+                return CapacityProofReason.UnsupportedCallbacks;
+            // Existing item features do not participate in the observed grid-shape or
+            // slot-state calculation. The native item onSlotAdd callback on this supported
+            // back-to-main transfer removes only client-temporary/contraband entries; it
+            // does not activate a feature or change shape/state. Keep Unknown fail-closed.
+            if (item.FeatureProfile != CapacityFeatureProfile.Empty &&
+                item.FeatureProfile != CapacityFeatureProfile.Present)
                 return CapacityProofReason.UnsupportedFeatures;
             if (item.NestedProfile != CapacityNestedProfile.EmptyByNativeFactory)
                 return CapacityProofReason.UnsupportedNestedContent;
             if (item.UnitCount != 1) return CapacityProofReason.UnsupportedUnitCount;
-            if (item.Shape == null || !item.Shape.Complete || item.Shape.Width <= 0 || item.Shape.Height <= 0 ||
-                item.Shape.OccupiedCells.Count != item.Shape.Width * item.Shape.Height)
+            if (item.Shape == null || !item.Shape.IsWellFormed() || !item.Shape.HasOccupiedCells())
                 return CapacityProofReason.UnsupportedShape;
-            if (!item.Shape.IsExactOneCell()) return CapacityProofReason.UnsupportedShape;
-            if (item.Shape.Flipped || item.Shape.Orientation != 0) return CapacityProofReason.UnsupportedOrientation;
-            if (item.Shape.PositionX < 0 || item.Shape.PositionY < 0)
-                return CapacityProofReason.UnsupportedShape;
+            // Runtime facts retain the source transform. Only a canonical, unflipped source
+            // shape is eligible; the simulation below authorizes only its unrotated placement.
+            if (item.Shape.Flipped || item.Shape.Orientation != 0)
+                return CapacityProofReason.UnsupportedOrientation;
             return CapacityProofReason.None;
+        }
+
+        private static bool TryFindMask(CapacitySnapshot snapshot, HashSet<int> occupied,
+            int width, int height, IReadOnlyList<bool> mask, out int foundX, out int foundY)
+        {
+            foundX = -1;
+            foundY = -1;
+            if (width <= 0 || height <= 0 || width > snapshot.GridWidth || height > snapshot.GridHeight ||
+                mask == null || (long)width * height != mask.Count) return false;
+            // IL_01a8..0228: for one orientation, y then x, with exact occupied mask cells.
+            for (int y = 0; y <= snapshot.GridHeight - height; y++)
+            {
+                for (int x = 0; x <= snapshot.GridWidth - width; x++)
+                {
+                    bool fits = true;
+                    for (int localY = 0; localY < height && fits; localY++)
+                    {
+                        for (int localX = 0; localX < width; localX++)
+                        {
+                            if (!mask[localY * width + localX]) continue;
+                            int cell = (y + localY) * snapshot.GridWidth + x + localX;
+                            if (!snapshot.AllowedCells[cell] || occupied.Contains(cell))
+                            {
+                                fits = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (!fits) continue;
+                    foundX = x;
+                    foundY = y;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool[] RotateClockwise(IReadOnlyList<bool> mask, int width, int height,
+            out int rotatedWidth, out int rotatedHeight)
+        {
+            rotatedWidth = height;
+            rotatedHeight = width;
+            var rotated = new bool[rotatedWidth * rotatedHeight];
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                    rotated[x * rotatedWidth + (height - 1 - y)] = mask[y * width + x];
+            return rotated;
         }
 
         private static bool TryIndex(IReadOnlyList<CapacityItemSnapshot> items, string expectedParentRef,

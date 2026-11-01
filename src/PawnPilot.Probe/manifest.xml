@@ -4,9 +4,9 @@
   <Name>PawnPilot Game Bridge</Name>
   <Author>PawnPilot</Author>
   <ModVersion>0.1.0</ModVersion>
-  <Description>Local MCP bridge: observation and native menu resume.</Description>
+  <Description>Local MCP bridge: observation and ordinary native business actions.</Description>
   <GameVersions><Version>0.46D</Version></GameVersions>
   <Prerequisites />
   <Assemblies><Assembly>PawnPilot.Probe.dll</Assembly></Assemblies>
-  <Capabilities><Capability>network</Capability></Capabilities>
+  <Capabilities><Capability>network</Capability><Capability>reflection-external</Capability></Capabilities>
 </Manifest>

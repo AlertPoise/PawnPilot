@@ -17,17 +17,23 @@ namespace PawnPilot
                 business.details == null) return false;
 
             BusinessDetails d = business.details;
-            if (d.schema_version != 1 || !OneOf(d.status, "unavailable", "partial", "complete") ||
+            if ((d.schema_version != 1 && d.schema_version != 2) || !OneOf(d.status, "unavailable", "partial", "complete") ||
                 d.customer == null || d.containers == null || d.items == null || d.quote == null ||
                 d.ui == null || d.capacity == null || d.eligibility == null || d.candidates == null ||
                 d.containers.Count > 3 || d.items.Count > MaxRefs || d.candidates.Count > MaxRefs) return false;
             if (d.customer.presence != "present" && (business.customer_ref != null || business.collection_fingerprint != null ||
                 d.customer.dialogue_ref != null || d.customer.option_refs == null || d.customer.option_refs.Count != 0)) return false;
 
-            if (!ValidateCustomer(d.customer, business.customer_ref) || !ValidateUi(d.ui) ||
-                !ValidateItemsAndContainers(d.containers, d.items, business.item_refs) ||
+            if ((d.schema_version == 1 && d.front_collection_fingerprint != null) ||
+                (d.schema_version == 2 && !OptionalRef(d.front_collection_fingerprint)) ||
+                !ValidateCustomer(d.customer, business.customer_ref, d.schema_version) || !ValidateUi(d.ui) ||
+                !ValidateItemsAndContainers(d.containers, d.items, business.item_refs, d) ||
+                !ValidateFrontFingerprint(d) ||
                 !ValidateQuote(d.quote, d, business) || !ValidateCapacity(d.capacity) ||
                 !ValidateEligibility(d.eligibility) || !ValidateCandidates(d.candidates)) return false;
+            if (d.eligibility.purchase_enabled && (d.schema_version != 2 || d.quote.status != "complete" ||
+                d.quote.mode != "normal" || d.capacity.status != "sufficient" ||
+                business.offer_ref == null || business.customer_ref == null || business.item_refs.Count == 0)) return false;
             return WithinProductionTextBudget(business);
         }
 
@@ -42,10 +48,13 @@ namespace PawnPilot
             S(b.support); S(b.customer_ref); S(b.offer_ref); S(b.collection_fingerprint); L(b.item_refs);
             var d = b.details;
             S(d.status); S(d.customer.presence); S(d.customer.trade_type); S(d.customer.phase);
-            S(d.customer.dialogue_ref); S(d.customer.dialogue_stage); L(d.customer.option_refs);
+            S(d.customer.dialogue_ref); S(d.customer.dialogue_stage); S(d.customer.dialogue_text);
+            L(d.customer.option_refs);
+            if (d.customer.options != null)
+                foreach (var option in d.customer.options) { S(option?.option_ref); S(option?.text); }
             foreach (var c in d.containers) { S(c.container); S(c.completeness); S(c.reason); L(c.item_refs); }
             foreach (var i in d.items) { S(i.item_ref); S(i.container); S(i.name); S(i.shape_status); }
-            S(d.quote.status); S(d.quote.mode); S(d.quote.reason);
+            S(d.front_collection_fingerprint); S(d.quote.status); S(d.quote.mode); S(d.quote.reason);
             foreach (var row in d.quote.rows) { S(row.item_ref); S(row.name); S(row.price_text); }
             S(d.ui.status); S(d.ui.coverage); L(d.ui.blockers);
             S(d.capacity.status); S(d.capacity.reason); S(d.capacity.scope); L(d.eligibility.missing);
@@ -65,7 +74,11 @@ namespace PawnPilot
                     presence = details.customer.presence, arrived = details.customer.arrived,
                     trade_type = details.customer.trade_type, phase = details.customer.phase,
                     dialogue_ref = details.customer.dialogue_ref, dialogue_stage = details.customer.dialogue_stage,
-                    option_refs = Copy(details.customer.option_refs)
+                    dialogue_text = details.customer.dialogue_text, is_typing = details.customer.is_typing,
+                    waiting_for_advance = details.customer.waiting_for_advance,
+                    option_refs = Copy(details.customer.option_refs),
+                    options = CopyMapped(details.customer.options, x => x == null ? null : new DialogueOptionState
+                    { option_ref = x.option_ref, text = x.text })
                 },
                 containers = CopyMapped(details.containers, x => x == null ? null : new ContainerState
                 {
@@ -76,9 +89,11 @@ namespace PawnPilot
                     item_ref = x.item_ref, container = x.container, name = x.name, units = x.units, owned = x.owned,
                     shape_status = x.shape_status, width = x.width, height = x.height
                 }),
+                front_collection_fingerprint = details.front_collection_fingerprint,
                 quote = details.quote == null ? null : new QuoteState
                 {
                     status = details.quote.status, mode = details.quote.mode, displayed_total = details.quote.displayed_total,
+                    wholesale_total = details.quote.wholesale_total,
                     rows = CopyMapped(details.quote.rows, x => x == null ? null : new QuoteRowState
                     { item_ref = x.item_ref, name = x.name, price_text = x.price_text, amount = x.amount }),
                     reason = details.quote.reason
@@ -94,7 +109,7 @@ namespace PawnPilot
             };
         }
 
-        private static bool ValidateCustomer(CustomerState c, string customerRef)
+        private static bool ValidateCustomer(CustomerState c, string customerRef, int schemaVersion)
         {
             if (!OneOf(c.presence, "absent", "present", "unverified") ||
                 !OneOf(c.trade_type, "sell", "other", "unknown") ||
@@ -106,10 +121,28 @@ namespace PawnPilot
                 (c.dialogue_stage != "absent" && c.dialogue_stage != "unknown") || c.trade_type != "unknown")) return false;
             if (c.presence == "present" && customerRef == null) return false;
             if (c.dialogue_ref == null && c.option_refs.Count != 0) return false;
+            if (schemaVersion == 2)
+            {
+                if (!OptionalText(c.dialogue_text) || c.options == null || c.options.Count > 16) return false;
+                if (c.dialogue_ref == null && (c.dialogue_text != null || c.is_typing.HasValue ||
+                    c.waiting_for_advance.HasValue || c.options.Count != 0)) return false;
+                if (c.presence == "absent" && (c.dialogue_text != null || c.is_typing.HasValue ||
+                    c.waiting_for_advance.HasValue || c.options.Count != 0)) return false;
+                if (c.options.Count != c.option_refs.Count) return false;
+                for (int i = 0; i < c.options.Count; i++)
+                {
+                    var option = c.options[i];
+                    if (option == null || !ValidRef(option.option_ref) || !OptionalText(option.text) ||
+                        string.IsNullOrEmpty(option.text) ||
+                        !string.Equals(option.option_ref, c.option_refs[i], StringComparison.Ordinal)) return false;
+                }
+                if (c.options.Count != 0 && c.dialogue_stage != "choices") return false;
+            }
             return true;
         }
 
-        private static bool ValidateItemsAndContainers(List<ContainerState> containers, List<ItemState> items, List<string> topRefs)
+        private static bool ValidateItemsAndContainers(List<ContainerState> containers, List<ItemState> items,
+            List<string> topRefs, BusinessDetails details)
         {
             var containerNames = new HashSet<string>(StringComparer.Ordinal);
             var byContainer = new Dictionary<string, List<string>>(StringComparer.Ordinal);
@@ -138,21 +171,53 @@ namespace PawnPilot
                 if (!grouped.TryGetValue(i.container, out var list)) grouped[i.container] = list = new List<string>();
                 list.Add(i.item_ref);
             }
-            if (!SameSequence(emitted, topRefs)) return false;
             foreach (var c in containers)
             {
                 grouped.TryGetValue(c.container, out var expected);
                 expected ??= new List<string>();
                 if (!SameSequence(expected, c.item_refs)) return false;
             }
+
+            if (details.schema_version == 1)
+            {
+                if (!SameSequence(emitted, topRefs)) return false;
+            }
+            else
+            {
+                var backRefs = new List<string>();
+                ContainerState back = null;
+                foreach (var container in containers) if (container.container == "back") back = container;
+                if (details.customer.presence == "present" && details.customer.trade_type == "sell" &&
+                    back != null && back.completeness == "complete")
+                {
+                    foreach (string reference in back.item_refs)
+                        foreach (var item in items)
+                            if (item.item_ref == reference && !item.owned) { backRefs.Add(reference); break; }
+                }
+                if (!IsSubsequence(topRefs, backRefs)) return false;
+                if (details.quote.status == "complete" && topRefs.Count == 0) return false;
+                if (details.customer.presence != "present" && topRefs.Count != 0) return false;
+            }
             return true;
+        }
+
+        private static bool ValidateFrontFingerprint(BusinessDetails details)
+        {
+            if (details.front_collection_fingerprint == null) return true;
+            if (details.schema_version != 2 || details.customer.presence != "present" ||
+                details.customer.trade_type != "sell") return false;
+            foreach (var container in details.containers)
+                if (container.container == "front") return container.completeness == "complete" && container.item_refs.Count > 0;
+            return false;
         }
 
         private static bool ValidateQuote(QuoteState q, BusinessDetails d, BusinessObservation business)
         {
             if (!OneOf(q.status, "complete", "unverified", "unavailable") || !OneOf(q.mode, "normal", "wholesale", "unknown") ||
                 !OptionalText(q.reason) || q.rows == null || q.rows.Count > MaxRefs ||
-                (q.displayed_total.HasValue && q.displayed_total.Value < 0)) return false;
+                (q.displayed_total.HasValue && q.displayed_total.Value < 0) ||
+                (q.wholesale_total.HasValue && q.wholesale_total.Value < 0) ||
+                (d.schema_version == 1 && q.wholesale_total.HasValue)) return false;
             var refs = new HashSet<string>(StringComparer.Ordinal);
             var rowRefs = new List<string>();
             var emittedRefs = new HashSet<string>(StringComparer.Ordinal);
@@ -167,7 +232,7 @@ namespace PawnPilot
                 if (normalTotal > int.MaxValue) return false;
             }
             if (q.status != "complete" && business.offer_ref != null) return false;
-            if (q.status == "complete")
+            if (q.status == "complete" && d.schema_version == 1)
             {
                 if (d.status != "complete" || d.ui.status != "consistent" || d.ui.coverage != "verified" ||
                     d.ui.blockers.Count != 0 || d.customer.presence != "present" || business.customer_ref == null ||
@@ -181,8 +246,27 @@ namespace PawnPilot
                 if (back == null || back.completeness != "complete" || !SameSequence(back.item_refs, rowRefs)) return false;
                 foreach (var item in d.items) if (item.container == "back" && item.owned) return false;
             }
+            else if (q.status == "complete")
+            {
+                ContainerState back = null;
+                foreach (var container in d.containers) if (container.container == "back") back = container;
+                if (d.customer.presence != "present" || d.customer.trade_type != "sell" ||
+                    d.customer.phase != "trading" || business.customer_ref == null ||
+                    business.offer_ref == null || !ValidRef(business.collection_fingerprint) ||
+                    q.mode != "normal" || !q.displayed_total.HasValue || business.item_refs.Count == 0 ||
+                    back == null || back.completeness != "complete" || back.item_refs.Count == 0 ||
+                    d.ui.status == "blocked") return false;
+                foreach (string reference in business.item_refs)
+                {
+                    bool found = false;
+                    foreach (var item in d.items)
+                        if (item.item_ref == reference && item.container == "back" && !item.owned) { found = true; break; }
+                    if (!found) return false;
+                }
+                if (q.reason != null) return false;
+            }
             if ((d.status == "unavailable" || d.ui.status == "blocked" || d.ui.status == "updating" ||
-                d.ui.status == "unverified" || d.ui.coverage != "verified") && q.status == "complete") return false;
+                (d.schema_version == 1 && (d.ui.status == "unverified" || d.ui.coverage != "verified"))) && q.status == "complete") return false;
             return true;
         }
 
@@ -197,7 +281,7 @@ namespace PawnPilot
 
         private static bool ValidateEligibility(PurchaseEligibility e)
         {
-            if (e.purchase_enabled || !ValidList(e.missing, MaxRefs, false)) return false;
+            if (!ValidList(e.missing, MaxRefs, false) || (e.purchase_enabled && e.missing.Count != 0)) return false;
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var x in e.missing) if (!ValidText(x, MaxText) || !seen.Add(x)) return false;
             return true;
@@ -236,6 +320,14 @@ namespace PawnPilot
             if (b == null || a.Count != b.Count) return false;
             for (int i = 0; i < a.Count; i++) if (!string.Equals(a[i], b[i], StringComparison.Ordinal)) return false;
             return true;
+        }
+        private static bool IsSubsequence(List<string> candidate, List<string> source)
+        {
+            if (candidate == null || source == null) return false;
+            int at = 0;
+            foreach (string reference in source)
+                if (at < candidate.Count && string.Equals(candidate[at], reference, StringComparison.Ordinal)) at++;
+            return at == candidate.Count;
         }
         private static List<string> Copy(List<string> source) => source == null ? null : new List<string>(source);
         private static List<TOut> CopyMapped<TIn, TOut>(List<TIn> source, Func<TIn, TOut> map)
