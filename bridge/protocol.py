@@ -775,7 +775,7 @@ def valid_action_binding_v3(business, action, arguments):
                     and arguments.get("settlement_ref") == settlement["settlement_ref"]
                     and arguments.get("amount") == settlement["total"]
                     and arguments.get("max_spend", -1) >= max(0, arguments.get("amount", 0)))
-        return (day["stage"] == "next_morning" and day["report_open"] is True
+        return (day["stage"] in {"morning", "next_morning"} and day["report_open"] is True
                 and day["settlement"] is None)
     if action == "resume_inspection_handoff":
         handoff = details.get("inspection_handoff")
@@ -950,8 +950,9 @@ def valid_action_state_v3(snapshot, action, arguments):
             return (snapshot["phase"] == "CLOSED" and day["stage"] == "settlement"
                     and day["can_confirm"] and not day["report_open"]
                     and (amount <= 0 or arguments["max_spend"] <= snapshot["cash"]))
-        return (snapshot["phase"] == "MORNING" and day["stage"] == "next_morning"
-                and day["report_open"] and day["settlement"] is None)
+        return (snapshot["phase"] == "MORNING" and day["stage"] in {"morning", "next_morning"}
+                and day["report_open"] and day["settlement"] is None
+                and snapshot["business"]["details"]["customer"]["presence"] == "absent")
     if action == "start_business":
         return snapshot["ready"] and snapshot["phase"] == "MORNING"
     if action in BARGAIN_ACTIONS:
@@ -1071,7 +1072,7 @@ def valid_action_success_evidence_v3(command, before, after):
                     and after["phase"] == "MORNING" and new["stage"] == "next_morning"
                     and not new["transition_pending"] and new["report_open"]
                     and new["settlement"] is None
-                    and after["cash"] - before["cash"] == command["arguments"]["amount"])
+                    and before["cash"] - after["cash"] == command["arguments"]["amount"])
         if (old["day_number"] is None or new["day_number"] != old["day_number"]
                 or before["cash"] != after["cash"]):
             return False
@@ -1084,7 +1085,7 @@ def valid_action_success_evidence_v3(command, before, after):
                     and old["stage"] == "closed" and new["stage"] == "settlement"
                     and new["can_confirm"] and new["settlement"] is not None and not new["report_open"])
         return (before["phase"] == "MORNING" and after["phase"] == "MORNING"
-                and old["stage"] == "next_morning" and old["report_open"]
+                and old["stage"] in {"morning", "next_morning"} and old["report_open"]
                 and new["stage"] in {"morning", "next_morning"} and not new["report_open"]
                 and new["settlement"] is None)
     if action == "resume_inspection_handoff":

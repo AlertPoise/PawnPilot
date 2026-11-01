@@ -72,6 +72,7 @@ def analyze_m4_evidence(paths):
     act_order = []
     status_queries = []
     observations = []
+    health_checks = []
     duplicate_command_ids = set()
     for sequence, run_index, event in events:
         item = event.get("item")
@@ -92,6 +93,9 @@ def analyze_m4_evidence(paths):
                     "run_index": run_index,
                     "action": arguments.get("action"),
                     "arguments": arguments.get("arguments") if isinstance(arguments.get("arguments"), dict) else {},
+                    "request_broker_epoch": arguments.get("broker_epoch"),
+                    "request_world_epoch": arguments.get("expected_world_epoch"),
+                    "request_revision": arguments.get("expected_revision"),
                     "payload": {},
                 }
                 calls[key] = record
@@ -112,16 +116,24 @@ def analyze_m4_evidence(paths):
             payload = _decode_payload(item.get("result"))
             state = _extract_observed_state(payload)
             if state is not None:
-                observations.append({"sequence": sequence, "run_index": run_index, "state": state})
+                snapshot = payload.get("snapshot") if isinstance(payload, dict) else None
+                observations.append({"sequence": sequence, "run_index": run_index, "state": state,
+                                     "broker_epoch": snapshot.get("broker_epoch") if isinstance(snapshot, dict) else None})
+        elif tool == "health_check":
+            payload = _decode_payload(item.get("result"))
+            if payload:
+                health_checks.append({"sequence": sequence, "run_index": run_index,
+                                      "broker_epoch": payload.get("broker_epoch"), "payload": payload})
 
     # Status is linked by the command ID from the act, not by generated Codex item IDs.
     for attempt in act_order:
         command_id = attempt.get("command_id")
         matches = [q for q in status_queries if q.get("command_id") == command_id and
                    q["sequence"] > attempt["sequence"]]
-        payload = matches[-1]["payload"] if matches else attempt.get("payload", {})
+        completed_queries = [q for q in matches if q.get("payload")]
+        payload = completed_queries[-1]["payload"] if completed_queries else attempt.get("payload", {})
         attempt["status"] = payload.get("command_status") or payload.get("status")
-        attempt["status_query_sequence"] = matches[-1]["sequence"] if matches else None
+        attempt["status_query_sequence"] = completed_queries[-1]["sequence"] if completed_queries else None
         outcome = payload.get("result")
         if isinstance(outcome, dict):
             before = outcome.get("before")
@@ -131,6 +143,64 @@ def analyze_m4_evidence(paths):
             attempt["cash_delta"] = before_cash - after_cash if isinstance(before_cash, int) and isinstance(after_cash, int) else None
         else:
             attempt["cash_delta"] = None
+
+        # A broker stale rejection happens before enqueue in /commands. In that one exact case,
+        # a subsequent same-ID 404/not_found with no intervening running/unknown evidence proves
+        # no journal record was created. Other not_found, failed, or error results stay unresolved.
+        direct = attempt.get("payload") or {}
+        direct_stale_prequeue = (
+            direct.get("ok") is False and direct.get("error_source") == "broker" and direct.get("error") == "stale_state" and
+            direct.get("command_id") == command_id and direct.get("command_status") == "rejected" and
+            direct.get("execution") is None and direct.get("result") is None
+        )
+        query_statuses = [q["payload"].get("command_status") or q["payload"].get("status")
+                          for q in completed_queries]
+        latest_query = completed_queries[-1]["payload"] if completed_queries else {}
+        not_found_proof = (
+            bool(completed_queries) and latest_query.get("command_id") == command_id and
+            latest_query.get("found") is False and
+            (latest_query.get("command_status") == "not_found" or latest_query.get("status") == "not_found")
+        )
+        direct_broker_epoch = direct.get("broker_epoch")
+        request_broker_epoch = attempt.get("request_broker_epoch")
+        query_broker_epoch = latest_query.get("broker_epoch")
+        latest_status_sequence = completed_queries[-1]["sequence"] if completed_queries else None
+        observe_after_query = [record for record in observations if latest_status_sequence is not None and
+                               record["sequence"] > latest_status_sequence]
+        # Anchor the proof to the first fresh observe after the matching not_found query.
+        # Later observations may legitimately be from another broker epoch after a restart;
+        # they must not rewrite a completed historical determination.
+        proof_observe = observe_after_query[0] if observe_after_query else None
+        health_before_proof_observe = [check for check in health_checks
+                                       if latest_status_sequence is not None and
+                                       check["sequence"] > latest_status_sequence and
+                                       (proof_observe is None or check["sequence"] < proof_observe["sequence"])]
+        latest_health_before_proof_observe = (health_before_proof_observe[-1]
+                                               if health_before_proof_observe else None)
+        same_epoch_confirmation = (
+            isinstance(direct_broker_epoch, str) and bool(direct_broker_epoch) and
+            direct_broker_epoch == request_broker_epoch and
+            (query_broker_epoch is None or query_broker_epoch == direct_broker_epoch) and
+            proof_observe is not None and
+            proof_observe.get("broker_epoch") == direct_broker_epoch and
+            (latest_health_before_proof_observe is None or
+             latest_health_before_proof_observe.get("broker_epoch") is None or
+             latest_health_before_proof_observe.get("broker_epoch") == direct_broker_epoch)
+        )
+        no_ambiguous_status_evidence = all(
+            status == "not_found" for status in query_statuses
+        )
+        attempt["prequeue_stale_no_enqueue"] = bool(
+            direct_stale_prequeue and not_found_proof and no_ambiguous_status_evidence and same_epoch_confirmation
+        )
+        prior = [record for record in observations if record["run_index"] == attempt["run_index"] and
+                 record["sequence"] < attempt["sequence"]]
+        observed = prior[-1]["state"] if prior else {}
+        business = observed.get("business", {}) if isinstance(observed, dict) else {}
+        customer = business.get("details", {}).get("customer", {}) if isinstance(business, dict) else {}
+        attempt["original_world_epoch"] = attempt.get("request_world_epoch") or observed.get("world_epoch")
+        attempt["original_customer_ref"] = (attempt.get("arguments", {}).get("customer_ref") or
+                                             business.get("customer_ref") or customer.get("customer_ref"))
 
     day_observations = []
     for record in observations:
@@ -194,8 +264,20 @@ def analyze_m4_evidence(paths):
     # original ID before the session can issue another write. Rejected IDs are retained as audit.
     unresolved = []
     rejected = []
+    prequeue_stale_rejections = []
     for attempt in act_order:
         status = attempt.get("status")
+        if attempt.get("prequeue_stale_no_enqueue"):
+            rejected.append(attempt.get("command_id"))
+            prequeue_stale_rejections.append({
+                "command_id": attempt.get("command_id"),
+                "action": attempt.get("action"),
+                "world_epoch": attempt.get("original_world_epoch"),
+                "broker_epoch": (attempt.get("payload") or {}).get("broker_epoch"),
+                "customer_ref": attempt.get("original_customer_ref"),
+                "expected_revision": attempt.get("request_revision"),
+            })
+            continue
         if (not attempt.get("command_id") or attempt.get("status_query_sequence") is None and
                 status in ("rejected", "failed", "error")) or status in (
                     None, "pending", "running", "outcome_unknown", "unknown", "timeout", "not_found", "failed", "error"):
@@ -216,6 +298,7 @@ def analyze_m4_evidence(paths):
         "unknown_fee_reservation": unknown_fee_reservation,
         "unresolved_command_ids": [value for value in unresolved if value],
         "rejected_command_ids": [value for value in rejected if value],
+        "prequeue_stale_rejections": prequeue_stale_rejections,
         "duplicate_command_ids": sorted(duplicate_command_ids),
         "initial_day": day_observations[0]["day_number"] if day_observations else None,
         "baseline_valid": baseline_valid,
@@ -338,6 +421,11 @@ def build_m4_prompt(args, audit, remaining, handoff_ref):
     unresolved = audit["unresolved_command_ids"]
     unresolved_text = ", ".join(unresolved) if unresolved else "none"
     previous_rejected = ", ".join(audit["rejected_command_ids"]) if audit["rejected_command_ids"] else "none"
+    stale_entries = audit.get("prequeue_stale_rejections", [])
+    stale_details = "; ".join(
+        f"id={row.get('command_id')}, action={row.get('action')}, world={row.get('world_epoch')}, "
+        f"customer={row.get('customer_ref')}" for row in stale_entries
+    ) or "none"
     initial_day = audit["initial_day"]
     latest = audit["latest_day"]
     latest_day = latest["day_number"] if latest else "not yet observed"
@@ -358,12 +446,21 @@ def build_m4_prompt(args, audit, remaining, handoff_ref):
         "If day details are missing, stop without writes. For every write observe fresh and use one exact current legal_actions "
         "entry and exact observed schema/broker/world/revision/version. Use a fresh unique command_id prefixed with the evidence label. "
         "After EVERY act, query get_action_status with the original ID; if nonterminal wait only for that same ID, query it again, "
-        "then observe fresh. A rejected, stale, failed, timeout or unknown write consumes budgets; query the SAME original ID and "
-        "stop all further writes in this run. Never auto-refresh into a new ID/retry of that operation. "
+        "then observe fresh. Every rejected/stale/failed/timeout/unknown act consumes its write/economic budgets and must be queried "
+        "by the SAME original ID; never auto-refresh into a new ID/retry of the same operation. Normally any such result stops further writes. "
+        "The sole narrow exception is an exact broker stale_state direct ActReply with command_status=rejected and no execution/result, "
+        "followed by get_action_status for that same ID returning found=false/not_found, no pending/running/unknown evidence for that ID, "
+        "and a fresh observe (plus health_check if used) still showing the ActReply broker_epoch. Treat only that pattern as rejected before enqueue. "
+        "It still consumes all budgets and is never retried under any command ID for that same customer/action. After that exact proof, "
+        "freshly observe and you may choose a DIFFERENT currently legal ordinary normal-ending action for the still-visible customer "
+        "(for example current manual dialogue advance or normal dismissal); do not repeat the stale action even if it remains legal. "
+        "Every other stale/rejected/unknown/timeout/error remains stop-and-query-only. "
         f"Historical unresolved command IDs that must be queried first by their ORIGINAL ID: {unresolved_text}. "
         f"Historical rejected command IDs (never replay): {previous_rejected}. Resolve required old IDs before any new action; "
-        "if any remains unknown/pending, stop. Use at most three 10-second revision waits when waiting for visible automatic progress; "
-        "stop after three unchanged waits. Never wait instead of taking a currently legal bounded next step. "
+        f"Verified pre-enqueue stale attempts to never retry for their original customer/action: {stale_details}. "
+        "if any remains unknown/pending, stop. Use 10-second revision waits for visible automatic progress; "
+        "stop after three consecutive unchanged waits, resetting that count only when observed business state actually changes. "
+        "Never wait instead of taking a currently legal bounded next step. "
         "Use only ordinary currently legal actions and capabilities already exposed: start/receive, ordinary visible dialogue, "
         "trade panel, prepare and normal purchase/sale, normal dismiss, ordinary bargain flow, and fixed default inventory sort. "
         "Make customer and economic decisions autonomously from visible cash, the current exact normal quote, current inventory and "
@@ -372,6 +469,11 @@ def build_m4_prompt(args, audit, remaining, handoff_ref):
         "Do not hardcode a maximum bargain discount; compare each currently visible option and risk against the actual quote and cash. "
         "If declining a customer/trade is better, use only currently legal ordinary visible refusal/dismiss/dialogue actions. "
         "Leave day settlement services at their default selection; do not toggle or reconfigure services. "
+        "During automatic dialogue playback/typewriter, use bounded revision waits and fresh observes; do not race the changing line. "
+        "During NPC arrival/stock delivery, do not prepare merely because prepare_purchase_items is already legal. Wait with bounded "
+        "revision waits until the customer phase is visibly trading and the direction-specific trade panel is open; then require the "
+        "visible customer stock/item refs and units to be unchanged across two fresh observations before preparing any items. "
+        "If the inventory/stock is still changing or trading phase is not reached, keep waiting only within the wait limit and stop if exhausted. "
         "Respect remaining customer/trade/bargain/spend/night-fee ceilings before every submission. Never reuse a command ID, "
         "offer ref, customer ref, or old legal arguments. No wholesale, special deals, appraisal, blackmail, threats, or other unsupported paths. "
         "Use the observed day object as the phase controller: PREPARE -> OPENING -> SERVING -> BETWEEN_CUSTOMERS -> CLOSING -> "

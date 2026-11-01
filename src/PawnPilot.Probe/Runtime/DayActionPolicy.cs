@@ -47,7 +47,8 @@ namespace PawnPilot
                     return command.arguments.amount > 0 && command.arguments.max_spend > snapshot.cash
                         ? "settlement_spend_limit" : null;
                 case "close_day_report":
-                    return snapshot.phase == "MORNING" && day.stage == "next_morning" && day.report_open && day.settlement == null
+                    return snapshot.phase == "MORNING" && (day.stage == "morning" || day.stage == "next_morning") &&
+                        day.report_open && day.settlement == null && snapshot.business.details.customer?.presence == "absent"
                         ? null : "day_report_precondition";
                 default:
                     return "unknown_action";

@@ -286,6 +286,11 @@ namespace PawnPilot
             if (snapshot.menu_open || customer == null || snapshot.business?.details?.ui?.blockers == null ||
                 HasActionBlockingEvidence(snapshot.business.details.ui.blockers, action)) return;
             if (customer.presence != "absent") return;
+            // Day transitions are action-local snapshot gates too. Do not advertise a
+            // bell/open candidate that the protocol would reject during shutter motion.
+            var candidate = new Command { schema_version = Protocol.BusinessSchemaVersion,
+                action = action, arguments = new ActionArguments() };
+            if (BusinessActionPolicy.ValidateCandidate(candidate, snapshot) != null) return;
             result.Add(new LegalAction { action = action, arguments = new ActionArguments() });
         }
 

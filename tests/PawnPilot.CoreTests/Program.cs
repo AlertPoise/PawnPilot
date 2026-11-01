@@ -441,6 +441,22 @@ public static class DayActionPolicyTests
         var morning = State("MORNING", "morning", day: 6, revision: 5, cash: 93);
         check("day_report_close_requires_report_and_preserves_day_cash", DayActionPolicy.Validate(report, next) == null && DayActionPolicy.Postcondition(report, next, morning));
         check("day_report_cannot_close_absent_report", DayActionPolicy.Validate(Command("close_day_report", morning), morning) != null);
+        var loadedReport = State("MORNING", "morning", day: 2, revision: 1, cash: 120);
+        loadedReport.business.details.day.report_open = true;
+        var closeLoadedReport = Command("close_day_report", loadedReport);
+        check("day_loaded_morning_report_can_close_without_prior_confirmation", BusinessActionPolicy.Validate(closeLoadedReport, loadedReport) == null);
+        check("day_loaded_report_keeps_start_business_blocked", BusinessActionPolicy.Validate(Command("start_business", loadedReport), loadedReport) == "day_ui_blocked");
+        loadedReport.business.details.customer.presence = "present";
+        bool currentCustomerBlocked = DayActionPolicy.Validate(closeLoadedReport, loadedReport) != null;
+        loadedReport.business.details.customer.presence = "absent"; loadedReport.business.details.day.transition_pending = true;
+        check("day_loaded_report_keeps_customer_and_transition_gates", currentCustomerBlocked && DayActionPolicy.Validate(closeLoadedReport, loadedReport) == "day_transition_pending");
+        loadedReport.business.details.day.transition_pending = false;
+        var loadedReportGate = new ActionGate(); int reportCloses = 0;
+        loadedReportGate.Accept(closeLoadedReport, loadedReport, "broker", 1);
+        loadedReportGate.Advance("broker", loadedReport, 2, 2, _ => reportCloses++, DayActionPolicy.Verify);
+        var loadedMorning = State("MORNING", "morning", day: 2, revision: 2, cash: 120);
+        check("day_loaded_report_close_proves_same_day_cash_not_day_advance", loadedReportGate.Advance("broker", loadedMorning, 3, 3,
+            _ => reportCloses++, DayActionPolicy.Verify).result?.status == "succeeded" && reportCloses == 1);
 
         var refund = State("CLOSED", "settlement"); SetSettlement(refund, -7);
         var refundCommand = Command("confirm_end_of_day", refund);

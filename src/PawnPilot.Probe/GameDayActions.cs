@@ -58,7 +58,11 @@ namespace PawnPilot
                 bool settlementOpen = SettlementOpen();
                 state.stage = settlementOpen ? "settlement" : store.storeState == PlayerStore.StoreState.OPEN ? "open" :
                     store.storeState == PlayerStore.StoreState.CLOSED ? "closed" : store.storeState == PlayerStore.StoreState.MORNING ? "morning" : "unavailable";
-                if (store.storeState == PlayerStore.StoreState.OPEN) state.remaining_customers = VisibleRemainingCustomers(ui);
+                if (store.storeState == PlayerStore.StoreState.OPEN)
+                {
+                    state.remaining_customers = VisibleRemainingCustomers(ui);
+                    if (!state.remaining_customers.HasValue) state.reason = "day_counter_text_unverified";
+                }
 
                 if (confirmation != null && confirmation.Returned && ConfirmationComplete(confirmation, state))
                 { confirmation.Completed = true; StopWatchingCallbackErrors(); }
@@ -163,7 +167,9 @@ namespace PawnPilot
                         ? null : "settlement_native_terms_changed";
                 case "close_day_report":
                     target = AdvCalendarUIManager.Instance;
-                    return confirmation?.Completed == true && fresh.stage == "next_morning" && fresh.report_open &&
+                    // A loaded morning may reopen the native report. Closing that
+                    // visible report does not need this Mod instance to have settled it.
+                    return (fresh.stage == "morning" || fresh.stage == "next_morning") && fresh.report_open &&
                         GameSettlementReader.CloseReportReady() ? null : "day_report_native_precondition";
                 default:
                     return "unsupported_day_action";
@@ -272,8 +278,9 @@ namespace PawnPilot
 
         private static int? VisibleRemainingCustomers(StoreUIManager ui)
         {
-            var counter = ui?.clientCounter == null ? null : ui.clientCounter.GetComponent<StoreClientCounter>();
-            var text = counter?.clientCounterTMP;
+            // The scene field points at clientCounterTMP itself, not either of the
+            // StoreClientCounter controllers that update this shared visible label.
+            var text = ui?.clientCounter == null ? null : ui.clientCounter.GetComponent<TMPro.TextMeshProUGUI>();
             if (!VisibleUiReader.TextVisible(text)) return null;
             string value = VisibleUiReader.RenderedText(text)?.Trim();
             if (string.IsNullOrEmpty(value) || value.Length > 10) return null;

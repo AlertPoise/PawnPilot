@@ -18,7 +18,7 @@ SCHEMA = json.loads((ROOT / 'protocol/schemas/wire-v3.json').read_text(encoding=
 SNAPSHOT_SCHEMA = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/Snapshot'})
 
 
-def day_snapshot(action, *, total=40, amount=None, max_spend=None):
+def day_snapshot(action, *, total=40, amount=None, max_spend=None, day_stage=None):
     state = copy.deepcopy(BASE)
     details = state['business']['details']
     customer = details['customer']
@@ -32,6 +32,9 @@ def day_snapshot(action, *, total=40, amount=None, max_spend=None):
         'can_close': False, 'can_sleep': False, 'can_confirm': False,
         'report_open': False, 'transition_pending': False, 'settlement': None,
     }
+    details['candidates'] = [{'action': candidate, 'status': 'candidate', 'reason': 'day-stage test'}
+        for candidate in ('sort_inventory_default', 'close_business', 'open_end_of_day',
+                          'confirm_end_of_day', 'close_day_report')]
     state['cash'] = 100
     state['menu_open'] = False
     state['phase'] = 'MORNING'
@@ -52,7 +55,7 @@ def day_snapshot(action, *, total=40, amount=None, max_spend=None):
         args = {'settlement_ref': 'settlement-3', 'amount': total if amount is None else amount,
                 'max_spend': max(0, total) if max_spend is None else max_spend}
     elif action == 'close_day_report':
-        day.update(stage='next_morning', report_open=True)
+        day.update(stage=day_stage or 'next_morning', report_open=True)
     else:
         raise AssertionError(action)
     state['legal_actions'] = [{'action': action, 'arguments': args}]
@@ -130,6 +133,13 @@ class M4ProtocolTests(unittest.TestCase):
                 self.assertTrue(valid_action_binding_v3(state['business'], action, args))
                 self.assertTrue(valid_action_state_v3(state, action, args))
                 SNAPSHOT_SCHEMA.validate(state)
+
+        loaded_report = day_snapshot('close_day_report', day_stage='morning')
+        args = loaded_report['legal_actions'][0]['arguments']
+        self.assertTrue(valid_snapshot_v3(loaded_report))
+        self.assertTrue(valid_action_binding_v3(loaded_report['business'], 'close_day_report', args))
+        self.assertTrue(valid_action_state_v3(loaded_report, 'close_day_report', args))
+        SNAPSHOT_SCHEMA.validate(loaded_report)
 
         bad_states = []
         bad = day_snapshot('close_business'); bad['business']['details']['day']['remaining_customers'] = 1; bad_states.append(bad)
@@ -211,13 +221,23 @@ class M4ProtocolTests(unittest.TestCase):
         self.assertTrue(valid_command_v3(command))
         after = transitioned(confirm, phase='MORNING', stage='next_morning', day_number=4,
                              report_open=True, settlement=None)
-        after['cash'] = confirm['cash'] - 25
+        after['cash'] = confirm['cash'] - args['amount']
         self.assertTrue(valid_snapshot_v3(after))
         self.assertTrue(valid_action_success_evidence_v3(command, confirm, after))
         wrong_cash = copy.deepcopy(after); wrong_cash['cash'] += 1
         self.assertFalse(valid_action_success_evidence_v3(command, confirm, wrong_cash))
         wrong_day = copy.deepcopy(after); wrong_day['business']['details']['day']['day_number'] = 3
         self.assertFalse(valid_action_success_evidence_v3(command, confirm, wrong_day))
+
+        positive_before = day_snapshot('confirm_end_of_day', total=5)
+        positive_command = command_for('confirm_end_of_day', positive_before['legal_actions'][0]['arguments'], positive_before)
+        positive_after = transitioned(positive_before, phase='MORNING', stage='next_morning', day_number=4,
+                                      report_open=True, settlement=None)
+        positive_after['cash'] = positive_before['cash'] - 5
+        self.assertTrue(valid_action_success_evidence_v3(positive_command, positive_before, positive_after))
+        for unrelated_cash in (positive_before['cash'] - 4, positive_before['cash'] - 6):
+            wrong_cash = copy.deepcopy(positive_after); wrong_cash['cash'] = unrelated_cash
+            self.assertFalse(valid_action_success_evidence_v3(positive_command, positive_before, wrong_cash))
 
         before = day_snapshot('close_business')
         after = transitioned(before, phase='CLOSED', stage='closed', can_sleep=True)
@@ -229,6 +249,20 @@ class M4ProtocolTests(unittest.TestCase):
         before = day_snapshot('close_day_report')
         after = transitioned(before, phase='MORNING', stage='morning', report_open=False)
         self.assertTrue(valid_action_success_evidence_v3(command_for('close_day_report', {}, before), before, after))
+        loaded_before = day_snapshot('close_day_report', day_stage='morning')
+        loaded_after = transitioned(loaded_before, phase='MORNING', stage='morning', report_open=False)
+        self.assertTrue(valid_action_success_evidence_v3(
+            command_for('close_day_report', {}, loaded_before), loaded_before, loaded_after))
+        self.assertEqual(loaded_before['business']['details']['day']['day_number'],
+                         loaded_after['business']['details']['day']['day_number'])
+        self.assertEqual(loaded_before['cash'], loaded_after['cash'])
+
+        confirm_before = day_snapshot('confirm_end_of_day')
+        report_closed = transitioned(confirm_before, phase='MORNING', stage='morning', report_open=False,
+                                     settlement=None)
+        self.assertFalse(valid_action_success_evidence_v3(
+            command_for('confirm_end_of_day', confirm_before['legal_actions'][0]['arguments'], confirm_before),
+            confirm_before, report_closed))
 
     def test_day_action_reference_and_extra_arguments_are_rejected(self):
         state = day_snapshot('confirm_end_of_day')

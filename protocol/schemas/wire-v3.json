@@ -2026,7 +2026,14 @@
             "open_bargain_panel",
             "close_bargain_panel",
             "choose_bargain_option",
-            "resume_inspection_handoff"
+            "resume_inspection_handoff",
+            "prepare_sale_items",
+            "sell_visible_offer",
+            "sort_inventory_default",
+            "close_business",
+            "open_end_of_day",
+            "confirm_end_of_day",
+            "close_day_report"
           ]
         },
         "status": {

@@ -29,14 +29,15 @@ def observation(day, revision=1, handoff=None):
                        "settlement": {"settlement_ref": None, "total": None, "services": []}}}
     if handoff is not None:
         details["inspection_handoff"] = handoff
-    return {"snapshot": {"state": {"schema_version": 3, "world_epoch": "world-1",
+    return {"snapshot": {"broker_epoch": "broker-1", "state": {"schema_version": 3, "world_epoch": "world-1",
             "revision": revision, "version": f"world-1:{revision}", "cash": 500,
-            "business": {"details": details}}}}
+            "business": {"customer_ref": "customer-16", "details": details}}}}
 
 
 def act_pair(command_id, action, arguments=None, item_id="item_1", direct_status="pending"):
     payload = {"command_id": command_id, "command_status": direct_status, "status": direct_status}
-    args = {"command_id": command_id, "action": action, "arguments": arguments or {}}
+    args = {"command_id": command_id, "action": action, "arguments": arguments or {},
+            "broker_epoch": "broker-1", "expected_world_epoch": "world-1", "expected_revision": 4}
     return [call("started", item_id, "act", args), call("completed", item_id, "act", args, payload)]
 
 
@@ -149,6 +150,82 @@ class M4SessionTests(unittest.TestCase):
                 ])
                 audit = verify_codex.analyze_m4_evidence([path])
                 self.assertEqual(audit["unresolved_command_ids"], ["uncertain-command"])
+
+    def test_same_epoch_broker_stale_rejection_plus_same_id_not_found_is_prequeue_terminal(self):
+        command_id = "prepare-stale"
+        request = {"command_id": command_id, "action": "prepare_purchase_items",
+                   "arguments": {"customer_ref": "customer-16"}, "broker_epoch": "broker-1",
+                   "expected_world_epoch": "world-1", "expected_revision": 4,
+                   "expected_version": "world-1:4"}
+        direct = {"ok": False, "error_source": "broker", "error": "stale_state",
+                  "command_id": command_id, "command_status": "rejected", "status": "rejected",
+                  "broker_epoch": "broker-1", "world_epoch": "world-1", "revision": 4,
+                  "execution": None, "result": None}
+        not_found = {"ok": False, "error_source": "broker", "error": "command_not_found",
+                     "command_id": command_id, "found": False, "command_status": "not_found",
+                     "broker_epoch": None}
+        events = [
+            call("completed", "item_0", "observe", payload=observation(4, revision=4)),
+            call("started", "item_1", "act", request), call("completed", "item_1", "act", request, direct),
+            call("started", "item_2", "get_action_status", {"command_id": command_id}),
+            call("completed", "item_2", "get_action_status", {"command_id": command_id}, not_found),
+            call("completed", "item_3", "health_check", payload={"ok": True, "broker_epoch": "broker-1"}),
+            call("completed", "item_4", "observe", payload=observation(4, revision=5)),
+        ]
+        later_observation = observation(4, revision=6)
+        later_observation["snapshot"]["broker_epoch"] = "broker-restarted"
+        events.append(call("completed", "item_5", "observe", payload=later_observation))
+        path = self.write_evidence(events)
+        audit = verify_codex.analyze_m4_evidence([path])
+        self.assertEqual(audit["act_attempts"], 1)
+        self.assertEqual(audit["unresolved_command_ids"], [])
+        self.assertEqual(audit["rejected_command_ids"], [command_id])
+        self.assertEqual(audit["prequeue_stale_rejections"], [{
+            "command_id": command_id, "action": "prepare_purchase_items", "world_epoch": "world-1",
+            "broker_epoch": "broker-1", "customer_ref": "customer-16", "expected_revision": 4,
+        }])
+        prompt = verify_codex.build_m4_prompt(SimpleNamespace(label="m4-r2", session_id="s3", confirmed_handoff=None),
+            audit, {"max_writes": 7, "max_customers": 2, "max_spend": 500, "max_trades": 2,
+                    "max_bargains": 1, "max_night_fee": 200}, None)
+        self.assertIn("id=prepare-stale, action=prepare_purchase_items, world=world-1, customer=customer-16", prompt)
+        self.assertIn("do not repeat the stale action even if it remains legal", prompt)
+        self.assertIn("visibly trading", prompt)
+        self.assertIn("unchanged across two fresh observations", prompt)
+
+    def test_stale_not_found_does_not_release_if_epoch_changed_or_pending_was_seen(self):
+        for mismatch in ("epoch", "pending", "source", "missing_observe"):
+            with self.subTest(mismatch=mismatch):
+                command_id = f"prepare-{mismatch}"
+                request = {"command_id": command_id, "action": "prepare_purchase_items",
+                           "arguments": {"customer_ref": "customer-16"}, "broker_epoch": "broker-1",
+                           "expected_world_epoch": "world-1", "expected_revision": 4}
+                direct = {"ok": False, "error_source": "broker", "error": "stale_state",
+                          "command_id": command_id, "command_status": "rejected", "status": "rejected",
+                          "broker_epoch": "broker-1", "execution": None, "result": None}
+                if mismatch == "source":
+                    direct["error_source"] = "adapter"
+                not_found = {"ok": False, "error_source": "broker", "error": "command_not_found",
+                             "command_id": command_id, "found": False, "command_status": "not_found"}
+                events = [call("completed", "item_0", "observe", payload=observation(4, revision=4)),
+                          call("started", "item_1", "act", request), call("completed", "item_1", "act", request, direct)]
+                if mismatch == "pending":
+                    pending = {"command_id": command_id, "command_status": "running", "status": "running"}
+                    events.extend([call("completed", "item_2", "get_action_status", {"command_id": command_id}, pending)])
+                events.append(call("completed", "item_3", "get_action_status", {"command_id": command_id}, not_found))
+                if mismatch != "missing_observe":
+                    events.extend([
+                        call("completed", "item_4", "health_check", payload={"ok": True, "broker_epoch": "broker-1"}),
+                        call("completed", "item_5", "observe", payload=observation(4, revision=5)),
+                    ])
+                if mismatch == "epoch":
+                    events[-1]["item"]["result"] = result(observation(4, revision=5))
+                    decoded = json.loads(events[-1]["item"]["result"]["content"][0]["text"])
+                    decoded["snapshot"]["broker_epoch"] = "broker-restarted"
+                    events[-1]["item"]["result"] = result(decoded)
+                path = self.write_evidence(events)
+                audit = verify_codex.analyze_m4_evidence([path])
+                self.assertEqual(audit["prequeue_stale_rejections"], [])
+                self.assertEqual(audit["unresolved_command_ids"], [command_id])
 
     def test_handoff_resume_requires_exact_latest_unresumed_ref(self):
         handoff = {"requires_manual_inspection": True, "status": "waiting_for_user", "handoff_ref": "handoff-77"}

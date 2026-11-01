@@ -209,7 +209,9 @@ The registered day actions are `close_business {}`, `open_end_of_day {}`,
 phase/stage `OPEN`/`open`, zero remaining customers, absent current customer, and `can_close`.
 Opening end-of-day requires phase/stage `CLOSED`/`closed` and `can_sleep`. Confirmation requires
 `CLOSED`/`settlement`, `can_confirm`, and the currently displayed settlement reference and total.
-Report close requires `MORNING`/`next_morning` with `report_open`. All four require a ready snapshot,
+Report close requires phase `MORNING`, stage `morning` or `next_morning`, an absent customer and
+`report_open`. A normally loaded morning report can be closed without a settlement in the current
+Mod process; closing it is not evidence that settlement occurred. All four require a ready snapshot,
 an observed day number, no open menu or pending transition, and pass the existing inspection-handoff
 gate. While `transition_pending`, `report_open`, or `stage=settlement` holds, other business writes
 are blocked; only the day action valid for the current stage (or a pending inspection resume) can be

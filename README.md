@@ -1,6 +1,6 @@
 # PawnPilot — M4 单日自主经营
 
-M4 **PARTIAL（实现与自动化完成，待授权实机验收）**，位于 `feature/m4-single-day`。新增正常关门、睡袋日结、费用绑定确认与次晨报告收尾，真实 Codex CLI 的连续经营模式到次日停止。正式构建0错误，当前自动化覆盖 **550 managed + 195 Python = 745项**，包含全量回归及最后新增的会话恢复专项。原生流程、逐次测试记录与授权状态见 [M4 报告](docs/m4-implementation.md)。此前 M2/M3 的单项 PASS 不代表 M4 已通过。
+M4 **PARTIAL（实机修复与复测中）**，位于 `feature/m4-single-day`。新增正常关门、睡袋日结、费用绑定确认与次晨报告收尾，真实 Codex CLI 的连续经营模式到次日停止。首日已通过MCP接待2位顾客并正常拒绝、关门、打开日结，实际支付5并进入第2天；结果回传的现金差符号错误已修复，首日经过开发诊断恢复，不计完整自主PASS。用户已追加授权同槽再经营一天。正式构建0错误，当前覆盖 **554 managed + 197 Python = 751项**。原生流程、逐次测试与授权记录见 [M4 报告](docs/m4-implementation.md)。
 
 M3-C **PASS（人工接管与恢复、防重复买入路径）**：七个已核实的香烟/水容器 identifier 经生产观察触发 `inspection_handoff`，等待时拦截经营写操作；只有用户明确检查结束后才通过 `resume_inspection_handoff(handoff_ref)` 恢复并重新观察。真实 Codex CLI/MCP 已对授权测试商品完成接管，两次购买/议价门禁探测均被拒绝；用户手动处理后确认，MCP恢复成功，发现商品已自有且顾客离场，未重复购买。**本轮没有 Agent 自动成交**，七类指定商品未取得各自实机触发样本。自动化 **506 managed + 178 Python = 684 项通过**。测试槽与Mod已清理，原存档和程序集哈希不变。详见 [M3-C 报告](docs/m3c-implementation.md)。
 
