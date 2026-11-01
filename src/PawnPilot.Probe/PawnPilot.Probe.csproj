@@ -10,6 +10,9 @@
   <PropertyGroup Condition="'$(M2AReadOnlyProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);M2A_READ_ONLY_PROBE</DefineConstants>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(M3CInspectionTest)' == 'true'">
+    <DefineConstants>$(DefineConstants);M3C_INSPECTION_TEST</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="Assembly-CSharp"><HintPath>$(GameManagedDir)/Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameManagedDir)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>

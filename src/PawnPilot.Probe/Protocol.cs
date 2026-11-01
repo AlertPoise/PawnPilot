@@ -70,6 +70,7 @@ namespace PawnPilot
         public string container;
         public string option_ref;
         public string dialogue_ref, mode, authorization_ref;
+        public string handoff_ref;
         public int? amount, max_spend;
     }
 
@@ -405,6 +406,7 @@ namespace PawnPilot
                 return "stale_state";
             if (c.action != "close_menu" && (c.schema_version != Protocol.BusinessSchemaVersion || !BusinessActionPolicy.IsRegistered(c.action))) return "unknown_action";
             if (c.action == "close_menu" && !ArgumentsEmpty(c.arguments)) return "invalid_arguments";
+            if (BusinessProjection.IsInspectionWaitingIn(before) && c.action != "resume_inspection_handoff") return "inspection_handoff";
             if (!before.ready)
                 return !before.loaded ? "not_loaded" : (before.not_ready_reason ?? "not_ready");
             if (c.action == "close_menu")
@@ -424,6 +426,7 @@ namespace PawnPilot
             if (!snapshot.ready)
                 return !snapshot.loaded ? "not_loaded" : (snapshot.not_ready_reason ?? "not_ready");
             if (snapshot.schema_version != record.command.schema_version) return "schema_version_mismatch";
+            if (BusinessProjection.IsInspectionWaitingIn(snapshot) && record.command.action != "resume_inspection_handoff") return "inspection_handoff";
             if (record.command.action == "close_menu")
             { if (!snapshot.can_close_menu || !HasLegalCloseMenu(snapshot)) return "precondition"; }
             else { string reason = BusinessActionPolicy.Validate(record.command, snapshot); if (reason != null) return reason; }
@@ -458,6 +461,7 @@ namespace PawnPilot
             {
                 var legal = snapshot.legal_actions[i];
                 if (legal == null || !snapshot.ready) return false;
+                if (BusinessProjection.IsInspectionWaitingIn(snapshot) && legal.action != "resume_inspection_handoff") return false;
                 for (int j = 0; j < i; j++)
                     if (snapshot.legal_actions[j] != null && snapshot.legal_actions[j].action == legal.action &&
                         BusinessActionPolicy.SameArguments(snapshot.legal_actions[j].arguments, legal.arguments)) return false;
@@ -468,7 +472,7 @@ namespace PawnPilot
                 }
                 else if (snapshot.schema_version != 3 || !BusinessActionPolicy.IsEnabled(legal.action) || !BusinessActionPolicy.IsRegistered(legal.action) ||
                     !BusinessActionPolicy.ArgumentsValid(legal.action, legal.arguments) ||
-                    snapshot.menu_open) return false;
+                    (snapshot.menu_open && legal.action != "resume_inspection_handoff")) return false;
             }
             if (snapshot.can_close_menu != close) return false;
             return true;
@@ -501,7 +505,7 @@ namespace PawnPilot
         {
             if (a == null) return "invalid_arguments";
             if (!ValidRef(a.customer_ref) || !ValidRef(a.offer_ref) || !ValidRef(a.option_ref) || !ValidRef(a.collection_fingerprint) ||
-                !ValidRef(a.dialogue_ref) || !ValidRef(a.mode) || !ValidRef(a.authorization_ref) || a.amount < 0 || a.max_spend < 0)
+                !ValidRef(a.dialogue_ref) || !ValidRef(a.mode) || !ValidRef(a.authorization_ref) || !ValidRef(a.handoff_ref) || a.amount < 0 || a.max_spend < 0)
                 return "invalid_arguments";
             if (a.container != null && (a.container.Length < 1 || a.container.Length > 32)) return "invalid_arguments";
             if (a.item_refs != null)
@@ -527,7 +531,7 @@ namespace PawnPilot
             a.offer_ref == null && a.collection_fingerprint == null && a.container == null && a.option_ref == null && !HasV3Arguments(a);
 
         private static bool HasV3Arguments(ActionArguments a) => a != null && (a.container != null || a.dialogue_ref != null || a.mode != null ||
-            a.authorization_ref != null || a.amount.HasValue || a.max_spend.HasValue);
+            a.authorization_ref != null || a.handoff_ref != null || a.amount.HasValue || a.max_spend.HasValue);
 
         private static bool ValidText(string value, int max) => !string.IsNullOrEmpty(value) && value.Length <= max;
         private static int Next(int value) => value == int.MaxValue ? int.MaxValue : value + 1;
@@ -587,6 +591,7 @@ namespace PawnPilot
             if (c.arguments.container != null) Property(args, ref argFirst, "container", Quote(c.arguments.container));
             if (c.arguments.customer_ref != null) Property(args, ref argFirst, "customer_ref", Quote(c.arguments.customer_ref));
             if (c.arguments.dialogue_ref != null) Property(args, ref argFirst, "dialogue_ref", Quote(c.arguments.dialogue_ref));
+            if (c.arguments.handoff_ref != null) Property(args, ref argFirst, "handoff_ref", Quote(c.arguments.handoff_ref));
             if (c.arguments.item_refs != null)
             {
                 var arr = new StringBuilder("[");
@@ -661,7 +666,7 @@ namespace PawnPilot
         {
             customer_ref = a.customer_ref, item_refs = a.item_refs == null ? null : new List<string>(a.item_refs),
             offer_ref = a.offer_ref, collection_fingerprint = a.collection_fingerprint, container = a.container, option_ref = a.option_ref,
-            dialogue_ref = a.dialogue_ref, mode = a.mode, authorization_ref = a.authorization_ref, amount = a.amount, max_spend = a.max_spend
+            dialogue_ref = a.dialogue_ref, mode = a.mode, authorization_ref = a.authorization_ref, handoff_ref = a.handoff_ref, amount = a.amount, max_spend = a.max_spend
         };
 
         private static Progress Clone(Progress p) => p == null ? null : new Progress

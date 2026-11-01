@@ -21,6 +21,8 @@ def main():
     modes.add_argument("--business-stage", choices=("A", "B", "C", "FLOW"), help="Run a bounded real MCP business stage")
     modes.add_argument("--m3a", choices=("FLOW", "SALE", "SORT"), help="Authorized isolated-slot M3-A acceptance")
     modes.add_argument("--m3b", action="store_true", help="Authorized bounded ordinary bargain and settlement acceptance")
+    modes.add_argument("--m3c", choices=("HANDOFF", "RESUME"), help="Separate authorized handoff and user-confirmed resume phases")
+    parser.add_argument("--confirmed-handoff", help="Exact handoff_ref, supplied ONLY after the user says 检查完成，继续")
     modes.add_argument("--trade-panel", action="store_true", help="Authorized ordinary panel-open acceptance; never buys or sells")
     parser.add_argument("--business", action="store_true", help="Read v3 business completeness and quote evidence; never purchases")
     parser.add_argument("--max-spend", type=int, help="Explicit purchase ceiling for stage C/FLOW or M3-B")
@@ -32,13 +34,19 @@ def main():
     args = parser.parse_args()
     if not 0 <= args.max_customers <= 6 or not 1 <= args.max_writes <= 24:
         parser.error("M3-A/M3-B budgets must be 0..6 customers and 1..24 writes")
-    if args.max_spend is not None and ((args.business_stage not in ("C", "FLOW") and not args.m3b) or
+    if args.max_spend is not None and ((args.business_stage not in ("C", "FLOW") and not args.m3b and args.m3c != "RESUME") or
                                       not 0 <= args.max_spend <= 2_147_483_647):
         parser.error("--max-spend is an in-range nonnegative integer used only with --business-stage C/FLOW or --m3b")
     if args.business_stage in ("C", "FLOW") and args.max_spend is None:
         parser.error("stage C/FLOW requires --max-spend as the caller-approved total ceiling")
     if args.m3b and (args.max_spend is None or args.max_spend <= 0):
         parser.error("--m3b requires a positive --max-spend as the caller-approved purchase ceiling")
+    if args.m3c == "RESUME" and (not args.confirmed_handoff or args.max_spend is None):
+        parser.error("M3-C RESUME requires --confirmed-handoff from explicit user confirmation and --max-spend")
+    if args.confirmed_handoff is not None and (args.m3c != "RESUME" or
+            not 1 <= len(args.confirmed_handoff) <= 256 or
+            any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_:" for c in args.confirmed_handoff)):
+        parser.error("--confirmed-handoff must be a bounded exact reference used only in M3-C RESUME")
     if (len(args.label) > 32 or not args.label.replace("-", "").replace("_", "").isalnum()):
         parser.error("label must be at most 32 alphanumeric characters, dash or underscore")
     codex = shutil.which("codex")
@@ -46,7 +54,7 @@ def main():
     if not codex or not python.is_file():
         parser.error("Codex CLI and project .venv are required")
     business_run = args.business or args.business_stage is not None or args.dismiss_customer
-    directory = ROOT / "artifacts" / ("m3b" if args.m3b else "m3a-panel" if args.trade_panel else "m3a" if args.m3a else "m2cd" if business_run else "m2b") / "codex"
+    directory = ROOT / "artifacts" / ("m3c" if args.m3c else "m3b" if args.m3b else "m3a-panel" if args.trade_panel else "m3a" if args.m3a else "m2cd" if business_run else "m2b") / "codex"
     directory.mkdir(parents=True, exist_ok=True)
     output = directory / f"{args.label}.jsonl"
     if output.exists():
@@ -71,6 +79,11 @@ def main():
         "For revision waits use request={criterion:'revision', max_wait_ms:10000, "
         "broker_epoch:observed_broker_epoch, world_epoch:observed_world_epoch, revision:observed_revision}; "
         "do not include command_id in a revision wait. "
+        "If business.details.inspection_handoff.requires_manual_inspection is true, STOP business writes. "
+        "Report handoff_ref and visible item names, and tell the user in Chinese: 我已暂停自动经营操作。"
+        "请在游戏中手动检查，并自行决定是否质疑、购买或拒绝。处理结束后，请在本会话回复“检查完成，继续”。 "
+        "Never resume based on time, reconnection, customer departure or a simulated confirmation. "
+        "Only the separately caller-confirmed M3-C RESUME phase below permits resuming its exact reference. "
     )
     if args.business:
         prompt += (
@@ -80,7 +93,47 @@ def main():
             "unavailable or incomplete. Unverified displayed text does not prove quote binding or legal purchase. "
             "Report the exact world/revision and missing evidence; never infer hidden names or prices. "
         )
-    if args.trade_panel:
+    if args.m3c:
+        prompt += (
+            f"Authorized isolated-slot M3-C test. Prefix IDs {args.label}; maximum {args.max_writes} act attempts "
+            f"and {args.max_customers} received ordinary customers. Use at most 12 revision waits of 10000ms, "
+            "stop after three unchanged waits. Before every write observe fresh and copy exact legal arguments "
+            "and versions. After each act query its original ID, wait command_terminal if necessary, query that "
+            "same ID again and observe. On failure/unknown/timeout stop, never replay. Definite stale rejection "
+            "permits at most one fresh non-economic decision. No GUI, appraisal, bargaining, sale, sort, special "
+            "deal, day crossing or save changes. Wait for arrival/stock animation before preparation. "
+        )
+        if args.m3c == "HANDOFF":
+            prompt += (
+                "This is ONLY the handoff phase. Allowed writes before handoff: start_business, receive_next_customer, "
+                "open_trade_panel, necessary ordinary advance_dialogue/choose_dialogue_option, "
+                "prepare_purchase_items and normal dismiss_customer for unsupported customers. Never purchase "
+                "or resume. Seek one normal NPC SELL offer, using current legal preparation if necessary. "
+                "As soon as any waiting inspection_handoff is observed, report its complete visible state and "
+                "that legal_actions contains no purchase/bargain/dismiss/receive. Output the user reminder and "
+                "STOP this CLI run; the parent conversation will wait for the actual human confirmation. "
+                "Do not submit deliberately illegal actions; gate rejection is tested separately. "
+            )
+        else:
+            prompt += (
+                f"The user has explicitly confirmed 检查完成，继续 for ONLY handoff_ref={args.confirmed_handoff}. "
+                "This confirmation is not reusable for another handoff. Observe, verify that exact waiting ref, "
+                "then submit its current legal resume_inspection_handoff once. Verify its terminal result and "
+                "last_resumed_handoff_ref, then OBSERVE AGAIN before any business decision. If another waiting "
+                "handoff appears, immediately remind the user and STOP without resuming it. If the confirmed ref "
+                "is no longer the current waiting one, stop and report; do not guess or substitute. "
+                "If the user already bought, dismissed, or the customer is gone, report the new state and stop "
+                "without another purchase or receiving another customer. Otherwise only handle that customer's "
+                "normal dialogue, open_trade_panel and prepare_purchase_items as currently legal. "
+                f"At most ONE purchase_visible_offer submission, amount <= {args.max_spend} and current cash, "
+                "complete normal quote, legal exact current items/offer/fingerprint, enabled eligibility and "
+                "sufficient capacity. Never override a capacity restriction. Any purchase submission consumes "
+                "the allowance including rejection or unknown. Retain before cash/items/units/ownership, verify "
+                "the actual cash decrease equals the current quoted amount and purchased items became owned. "
+                "Then only finish that same customer's necessary ordinary dialogue or legal dismissal, observe "
+                "and stop. Report handoff resume separately from purchase outcome and list any blocker honestly. "
+            )
+    elif args.trade_panel:
         prompt += (
             "Verify autonomous opening of an ordinary customer's trade panel in the authorized test slot. "
             f"Use command IDs prefixed {args.label}; at most {args.max_writes} writes and {args.max_customers} received customers. "
@@ -313,7 +366,7 @@ def main():
             "Never submit act again, even on timeout, unknown, stale or error. Then observe once. "
             "If prerequisites fail, stop and report. Include command ID and before/after evidence."
         )
-    elif args.business_stage is None and args.m3a is None and not args.trade_panel and not args.m3b:
+    elif args.business_stage is None and args.m3a is None and not args.trade_panel and not args.m3b and not args.m3c:
         prompt += (
             "Do not call act. Also query get_action_status for ID integration_nonexistent_readonly. "
             "Call wait_for_update with criterion=operable and max_wait_ms=500 to exercise bounded waiting."
@@ -334,7 +387,7 @@ def main():
     command += [prompt]
     with output.open("x", encoding="utf-8") as stdout, output.with_suffix(".stderr.log").open("x", encoding="utf-8") as stderr:
         result = subprocess.run(command, cwd=ROOT, stdout=stdout, stderr=stderr,
-                                timeout=900 if args.business_stage == "FLOW" or args.m3a == "FLOW" or args.trade_panel or args.m3b else 240)
+                                timeout=900 if args.business_stage == "FLOW" or args.m3a == "FLOW" or args.trade_panel or args.m3b or args.m3c else 240)
     print(json.dumps({"exit_code": result.returncode, "evidence": str(output)}))
     raise SystemExit(result.returncode)
 

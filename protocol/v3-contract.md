@@ -161,6 +161,38 @@ ready-snapshot and advanced-version checks. Alongside `close_menu`, only wire3
 unknown result remains unknown with separate persisted resolution evidence. Bargain choices and
 economic actions remain ineligible; no command is replayed.
 
+## Manual inspection handoff (M3-C)
+
+Optional schema-2 `details.inspection_handoff` is absent/null before any handoff. When present:
+
+- `requires_manual_inspection`: boolean; true exactly when `status=waiting_for_user`, otherwise `resumed`.
+- `handoff_ref`, `customer_ref`: bounded short references for this handoff and its triggering visit.
+- `items`: 1..64 distinct `{item_ref, name}` entries; name is current player-visible text or null.
+- `reason`: `manual_item_inspection` or the explicitly enabled test-build `test_inspection_handoff`.
+- `last_resumed_handoff_ref`: null before any confirmation, otherwise the last confirmed reference.
+
+The customer/item references describe the triggering batch and can outlive its current visibility,
+ownership or departure. They are not current purchase capabilities. No identifier, authenticity,
+water quality, hidden feature or true-value field is exported. Exact confirmed identifiers are
+classified inside production `BusinessProjection`, from `BusinessReader`'s existing visible instances.
+
+Waiting survives unavailable UI, manual gameplay and world changes. Current command world/version
+validation still applies. While waiting, all business writes (including `close_menu`) are blocked;
+only `resume_inspection_handoff` with exactly `{handoff_ref}` may be legal when ready. Read-only tools
+remain available. A command already inside native execution continues its normal result verification.
+This state does not reuse or clear broker `manual_action_required` / unknown-command recovery.
+
+Resume only acknowledges the handoff in Mod memory and does not invoke a game transaction. Codex may
+submit it only after explicit user confirmation in the current conversation. Success evidence is the
+before pending reference matching the argument, same world, advanced revision, and the after
+`last_resumed_handoff_ref` matching it. The after state may already contain a new waiting handoff;
+that requires a new human confirmation. Player input remains active, so unrelated manual changes
+between snapshots are not grounds to reinterpret a correctly acknowledged resume as a transaction.
+
+Clients must observe again after resume and use fresh actual terms. Confirmed batches are suppressed
+by world, visit and real object identity; names never identify a batch. Historical v2 and business
+schema-1 records keep their original shapes and do not acquire this extension.
+
 ## Transport size budgets
 
 MCP tool replies retain their independent outer `schema_version: 2` envelope format.

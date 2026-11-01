@@ -51,6 +51,8 @@ class ActionArgumentsV3(StrictModel):
     amount: int | None = Field(default=None, strict=True, ge=0, le=2147483647)
     max_spend: int | None = Field(default=None, strict=True, ge=0, le=2147483647)
     container: str | None = None
+    handoff_ref: str | None = Field(default=None, min_length=1, max_length=128,
+                                    pattern=r"^[A-Za-z0-9_.:-]+$")
 
     @model_validator(mode="before")
     @classmethod
@@ -84,7 +86,7 @@ class LegalActionV3(StrictModel):
     action: Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                     "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
                     "dismiss_customer", "purchase_visible_offer", "prepare_sale_items",
-                    "sell_visible_offer", "sort_inventory_default", "open_trade_panel",
+                    "sell_visible_offer", "sort_inventory_default", "resume_inspection_handoff", "open_trade_panel",
                     "open_bargain_panel", "close_bargain_panel", "choose_bargain_option"]
     arguments: dict[str, Any]
 
@@ -343,7 +345,7 @@ class ObserveReply(ToolReply):
     legal_actions: list[Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                                  "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
                                  "refuse_trade", "dismiss_customer", "purchase_visible_offer", "prepare_sale_items",
-                                 "sell_visible_offer", "sort_inventory_default", "open_trade_panel",
+                                 "sell_visible_offer", "sort_inventory_default", "resume_inspection_handoff", "open_trade_panel",
                                  "open_bargain_panel", "close_bargain_panel", "choose_bargain_option"]] = Field(default_factory=list, max_length=64)
     wait_reason: str | None = None
     manual_action_required: bool = False
@@ -856,6 +858,11 @@ def health_check() -> HealthReply:
 def observe() -> ObserveReply:
     """Read current state and legal actions. Copy action_schema_version into act.schema_version,
     NOT the reply-envelope schema_version or business.details.schema_version.
+
+    If business.details.inspection_handoff.requires_manual_inspection is true and status is
+    waiting_for_user, immediately tell the user which visible items need manual inspection, stop
+    business writes, and wait for the user's explicit "检查完成，继续" confirmation. Read-only tools
+    remain available during handoff.
     """
     try:
         snap = _snapshot()
@@ -888,7 +895,7 @@ def act(schema_version: Annotated[Literal[2, 3], BeforeValidator(_exact_schema_2
         action: Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                         "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
                         "refuse_trade", "dismiss_customer", "purchase_visible_offer", "prepare_sale_items",
-                        "sell_visible_offer", "sort_inventory_default", "open_trade_panel",
+                        "sell_visible_offer", "sort_inventory_default", "resume_inspection_handoff", "open_trade_panel",
                         "open_bargain_panel", "close_bargain_panel", "choose_bargain_option"],
         arguments: CloseMenuArguments | ActionArgumentsV3,
         broker_epoch: Annotated[str, Field(min_length=1, max_length=128)],
@@ -896,7 +903,9 @@ def act(schema_version: Annotated[Literal[2, 3], BeforeValidator(_exact_schema_2
         expected_revision: Annotated[int, Field(strict=True, ge=0, le=2147483647)],
         expected_version: Annotated[str, Field(min_length=1, max_length=256)]) -> ActReply:
     """Submit one version-guarded action using observe.action_schema_version as schema_version.
-    Query the same ID after ambiguous outcomes; never replay automatically.
+    Query the same ID after ambiguous outcomes; never replay automatically. Submit
+    resume_inspection_handoff only after explicit user confirmation; bind handoff_ref from the latest
+    observe result, then observe again before any further action.
     """
     if schema_version == 2 and (action != "close_menu" or arguments.model_dump(mode="json") != {}):
         reason = "action_not_allowed"

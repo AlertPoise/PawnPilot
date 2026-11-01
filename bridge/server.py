@@ -389,6 +389,12 @@ class Broker:
                 raise ProtocolError(409, "stale_state")
             if not self.state["ready"]:
                 raise ProtocolError(409, self.state.get("not_ready_reason") or "game_not_ready")
+            details = self.state.get("business", {}).get("details", {})
+            handoff = details.get("inspection_handoff") if type(details) is dict else None
+            if (type(handoff) is dict and handoff.get("requires_manual_inspection") is True
+                    and handoff.get("status") == "waiting_for_user"
+                    and body["action"] != "resume_inspection_handoff"):
+                raise ProtocolError(409, "inspection_handoff_pending")
             if body["action"] == "close_menu" and not self.state["can_close_menu"]:
                 raise ProtocolError(409, "precondition")
             if self.session_wire_version != version:

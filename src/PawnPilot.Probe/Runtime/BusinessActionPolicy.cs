@@ -32,7 +32,7 @@ namespace PawnPilot
         public static bool IsEnabled(string action) => action == "start_business" || action == "receive_next_customer" ||
             action == "advance_dialogue" || action == "choose_dialogue_option" ||
             action == "prepare_purchase_items" || action == "dismiss_customer" || action == "purchase_visible_offer" ||
-            action == "prepare_sale_items" || action == "sell_visible_offer" || action == "sort_inventory_default" || action == "open_trade_panel" || IsBargainAction(action);
+            action == "prepare_sale_items" || action == "sell_visible_offer" || action == "sort_inventory_default" || action == "open_trade_panel" || action == "resume_inspection_handoff" || IsBargainAction(action);
         [Obsolete("Use IsEnabled(action); runtime actions are enabled per action scope.")]
         public static bool ProductionDispatchEnabled => IsEnabled("start_business") || IsEnabled("receive_next_customer");
 
@@ -41,7 +41,7 @@ namespace PawnPilot
             "start_business", "receive_next_customer", "advance_dialogue", "choose_dialogue_option",
             "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer", "purchase_visible_offer",
             "prepare_sale_items", "sell_visible_offer", "sort_inventory_default", "open_trade_panel",
-            "open_bargain_panel", "close_bargain_panel", "choose_bargain_option"
+            "open_bargain_panel", "close_bargain_panel", "choose_bargain_option", "resume_inspection_handoff"
         };
 
         public static bool IsRegistered(string action) => action != null && Array.IndexOf(Registered, action) >= 0;
@@ -49,9 +49,14 @@ namespace PawnPilot
         public static bool ArgumentsValid(string action, ActionArguments a)
         {
             if (!IsRegistered(action) || a == null) return false;
+            if (action != "resume_inspection_handoff" && a.handoff_ref != null) return false;
             if (action != "sort_inventory_default" && a.container != null) return false;
             switch (action)
             {
+                case "resume_inspection_handoff":
+                    return Ref(a.handoff_ref) && a.customer_ref == null && a.item_refs == null && a.offer_ref == null &&
+                        a.collection_fingerprint == null && a.option_ref == null && a.dialogue_ref == null && a.mode == null &&
+                        a.authorization_ref == null && a.container == null && !a.amount.HasValue && !a.max_spend.HasValue;
                 case "open_bargain_panel":
                 case "close_bargain_panel":
                 case "choose_bargain_option":
@@ -118,7 +123,7 @@ namespace PawnPilot
             if (a == null || b == null || a.customer_ref != b.customer_ref || a.offer_ref != b.offer_ref ||
                 a.collection_fingerprint != b.collection_fingerprint || a.option_ref != b.option_ref ||
                 a.dialogue_ref != b.dialogue_ref || a.mode != b.mode || a.authorization_ref != b.authorization_ref || a.container != b.container ||
-                a.amount != b.amount || a.max_spend != b.max_spend) return false;
+                a.handoff_ref != b.handoff_ref || a.amount != b.amount || a.max_spend != b.max_spend) return false;
             if (a.item_refs == null || b.item_refs == null) return a.item_refs == null && b.item_refs == null;
             return a.item_refs.SequenceEqual(b.item_refs, StringComparer.Ordinal);
         }
@@ -138,7 +143,7 @@ namespace PawnPilot
             if (reason != null) return reason;
             // These adapters have dedicated native preflight/verification paths. Their contract
             // remains the DTO boundary here; do not require generic NativeActionEvidence routing.
-            if (command.action == "prepare_sale_items" || command.action == "sell_visible_offer" || command.action == "sort_inventory_default" || IsBargainAction(command.action)) return null;
+            if (command.action == "prepare_sale_items" || command.action == "sell_visible_offer" || command.action == "sort_inventory_default" || command.action == "resume_inspection_handoff" || IsBargainAction(command.action)) return null;
             if (evidence == null || !evidence.Captured || evidence.Action != command.action) return "native_action_evidence_missing";
             if (!evidence.SceneReady) return evidence.Reason ?? "scene_not_ready";
             if (command.action == "cancel_confirmation")
@@ -222,7 +227,10 @@ namespace PawnPilot
             if (!ArgumentsValid(command.action, command.arguments)) return "invalid_arguments";
             if (!IsEnabled(command.action)) return "action_not_enabled";
             if (!BaseSnapshotReady(snapshot)) return "not_ready";
+            if (BusinessProjection.IsInspectionWaitingIn(snapshot) && command.action != "resume_inspection_handoff") return "inspection_handoff";
             if (requireLegalCandidate && !HasMatchingLegalAction(command, snapshot)) return "action_not_legal_in_snapshot";
+            if (command.action == "resume_inspection_handoff") return BusinessProjection.IsInspectionWaitingIn(snapshot) &&
+                snapshot.business.details.inspection_handoff.handoff_ref == command.arguments.handoff_ref ? null : "inspection_handoff_changed";
             var ui = snapshot.business.details.ui;
             if (snapshot.menu_open) return "ui_scope_unverified";
             bool localNativeAction = IsEnabled(command.action);
@@ -438,6 +446,8 @@ namespace PawnPilot
         {
             if (command == null || !IsRegistered(command.action) && command.action != "close_menu")
                 return VerificationDecision.Uncertain("unsupported_verifier_action");
+            if (command.action == "resume_inspection_handoff") return Postcondition(command, before, after)
+                ? VerificationDecision.Succeeded() : VerificationDecision.Pending();
             if (after == null || !after.ready) return VerificationDecision.Pending();
             if (before == null || before.world_epoch != after.world_epoch || before.scene != after.scene)
                 return VerificationDecision.Uncertain("world_changed_after_action");
@@ -468,6 +478,12 @@ namespace PawnPilot
         public static bool Postcondition(Command command, Snapshot before, Snapshot after)
         {
             if (command == null) return false;
+            if (command.action == "resume_inspection_handoff")
+                return ArgumentsValid(command.action, command.arguments) && before != null && after != null &&
+                    before.world_epoch == after.world_epoch && after.revision > before.revision &&
+                    BusinessProjection.IsInspectionWaitingIn(before) &&
+                    before.business.details.inspection_handoff.handoff_ref == command.arguments.handoff_ref &&
+                    after.business?.details?.inspection_handoff?.last_resumed_handoff_ref == command.arguments.handoff_ref;
             if (IsBargainAction(command.action))
             {
                 if (!ArgumentsValid(command.action, command.arguments) || !BaselinePostcondition(before, after) ||

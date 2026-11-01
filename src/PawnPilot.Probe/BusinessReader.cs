@@ -148,7 +148,7 @@ namespace PawnPilot
                     // false avoids the custom-name path; no inspection or valuation is invoked.
                     string displayName = item.GetDisplayName(false);
                     if (string.IsNullOrWhiteSpace(displayName) || displayName.Length > 256) displayName = null;
-                    visible.Add(new BusinessItemInput { Identity = item, Name = displayName, Units = units,
+                    visible.Add(new BusinessItemInput { Identity = item, Identifier = item.identifier, Name = displayName, Units = units,
                         Owned = GeneralHelper.IsItemOwned(item), ShapeStatus = shapeStatus, Width = width, Height = height });
                     totalItems++;
                 }

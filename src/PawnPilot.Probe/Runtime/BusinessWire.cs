@@ -25,6 +25,7 @@ namespace PawnPilot
                 d.customer.dialogue_ref != null || d.customer.option_refs == null || d.customer.option_refs.Count != 0)) return false;
 
             if ((d.schema_version == 1 && d.front_collection_fingerprint != null) ||
+                (d.inspection_handoff != null && (d.schema_version != 2 || !ValidateInspection(d.inspection_handoff))) ||
                 (d.schema_version == 1 && d.bargain != null) || (d.bargain != null && !ValidateBargain(d.bargain)) ||
                 (d.schema_version == 2 && !OptionalRef(d.front_collection_fingerprint)) ||
                 !ValidateCustomer(d.customer, business.customer_ref, d.schema_version) || !ValidateUi(d.ui) ||
@@ -57,6 +58,12 @@ namespace PawnPilot
             foreach (var c in d.containers) { S(c.container); S(c.completeness); S(c.reason); L(c.item_refs); }
             foreach (var i in d.items) { S(i.item_ref); S(i.container); S(i.name); S(i.shape_status); }
             S(d.front_collection_fingerprint); S(d.quote.status); S(d.quote.mode); S(d.quote.reason);
+            if (d.inspection_handoff != null)
+            {
+                var h = d.inspection_handoff;
+                S(h.status); S(h.handoff_ref); S(h.customer_ref); S(h.reason); S(h.last_resumed_handoff_ref);
+                foreach (var item in h.items) { S(item.item_ref); S(item.name); }
+            }
             if (d.bargain != null)
             {
                 S(d.bargain.phase); S(d.bargain.direction); S(d.bargain.reputation_text); S(d.bargain.hint_text);
@@ -100,6 +107,7 @@ namespace PawnPilot
                     shape_status = x.shape_status, width = x.width, height = x.height
                 }),
                 front_collection_fingerprint = details.front_collection_fingerprint,
+                inspection_handoff = CloneInspection(details.inspection_handoff),
                 bargain = details.bargain == null ? null : new BargainState
                 {
                     available = details.bargain.available, phase = details.bargain.phase, direction = details.bargain.direction,
@@ -127,6 +135,28 @@ namespace PawnPilot
                 candidates = CopyMapped(details.candidates, x => x == null ? null : new BusinessCandidate
                 { action = x.action, status = x.status, reason = x.reason })
             };
+        }
+
+        public static InspectionHandoffState CloneInspection(InspectionHandoffState value) => value == null ? null : new InspectionHandoffState
+        {
+            requires_manual_inspection = value.requires_manual_inspection, status = value.status,
+            handoff_ref = value.handoff_ref, customer_ref = value.customer_ref, reason = value.reason,
+            last_resumed_handoff_ref = value.last_resumed_handoff_ref,
+            items = CopyMapped(value.items, item => item == null ? null : new InspectionHandoffItem { item_ref = item.item_ref, name = item.name })
+        };
+
+        public static bool ValidateInspection(InspectionHandoffState h)
+        {
+            if (h == null || !OneOf(h.status, "waiting_for_user", "resumed") ||
+                h.requires_manual_inspection != (h.status == "waiting_for_user") || !ValidRef(h.handoff_ref) ||
+                !ValidRef(h.customer_ref) || !OptionalRef(h.last_resumed_handoff_ref) ||
+                (h.status == "resumed" && h.last_resumed_handoff_ref != h.handoff_ref) ||
+                !OneOf(h.reason, "manual_item_inspection", "test_inspection_handoff") ||
+                h.items == null || h.items.Count < 1 || h.items.Count > 64) return false;
+            var refs = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in h.items)
+                if (item == null || !ValidRef(item.item_ref) || !refs.Add(item.item_ref) || !OptionalText(item.name)) return false;
+            return true;
         }
 
         internal static bool ValidateBargain(BargainState b)
@@ -332,7 +362,7 @@ namespace PawnPilot
                 if (c == null || !OneOf(c.action, "close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                     "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer",
                     "purchase_visible_offer", "prepare_sale_items", "sell_visible_offer", "sort_inventory_default", "open_trade_panel",
-                    "open_bargain_panel", "close_bargain_panel", "choose_bargain_option") ||
+                    "open_bargain_panel", "close_bargain_panel", "choose_bargain_option", "resume_inspection_handoff") ||
                     !OneOf(c.status, "candidate", "blocked", "unverified") || !ValidText(c.reason, MaxText)) return false;
             return true;
         }

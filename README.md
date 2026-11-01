@@ -1,4 +1,6 @@
-# PawnPilot — M3-B 普通自主议价
+# PawnPilot — M3-C 人工商品检查接管
+
+M3-C **PASS（人工接管与恢复、防重复买入路径）**：七个已核实的香烟/水容器 identifier 经生产观察触发 `inspection_handoff`，等待时拦截经营写操作；只有用户明确检查结束后才通过 `resume_inspection_handoff(handoff_ref)` 恢复并重新观察。真实 Codex CLI/MCP 已对授权测试商品完成接管，两次购买/议价门禁探测均被拒绝；用户手动处理后确认，MCP恢复成功，发现商品已自有且顾客离场，未重复购买。**本轮没有 Agent 自动成交**，七类指定商品未取得各自实机触发样本。自动化 **506 managed + 178 Python = 684 项通过**。测试槽与Mod已清理，原存档和程序集哈希不变。详见 [M3-C 报告](docs/m3c-implementation.md)。
 
 M3-B **PASS（普通买入方向议价后正常结束）**：真实Codex CLI经MCP自主选择降价10%，顾客接受，正常报价265→238。既有嵌套容器容量限制阻止购买，Agent合法遣走，现金仍550；**没有实际成交**。卖出方向和议价后实际结算未实测。自动化436 managed +166 Python =602通过。详见 [M3-B 报告](docs/m3b-implementation.md)。
 
@@ -119,6 +121,10 @@ python scripts/verify-codex.py --m3a FLOW --max-customers 6 --max-writes 24 --la
 python scripts/verify-codex.py --trade-panel --max-customers 4 --max-writes 16 --label panel-check
 # M3-B：另行批准普通议价/交易和支出；每次运行最多一次提议、一次成交：
 python scripts/verify-codex.py --m3b --max-spend 550 --max-customers 4 --max-writes 24 --label bargain-check
+# M3-C：另行批准测试槽/一次性测试触发；此阶段遇到接管即停止，不能购买或自行恢复：
+python scripts/verify-codex.py --m3c HANDOFF --max-customers 4 --max-writes 16 --label inspection-handoff
+# 仅在用户本会话明确“检查完成，继续”后，复制刚确认的真实ref并按剩余预算运行：
+python scripts/verify-codex.py --m3c RESUME --confirmed-handoff <真实ref> --max-spend 550 --max-customers 0 --max-writes 8 --label inspection-resume
 # 也可使用 --business-stage A/B/C 分阶段，C 必须提供 --max-spend。
 # 仅用于已批准的独立测试槽、正常打开的 ESC 菜单：
 python scripts/verify-codex.py --label live-check --close-menu

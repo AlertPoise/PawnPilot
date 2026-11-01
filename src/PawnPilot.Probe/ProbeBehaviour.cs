@@ -72,6 +72,7 @@ namespace PawnPilot
                     mode = value["mode"]?.Value<string>(),
                     authorization_ref = value["authorization_ref"]?.Value<string>(),
                     container = value["container"]?.Value<string>(),
+                    handoff_ref = value["handoff_ref"]?.Value<string>(),
                     amount = value["amount"]?.Value<int>(), max_spend = value["max_spend"]?.Value<int>()
                 };
             }
@@ -93,6 +94,7 @@ namespace PawnPilot
                     WriteString(writer, "mode", value.mode);
                     WriteString(writer, "authorization_ref", value.authorization_ref);
                     WriteString(writer, "container", value.container);
+                    WriteString(writer, "handoff_ref", value.handoff_ref);
                     if (value.amount.HasValue) { writer.WritePropertyName("amount"); writer.WriteValue(value.amount.Value); }
                     if (value.max_spend.HasValue) { writer.WritePropertyName("max_spend"); writer.WriteValue(value.max_spend.Value); }
                 }
@@ -364,7 +366,13 @@ namespace PawnPilot
                     }
                 }
             }
-            state.interaction.operable = ready && !open && state.interaction.consistency != "blocked" && state.legal_actions.Count > 0;
+#if M3C_INSPECTION_TEST
+            // Explicit test package only: one existing normal purchase instance, no item mutation.
+            businessProjection.TryTriggerTestInspection(state.business);
+#endif
+            businessProjection.ApplyInspectionGate(state);
+            state.interaction.operable = !businessProjection.IsInspectionWaiting && ready && !open &&
+                state.interaction.consistency != "blocked" && state.legal_actions.Count > 0;
             state.revision = 0;
             state.version = null;
             string signature = ToJson(state);
@@ -375,6 +383,7 @@ namespace PawnPilot
                 state.interaction.reason = "snapshot_size_limit";
                 state.interaction.operable = false;
                 state.legal_actions.RemoveAll(action => action.action != "close_menu");
+                businessProjection.ApplyInspectionGate(state);
                 signature = ToJson(state);
             }
             state.version = worldVersion.Observe(signature + "|inventory-sort:" + inventoryActions.CompletionGeneration);
@@ -393,17 +402,30 @@ namespace PawnPilot
 
         private void InvokeNativeAction(Command command)
         {
+            // Refresh immediately before entering any native business operation. Player input stays live.
+            var current = Capture();
+            if (command.action == "resume_inspection_handoff")
+            {
+                string rejected = BusinessActionPolicy.Validate(command, current);
+                if (rejected != null) throw new NativeActionRejectedException(rejected);
+                if (!businessProjection.ResumeInspectionHandoff(command.expected_world_epoch, command.arguments.handoff_ref))
+                    throw new NativeActionRejectedException("inspection_handoff_changed");
+                return;
+            }
+            if (businessProjection.IsInspectionWaiting)
+                throw new NativeActionRejectedException("inspection_handoff_pending");
             if (command.action == "close_menu") { ResumeMenu(); return; }
-            if (command.action == "purchase_visible_offer") { purchaseActions.Invoke(command, Capture()); return; }
+            if (command.action == "purchase_visible_offer") { purchaseActions.Invoke(command, current); return; }
             if (command.action == "prepare_sale_items" || command.action == "sell_visible_offer")
-            { saleActions.Invoke(command, Capture()); return; }
-            if (command.action == "sort_inventory_default") { inventoryActions.Invoke(command, Capture()); return; }
-            if (GameBargainActions.Handles(command.action)) { bargainActions.Invoke(command, Capture()); return; }
+            { saleActions.Invoke(command, current); return; }
+            if (command.action == "sort_inventory_default") { inventoryActions.Invoke(command, current); return; }
+            if (GameBargainActions.Handles(command.action)) { bargainActions.Invoke(command, current); return; }
             // The adapter rechecks local native evidence. A wire candidate never enables it.
-            businessActions.Invoke(command, Capture());
+            businessActions.Invoke(command, current);
         }
 
         private VerificationDecision VerifyAction(Command command, Snapshot before, Snapshot after) =>
+            command.action == "resume_inspection_handoff" ? BusinessActionPolicy.Verify(command, before, after) :
             command.action == "close_menu" ? ActionGate.VerifyCloseMenu(command, before, after) :
             command.action == "purchase_visible_offer" ? purchaseActions.Verify(command, before, after) :
             command.action == "prepare_sale_items" || command.action == "sell_visible_offer" ? saleActions.Verify(command, before, after) :
@@ -556,8 +578,8 @@ namespace PawnPilot
                     RequireInteger(command, "start_deadline_unix_ms", 1, long.MaxValue);
                     RequireInteger(command, "execution_timeout_ms", 1, 30000);
                     if (!(command["arguments"] is JObject arguments)) throw new InvalidOperationException("arguments must be object");
-                    RequireAllowedOptionalKeys(arguments, "customer_ref", "item_refs", "offer_ref", "collection_fingerprint", "option_ref", "dialogue_ref", "mode", "amount", "max_spend", "authorization_ref", "container");
-                    foreach (var key in new[] { "customer_ref", "offer_ref", "collection_fingerprint", "option_ref", "dialogue_ref", "mode", "authorization_ref", "container" })
+                    RequireAllowedOptionalKeys(arguments, "customer_ref", "item_refs", "offer_ref", "collection_fingerprint", "option_ref", "dialogue_ref", "mode", "amount", "max_spend", "authorization_ref", "container", "handoff_ref");
+                    foreach (var key in new[] { "customer_ref", "offer_ref", "collection_fingerprint", "option_ref", "dialogue_ref", "mode", "authorization_ref", "container", "handoff_ref" })
                         if (arguments.Property(key) != null) RequireString(arguments, key, false);
                     foreach (var key in new[] { "amount", "max_spend" })
                         if (arguments.Property(key) != null) RequireInteger(arguments, key, 0, int.MaxValue);

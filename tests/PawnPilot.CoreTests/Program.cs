@@ -3,6 +3,11 @@ using System.Text.Json;
 
 try
 {
+if (args.Length == 1 && args[0] == "--export-inspection-fixtures")
+{
+    Console.WriteLine(InspectionHandoffTests.Export());
+    return;
+}
 if (args.Length >= 2 && (args[0] == "--simulate-mod" || args[0] == "--simulate-mod-v3"))
 {
     Environment.ExitCode = await ModSimulator.Run(args);
@@ -345,6 +350,7 @@ CapacityProofTests.Run(Check);
 M3ObservationTests.Run(Check);
 M3ActionPolicyTests.Run(Check);
 BargainTests.Run(Check);
+InspectionHandoffTests.Run(Check);
 TradePanelTests.Run(Check);
 SaleVerifierTests.Run(Check);
 InventoryVerifierTests.Run(Check);

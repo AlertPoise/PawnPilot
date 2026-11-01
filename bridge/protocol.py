@@ -40,6 +40,7 @@ V3_ACTION_ARGUMENTS = {
     "sell_visible_offer": frozenset({"customer_ref", "offer_ref", "item_refs",
         "collection_fingerprint", "mode", "amount"}),
     "sort_inventory_default": frozenset({"container"}),
+    "resume_inspection_handoff": frozenset({"handoff_ref"}),
     "cancel_confirmation": frozenset(), "refuse_trade": frozenset({"customer_ref"}),
     "dismiss_customer": frozenset({"customer_ref"}),
     "open_trade_panel": frozenset({"customer_ref"}),
@@ -57,6 +58,7 @@ V3_OPTIONAL_ARGUMENTS = frozenset({"customer_ref", "item_refs", "offer_ref",
                                     "collection_fingerprint", "option_ref", "dialogue_ref",
                                     "mode", "amount", "max_spend", "authorization_ref"})
 V3_OPTIONAL_ARGUMENTS |= {"container"}
+V3_OPTIONAL_ARGUMENTS |= {"handoff_ref"}
 BARGAIN_ACTIONS = frozenset({"open_bargain_panel", "close_bargain_panel", "choose_bargain_option"})
 
 
@@ -295,6 +297,38 @@ def _is_ordered_subset(values, source):
     return True
 
 
+def _valid_inspection_handoff(value):
+    keys = {"requires_manual_inspection", "status", "handoff_ref", "customer_ref",
+            "items", "reason", "last_resumed_handoff_ref"}
+    if not shape(value, keys):
+        return False
+    if (type(value["requires_manual_inspection"]) is not bool
+            or value["status"] not in {"waiting_for_user", "resumed"}
+            or type(value["handoff_ref"]) is not str or REF.fullmatch(value["handoff_ref"]) is None
+            or type(value["customer_ref"]) is not str or REF.fullmatch(value["customer_ref"]) is None
+            or value["reason"] not in {"manual_item_inspection", "test_inspection_handoff"}
+            or (value["last_resumed_handoff_ref"] is not None and
+                (type(value["last_resumed_handoff_ref"]) is not str
+                 or REF.fullmatch(value["last_resumed_handoff_ref"]) is None))):
+        return False
+    if value["status"] == "waiting_for_user":
+        if (not value["requires_manual_inspection"]
+                or value["last_resumed_handoff_ref"] == value["handoff_ref"]):
+            return False
+    elif value["requires_manual_inspection"] or value["last_resumed_handoff_ref"] != value["handoff_ref"]:
+        return False
+    items = value["items"]
+    if type(items) is not list or not 1 <= len(items) <= 64:
+        return False
+    refs = []
+    for item in items:
+        if (not shape(item, {"item_ref", "name"}) or type(item["item_ref"]) is not str
+                or REF.fullmatch(item["item_ref"]) is None or not _v3_text(item["name"], nullable=True)):
+            return False
+        refs.append(item["item_ref"])
+    return len(refs) == len(set(refs))
+
+
 _NONBLOCKING_UNOBSERVABLE_UI_BLOCKERS = frozenset({
     "global_ui_stack_unobservable", "global_raycast_order_unobservable",
     "quote_rebuild_completion_unobservable", "tutorial_group_active_unverified",
@@ -374,6 +408,9 @@ def _valid_business_v3(business):
                    "ui", "capacity", "eligibility", "candidates"}
     if schema == 2:
         detail_keys.add("front_collection_fingerprint")
+        # Optional on schema 2 so historical journal observations remain readable.
+        if type(d) is dict and "inspection_handoff" in d:
+            detail_keys.add("inspection_handoff")
         if "bargain" in d:
             detail_keys.add("bargain")
     if not shape(d, detail_keys):
@@ -425,6 +462,10 @@ def _valid_business_v3(business):
             return False
         if c["dialogue_ref"] is None and (c["dialogue_text"] is not None
                 or c["is_typing"] is not None or c["waiting_for_advance"] is not None or options):
+            return False
+    if schema == 2 and "inspection_handoff" in d:
+        handoff = d["inspection_handoff"]
+        if handoff is not None and not _valid_inspection_handoff(handoff):
             return False
     if (c["presence"] == "absent" and (business["customer_ref"] is not None or c["arrived"] is not None
             or c["phase"] not in {"absent", "leaving"} or c["trade_type"] != "unknown"
@@ -637,8 +678,19 @@ def valid_snapshot_v3(value):
         if not valid_action_state_v3(value, action, arguments):
             return False
         seen.add(action_identity)
+    handoff = value["business"]["details"].get("inspection_handoff")
+    pending_handoff = (type(handoff) is dict and handoff["requires_manual_inspection"]
+                       and handoff["status"] == "waiting_for_user")
+    if pending_handoff:
+        expected_actions = ([{"action": "resume_inspection_handoff",
+                              "arguments": {"handoff_ref": handoff["handoff_ref"]}}]
+                            if value["ready"] else [])
+        if actions != expected_actions:
+            return False
+    elif any(entry["action"] == "resume_inspection_handoff" for entry in actions):
+        return False
     expected_close = {"action": "close_menu", "arguments": {}}
-    if value["can_close_menu"] != (expected_close in actions):
+    if (value["can_close_menu"] and not pending_handoff) != (expected_close in actions):
         return False
     purchase_enabled = value["business"]["details"]["eligibility"]["purchase_enabled"]
     purchase_is_legal = any(action["action"] == "purchase_visible_offer" for action in actions)
@@ -651,6 +703,12 @@ def valid_snapshot_v3(value):
 def valid_action_binding_v3(business, action, arguments):
     """Tie every emitted opaque handle back to the same observed business snapshot."""
     details = business["details"]
+    if action == "resume_inspection_handoff":
+        handoff = details.get("inspection_handoff")
+        return (details["schema_version"] == 2 and type(handoff) is dict
+                and handoff["requires_manual_inspection"] is True
+                and handoff["status"] == "waiting_for_user"
+                and arguments.get("handoff_ref") == handoff["handoff_ref"])
     if ("bargain_panel" in details["ui"]["blockers"]
             and action not in BARGAIN_ACTIONS and action != "close_menu"):
         return False
@@ -785,6 +843,15 @@ def valid_action_binding_v3(business, action, arguments):
 
 def valid_action_state_v3(snapshot, action, arguments):
     """Minimal per-action game-phase checks; unrelated business completeness is irrelevant."""
+    details = snapshot["business"]["details"]
+    handoff = details.get("inspection_handoff")
+    pending_handoff = (type(handoff) is dict and handoff["requires_manual_inspection"]
+                       and handoff["status"] == "waiting_for_user")
+    if pending_handoff:
+        return (action == "resume_inspection_handoff" and snapshot["ready"]
+                and arguments.get("handoff_ref") == handoff["handoff_ref"])
+    if action == "resume_inspection_handoff":
+        return False
     if action == "start_business":
         return snapshot["ready"] and snapshot["phase"] == "MORNING"
     if action in BARGAIN_ACTIONS:
@@ -827,6 +894,8 @@ def valid_command_v3(value):
             and (value["action"] not in {"purchase_visible_offer", "sell_visible_offer"} or value["arguments"].get("mode") == "normal")
             and (value["action"] not in BARGAIN_ACTIONS or value["arguments"].get("mode") in {"buy", "sell"})
             and (value["action"] != "sell_visible_offer" or len(value["arguments"].get("item_refs", [])) == 1)
+            and (value["action"] != "resume_inspection_handoff"
+                 or set(value["arguments"]) == {"handoff_ref"})
             and integer(value["start_deadline_unix_ms"], 1, MAX_TIME)
             and integer(value["execution_timeout_ms"], 1, 30_000))
 
@@ -879,6 +948,15 @@ def valid_success_evidence_v3(before, after):
 def valid_action_success_evidence_v3(command, before, after):
     """Validate only the observable postcondition for the command's own operation."""
     action = command["action"]
+    if action == "resume_inspection_handoff":
+        old = before["business"]["details"].get("inspection_handoff")
+        new = after["business"]["details"].get("inspection_handoff")
+        return (type(old) is dict and type(new) is dict
+                and old["requires_manual_inspection"] is True and old["status"] == "waiting_for_user"
+                and old["handoff_ref"] == command["arguments"]["handoff_ref"]
+                and type(new) is dict and new["last_resumed_handoff_ref"] == command["arguments"]["handoff_ref"]
+                and before["world_epoch"] == after["world_epoch"]
+                and after["revision"] > before["revision"])
     if action in BARGAIN_ACTIONS:
         args = command["arguments"]
         old_business, new_business = before["business"], after["business"]

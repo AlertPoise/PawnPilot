@@ -63,6 +63,7 @@ namespace PawnPilot
     public sealed class BusinessItemInput
     {
         public object Identity;
+        public string Identifier; // Classification only; never enters a wire DTO.
         public string Name; // Visible item title, from the reviewed native display-name path.
         public int Units;
         public bool Owned;
@@ -225,7 +226,7 @@ namespace PawnPilot
 
     // Pure projection, reference lifetime, bounds, and quote-binding validation. No Unity or game
     // references are used. Production business actions remain disabled by this observation path.
-    public sealed class BusinessProjection
+    public sealed partial class BusinessProjection
     {
         private sealed class RefComparer : IEqualityComparer<object>
         {
@@ -275,6 +276,7 @@ namespace PawnPilot
 
         internal BusinessObservation Invalidate(string worldEpoch, string reason)
         {
+            ObserveInspectionWorld(worldEpoch);
             ClearAll(); world = worldEpoch;
             return Unavailable(reason);
         }
@@ -387,6 +389,7 @@ namespace PawnPilot
 
         public BusinessObservation Capture(string worldEpoch, bool ready, Func<BusinessInput> read)
         {
+            ObserveInspectionWorld(worldEpoch);
             if (string.IsNullOrEmpty(worldEpoch) || !ValidText(worldEpoch, 128))
             {
                 ClearAll();
@@ -419,6 +422,8 @@ namespace PawnPilot
                     return Unavailable(invalid);
                 }
                 var projected = Project(worldEpoch, input);
+                ObserveInspection(input, projected);
+                projected.details.inspection_handoff = BusinessWire.CloneInspection(inspectionHandoff);
                 if (!BusinessWire.Validate(projected))
                 {
                     ClearAll();
@@ -797,6 +802,7 @@ namespace PawnPilot
 
         private void ClearAll()
         {
+            inspectionInput = null;
             ClearItemRefs();
             ClearDialogueRefs();
             ClearCollectionRefs();
@@ -825,6 +831,7 @@ namespace PawnPilot
             offer_ref = null,
             collection_fingerprint = null,
             details = new BusinessDetails { schema_version = 2, status = "unavailable",
+                inspection_handoff = BusinessWire.CloneInspection(inspectionHandoff),
                 customer = new CustomerState { presence = "unverified", phase = "unknown" },
                 containers = new List<ContainerState> {
                     new ContainerState { container = "front", completeness = "unavailable", reason = reason },

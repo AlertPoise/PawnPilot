@@ -16,10 +16,22 @@ namespace PawnPilot
         public QuoteState quote = new QuoteState();
         public BargainState bargain;
         public bool ShouldSerializebargain() => bargain != null;
+        public InspectionHandoffState inspection_handoff;
+        public bool ShouldSerializeinspection_handoff() => inspection_handoff != null;
         public BusinessUiState ui = new BusinessUiState();
         public CapacityState capacity = new CapacityState();
         public PurchaseEligibility eligibility = new PurchaseEligibility();
         public List<BusinessCandidate> candidates = new List<BusinessCandidate>();
+    }
+    [Serializable] public sealed class InspectionHandoffState
+    {
+        public bool requires_manual_inspection;
+        public string status, handoff_ref, customer_ref, reason, last_resumed_handoff_ref;
+        public List<InspectionHandoffItem> items = new List<InspectionHandoffItem>();
+    }
+    [Serializable] public sealed class InspectionHandoffItem
+    {
+        public string item_ref, name;
     }
     [Serializable] public sealed class BargainState
     {

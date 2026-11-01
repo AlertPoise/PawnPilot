@@ -76,6 +76,12 @@
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "handoff_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
         }
       },
       "required": [],
@@ -717,6 +723,34 @@
             "arguments"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "resume_inspection_handoff"
+            },
+            "arguments": {
+              "type": "object",
+              "properties": {
+                "handoff_ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_.:-]+$"
+                }
+              },
+              "required": [
+                "handoff_ref"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "arguments"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -898,7 +932,8 @@
             "open_trade_panel",
             "open_bargain_panel",
             "close_bargain_panel",
-            "choose_bargain_option"
+            "choose_bargain_option",
+            "resume_inspection_handoff"
           ]
         },
         "expected_world_epoch": {
@@ -1196,6 +1231,22 @@
             "properties": {
               "arguments": {
                 "$ref": "#/$defs/LegalAction/oneOf/15/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "resume_inspection_handoff"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/16/properties/arguments"
               }
             }
           }
@@ -1803,7 +1854,8 @@
             "open_trade_panel",
             "open_bargain_panel",
             "close_bargain_panel",
-            "choose_bargain_option"
+            "choose_bargain_option",
+            "resume_inspection_handoff"
           ]
         },
         "status": {
@@ -2283,6 +2335,16 @@
               "type": "null"
             }
           ]
+        },
+        "inspection_handoff": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InspectionHandoff"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2565,6 +2627,100 @@
           }
         }
       ]
+    },
+    "InspectionHandoff": {
+      "type": "object",
+      "properties": {
+        "requires_manual_inspection": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "waiting_for_user",
+            "resumed"
+          ]
+        },
+        "handoff_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "customer_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "properties": {
+              "item_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_.:-]+$"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "item_ref",
+              "name"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "reason": {
+          "enum": [
+            "manual_item_inspection",
+            "test_inspection_handoff"
+          ]
+        },
+        "last_resumed_handoff_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "requires_manual_inspection",
+        "status",
+        "handoff_ref",
+        "customer_ref",
+        "items",
+        "reason",
+        "last_resumed_handoff_ref"
+      ],
+      "additionalProperties": false
+    },
+    "Reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
     }
   }
 }
