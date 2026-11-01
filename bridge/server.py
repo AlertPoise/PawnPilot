@@ -446,7 +446,10 @@ class Broker:
                 raise ProtocolError(409, "game_disconnected")
             record = self.records.get(body["id"])
             if (record is None or record["command_status"] != "outcome_unknown"
-                    or record.get("resolution") is not None or record["command"].get("action") != "close_menu"):
+                    or record.get("resolution") is not None
+                    or not (record["command"].get("action") == "close_menu"
+                        or self._record_schema_version(record) == WIRE_VERSION_V3
+                        and record["command"].get("action") in {"open_bargain_panel", "close_bargain_panel"})):
                 raise ProtocolError(409, "command_not_reconcilable")
             record_version = self._record_schema_version(record)
             evidence_version = WIRE_VERSION if record_version == 1 else record_version

@@ -32,7 +32,7 @@ namespace PawnPilot
         public static bool IsEnabled(string action) => action == "start_business" || action == "receive_next_customer" ||
             action == "advance_dialogue" || action == "choose_dialogue_option" ||
             action == "prepare_purchase_items" || action == "dismiss_customer" || action == "purchase_visible_offer" ||
-            action == "prepare_sale_items" || action == "sell_visible_offer" || action == "sort_inventory_default" || action == "open_trade_panel";
+            action == "prepare_sale_items" || action == "sell_visible_offer" || action == "sort_inventory_default" || action == "open_trade_panel" || IsBargainAction(action);
         [Obsolete("Use IsEnabled(action); runtime actions are enabled per action scope.")]
         public static bool ProductionDispatchEnabled => IsEnabled("start_business") || IsEnabled("receive_next_customer");
 
@@ -40,7 +40,8 @@ namespace PawnPilot
         {
             "start_business", "receive_next_customer", "advance_dialogue", "choose_dialogue_option",
             "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer", "purchase_visible_offer",
-            "prepare_sale_items", "sell_visible_offer", "sort_inventory_default", "open_trade_panel"
+            "prepare_sale_items", "sell_visible_offer", "sort_inventory_default", "open_trade_panel",
+            "open_bargain_panel", "close_bargain_panel", "choose_bargain_option"
         };
 
         public static bool IsRegistered(string action) => action != null && Array.IndexOf(Registered, action) >= 0;
@@ -51,6 +52,13 @@ namespace PawnPilot
             if (action != "sort_inventory_default" && a.container != null) return false;
             switch (action)
             {
+                case "open_bargain_panel":
+                case "close_bargain_panel":
+                case "choose_bargain_option":
+                    return Ref(a.customer_ref) && (a.mode == "buy" || a.mode == "sell") &&
+                        (action == "choose_bargain_option" ? Ref(a.option_ref) : a.option_ref == null) &&
+                        a.item_refs == null && a.offer_ref == null && a.collection_fingerprint == null && a.dialogue_ref == null &&
+                        a.authorization_ref == null && !a.amount.HasValue && !a.max_spend.HasValue;
                 case "start_business":
                 case "receive_next_customer":
                 case "cancel_confirmation":
@@ -130,7 +138,7 @@ namespace PawnPilot
             if (reason != null) return reason;
             // These adapters have dedicated native preflight/verification paths. Their contract
             // remains the DTO boundary here; do not require generic NativeActionEvidence routing.
-            if (command.action == "prepare_sale_items" || command.action == "sell_visible_offer" || command.action == "sort_inventory_default") return null;
+            if (command.action == "prepare_sale_items" || command.action == "sell_visible_offer" || command.action == "sort_inventory_default" || IsBargainAction(command.action)) return null;
             if (evidence == null || !evidence.Captured || evidence.Action != command.action) return "native_action_evidence_missing";
             if (!evidence.SceneReady) return evidence.Reason ?? "scene_not_ready";
             if (command.action == "cancel_confirmation")
@@ -238,6 +246,10 @@ namespace PawnPilot
             var customer = snapshot.business.details.customer;
             switch (command.action)
             {
+                case "open_bargain_panel":
+                case "close_bargain_panel":
+                case "choose_bargain_option":
+                    return BargainPrecondition(command, snapshot) ? null : "bargain_state_changed";
                 case "start_business":
                     return snapshot.phase == "MORNING" && customer.presence == "absent"
                         ? null : "store_not_closed_for_business";
@@ -367,6 +379,13 @@ namespace PawnPilot
             var newCustomer = after.business.details.customer;
             switch (action)
             {
+                case "open_bargain_panel":
+                    return SameCustomerRef(before, after) && before.business.details.bargain?.phase == "closed" &&
+                        after.business.details.bargain?.phase == "choosing" && after.business.details.bargain.options.Count > 0 &&
+                        before.business.details.bargain.direction == after.business.details.bargain.direction;
+                case "close_bargain_panel":
+                    return SameCustomerRef(before, after) && ActiveBargain(before.business.details.bargain) &&
+                        after.business.details.bargain?.phase == "closed" && before.business.details.bargain.direction == after.business.details.bargain.direction;
                 case "open_trade_panel":
                     return SameCustomerRef(before, after) && oldCustomer.presence == "present" &&
                         oldCustomer.trade_panel == "closed" && newCustomer.presence == "present" && newCustomer.arrived == true &&
@@ -425,6 +444,8 @@ namespace PawnPilot
             if (before.cash != after.cash && command.action != "sell_visible_offer") return VerificationDecision.Uncertain("cash_changed_during_non_economic_action");
             if (command.action == "open_trade_panel" && !SameCustomerRef(before, after))
                 return VerificationDecision.Uncertain("customer_changed_after_panel_open");
+            if (IsBargainAction(command.action) && !SameCustomerRef(before, after))
+                return VerificationDecision.Uncertain("customer_changed_after_bargain_action");
             if (Postcondition(command, before, after)) return VerificationDecision.Succeeded();
             if (command.action == "prepare_purchase_items" && StoreCollectionChanged(before, after))
                 return VerificationDecision.Uncertain("prepare_partial_or_unexpected_collection_change");
@@ -447,6 +468,22 @@ namespace PawnPilot
         public static bool Postcondition(Command command, Snapshot before, Snapshot after)
         {
             if (command == null) return false;
+            if (IsBargainAction(command.action))
+            {
+                if (!ArgumentsValid(command.action, command.arguments) || !BaselinePostcondition(before, after) ||
+                    !BargainPrecondition(command, before) || !SameCustomerRef(before, after)) return false;
+                var oldBargain = before.business.details.bargain;
+                var newBargain = after.business.details.bargain;
+                if (newBargain == null || newBargain.direction != command.arguments.mode) return false;
+                if (command.action == "choose_bargain_option")
+                    return (after.business.details.customer.trade_type == command.arguments.mode || after.business.details.customer.trade_type == "other") &&
+                        newBargain.last_option_ref == command.arguments.option_ref &&
+                        newBargain.terms_revision > oldBargain.terms_revision && newBargain.result != "none";
+                if (after.business.details.customer.trade_type != command.arguments.mode &&
+                    !(command.action == "close_bargain_panel" && before.business.details.customer.trade_type == "other" &&
+                      after.business.details.customer.trade_type == "other")) return false;
+                return Postcondition(command.action, before, after);
+            }
             // The native purchase verifier has already checked retained item identities and
             // their exact source/target membership. This final gate checks the DTO boundary.
             if (command.action == "purchase_visible_offer")
@@ -610,8 +647,9 @@ namespace PawnPilot
                     blocker == "quote_rebuild_completion_unobservable" || blocker == "tutorial_group_active_unverified" ||
                     blocker == "control_hints_active_unverified") continue;
                 if ((action == "advance_dialogue" || action == "choose_dialogue_option") && blocker == "dialogue_active") continue;
-                if ((action == "prepare_purchase_items" || action == "dismiss_customer") &&
-                    (blocker == "dialogue_active" || blocker == "bargain_panel")) continue;
+                if ((action == "prepare_purchase_items" || action == "dismiss_customer") && blocker == "dialogue_active") continue;
+                if (IsBargainAction(action) && blocker == "bargain_panel") continue;
+                if (action == "close_bargain_panel" && blocker == "dialogue_active") continue;
                 return true;
             }
             return false;
@@ -620,6 +658,35 @@ namespace PawnPilot
         private static bool SameCustomerRef(Snapshot before, Snapshot after) =>
             !string.IsNullOrEmpty(before?.business?.customer_ref) &&
             string.Equals(before.business.customer_ref, after?.business?.customer_ref, StringComparison.Ordinal);
+
+        private static bool IsBargainAction(string action) => action == "open_bargain_panel" || action == "close_bargain_panel" || action == "choose_bargain_option";
+        private static bool ActiveBargain(BargainState b) => b != null && (b.phase == "choosing" || b.phase == "responding");
+        private static bool BargainPrecondition(Command command, Snapshot snapshot)
+        {
+            var customer = snapshot?.business?.details?.customer;
+            var b = snapshot?.business?.details?.bargain;
+            var args = command?.arguments;
+            bool closeAcknowledgedDeparture = command?.action == "close_bargain_panel" && b?.phase == "responding" &&
+                customer?.trade_type == "other" && b.result == "responding" && b.last_option_ref != null && b.terms_revision > 0;
+            if (args == null || b == null || !BusinessWire.ValidateBargain(b) ||
+                snapshot.business.details.ui?.status == "updating" || snapshot.business.details.ui?.blockers == null ||
+                (snapshot.business.details.ui.status == "blocked" && snapshot.business.details.ui.blockers.Count == 0) ||
+                !(CustomerMatches(snapshot.business.customer_ref, customer, args.customer_ref) || (closeAcknowledgedDeparture &&
+                    customer.presence == "present" && snapshot.business.customer_ref == args.customer_ref)) || customer.arrived != true ||
+                (args.mode != "buy" && args.mode != "sell") || (customer.trade_type != args.mode && !closeAcknowledgedDeparture) || b.direction != args.mode) return false;
+            if (command.action == "close_bargain_panel") return ActiveBargain(b);
+            bool noDialogue = customer.dialogue_ref == null && customer.phase != "dialogue" && customer.is_typing != true &&
+                customer.waiting_for_advance != true && (customer.dialogue_stage == "absent" || customer.dialogue_stage == "unknown");
+            if (!b.available || !noDialogue) return false;
+            if (command.action == "open_bargain_panel") return b.phase == "closed";
+            if (b.phase != "choosing") return false;
+            var quote = snapshot.business.details.quote;
+            if (quote?.status != "complete" || quote.mode != "normal" || !quote.displayed_total.HasValue ||
+                string.IsNullOrEmpty(snapshot.business.offer_ref) || snapshot.business.item_refs == null || snapshot.business.item_refs.Count == 0) return false;
+            foreach (var option in b.options)
+                if (option.option_ref == args.option_ref) return option.enabled && !option.selected;
+            return false;
+        }
 
         private static bool Empty(ActionArguments a) => a.customer_ref == null && a.item_refs == null &&
             a.offer_ref == null && a.collection_fingerprint == null && a.option_ref == null &&

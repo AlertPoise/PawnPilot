@@ -7,6 +7,24 @@ namespace PawnPilot
     // declares consistency because public roots do not cover the complete UI stack.
     public static class BusinessUiEvidence
     {
+        // The native bargain sheet docks beside the quote tablet. Keep its read-only
+        // inventory/quote evidence while preserving every other modal observation gate.
+        public static bool BlocksTradeObservation(string status, IEnumerable<string> blockers)
+        {
+            if (blockers == null) return true;
+            bool bargain = false, other = false;
+            foreach (string blocker in blockers)
+            {
+                if (blocker == "ui_reader_failed") return true;
+                if (blocker == "bargain_panel") { bargain = true; continue; }
+                if (blocker == "global_ui_stack_unobservable" || blocker == "global_raycast_order_unobservable" ||
+                    blocker == "quote_rebuild_completion_unobservable" || blocker == "tutorial_group_active_unverified" ||
+                    blocker == "control_hints_active_unverified") continue;
+                other = true;
+            }
+            return status == "blocked" && (!bargain || other);
+        }
+
         private static readonly string[] UnobservableEvidence =
         {
             "global_ui_stack_unobservable",

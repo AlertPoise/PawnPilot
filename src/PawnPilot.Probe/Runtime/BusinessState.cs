@@ -14,10 +14,27 @@ namespace PawnPilot
         public List<ItemState> items = new List<ItemState>();
         public string front_collection_fingerprint;
         public QuoteState quote = new QuoteState();
+        public BargainState bargain;
+        public bool ShouldSerializebargain() => bargain != null;
         public BusinessUiState ui = new BusinessUiState();
         public CapacityState capacity = new CapacityState();
         public PurchaseEligibility eligibility = new PurchaseEligibility();
         public List<BusinessCandidate> candidates = new List<BusinessCandidate>();
+    }
+    [Serializable] public sealed class BargainState
+    {
+        public bool available;
+        public string phase = "unavailable", direction = "unknown";
+        public int terms_revision;
+        public List<BargainOptionState> options = new List<BargainOptionState>();
+        public string reputation_text, hint_text, last_option_ref;
+        public string result = "none", result_text;
+    }
+    [Serializable] public sealed class BargainOptionState
+    {
+        public string option_ref, text, kind;
+        public int price_change_percent;
+        public bool enabled, selected;
     }
     [Serializable] public sealed class CustomerState
     {

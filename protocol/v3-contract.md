@@ -49,6 +49,26 @@ null/omission means unknown in older schema-2 records. Schema 1 does not accept 
 An empty panel may expose a visible normal total of zero with quote status `unverified` and
 no executable offer. It does not authorize a zero-item purchase or sale.
 
+Optional schema-2 `details.bargain` contains `available`, `phase` (`unavailable`, `closed`,
+`choosing`, `responding`), NPC `direction` (`buy`, `sell`, `unknown`), `terms_revision`,
+`options`, `reputation_text`, `hint_text`, `last_option_ref`, `result`, and `result_text`.
+Null/omission remains readable in old schema-2 snapshots; schema 1 does not accept the extension.
+Each visible option contains `option_ref`, rendered `text`, semantic `kind`, signed
+`price_change_percent`, `enabled`, and `selected`. Kinds are `lower_purchase_price`,
+`raise_purchase_price`, `raise_sale_price`, and `lower_sale_price` from the player's perspective.
+These are price changes, not success probabilities. Closed/unavailable panels expose no options.
+Text hints are null when not actually rendered; observation does not calculate hover tooltips,
+read RNG or hidden customer budgets, or simulate bargaining.
+
+An acknowledged choice increments `terms_revision` and invalidates the current `offer_ref`,
+even if the displayed amount remains unchanged. Option references expire when the visible
+panel context, direction, terms, customer or world changes. `selected` acknowledges a submitted
+offer only. `result=responding` awaits visible response; `price_changed` and `unchanged` compare
+the same observed counter collection's actual normal total, so unchanged is not proof of refusal.
+`customer_left` records departure during the response. `unknown` is not permission to retry.
+Subsequent purchase/sale continues to use ordinary payment `mode=normal` with the new effective
+displayed amount and offer reference, including accepted native bargain adjustments.
+
 `shape_status=known` describes the current orientation-aware bounding width/height only, not the
 occupied-cell mask, grid placement, transfer rule or proven receiving capacity. Runtime capture
 uses a stricter conservative escaped-text budget than the wire maximum and degrades oversized
@@ -77,6 +97,18 @@ Registered non-economic/business-interaction policies:
   the open-only branch of the normal customer interaction; an already-open panel is not legal.
   Success requires the same customer, correct built panel direction, trading phase and readable
   normal displayed total, unchanged cash and a newer revision. Invocation alone is not success.
+- open_bargain_panel: customer_ref, mode=buy/sell (NPC direction). Requires a current arrived
+  supported ordinary customer, visible enabled native bargaining entry, closed bargain panel,
+  and completed necessary dialogue. Success observes the same customer's choosing panel/options.
+- choose_bargain_option: customer_ref, mode=buy/sell, option_ref. Requires an enabled unselected
+  visible ordinary option plus a complete current normal quote and nonempty bound offer.
+  Executes its existing native button callback once; success acknowledges the selected marker,
+  matching last_option_ref and increased terms_revision, not acceptance or settlement.
+- close_bargain_panel: customer_ref, mode=buy/sell. Returns normally from choosing/responding.
+  An acknowledged departure response may retain its original direction after the same customer
+  changes intent to leave. Closing does not undo bargain terms; manual dialogue may then advance.
+  All three actions preserve cash/world/customer and verify a newer revision. The docked bargain
+  panel permits quote observation but blocks purchase/sale until closed; other known modals still block.
 - prepare_sale_items: customer_ref, exactly one player-owned item ref, collection_fingerprint. Requires
   an arrived BUY customer in trading, complete player and back containers, and an empty back container.
   The fingerprint is the player `BusinessCollection` fingerprint for the selected item with
@@ -122,6 +154,12 @@ cross-version results, invalid collection references, and legal arguments that d
 the current snapshot. Business schema 1 retains its original stricter quote semantics; schema 2 scopes
 quote validity to the visible normal total and current trade subset. No generic unknown
 reconciliation is added.
+
+Manual state alignment retains the existing operator-only endpoint and all expiry, fresh-Mod-session,
+ready-snapshot and advanced-version checks. Alongside `close_menu`, only wire3
+`open_bargain_panel` and `close_bargain_panel` may be aligned after a reviewed restart. The original
+unknown result remains unknown with separate persisted resolution evidence. Bargain choices and
+economic actions remain ineligible; no command is replayed.
 
 ## Transport size budgets
 

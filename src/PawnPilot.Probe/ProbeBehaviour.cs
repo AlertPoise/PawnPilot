@@ -26,6 +26,7 @@ namespace PawnPilot
         private GamePurchaseActions purchaseActions;
         private GameSaleActions saleActions;
         private GameInventoryActions inventoryActions;
+        private GameBargainActions bargainActions;
         private UnityWebRequest current;
         private bool stopped, subscribed;
         private int activeSceneHandle = -1;
@@ -115,6 +116,7 @@ namespace PawnPilot
             purchaseActions = new GamePurchaseActions(businessProjection);
             saleActions = new GameSaleActions(businessProjection);
             inventoryActions = new GameInventoryActions(businessProjection);
+            bargainActions = new GameBargainActions(businessProjection);
             ModHook.OnGameLoadedLate += OnGameLoaded;
             SceneManager.activeSceneChanged += SceneChanged;
             activeSceneHandle = SceneManager.GetActiveScene().handle;
@@ -318,7 +320,7 @@ namespace PawnPilot
                     reason = ready ? "business_consistency_unverified" : latestReadiness.reason,
                     operable = ready
                 },
-                business = businessProjection.Capture(worldVersion.Epoch, ready, BusinessReader.Read),
+                business = businessProjection.Capture(worldVersion.Epoch, ready, () => bargainActions.Read(worldVersion.Epoch)),
                 legal_actions = new List<LegalAction>()
             };
             state.interaction.consistency = state.business.details.ui.status;
@@ -332,6 +334,7 @@ namespace PawnPilot
                 state.legal_actions.AddRange(businessActions.BuildLegalActions(state));
                 state.legal_actions.AddRange(saleActions.BuildLegalActions(state));
                 state.legal_actions.AddRange(inventoryActions.BuildLegalActions(state));
+                state.legal_actions.AddRange(bargainActions.BuildLegalActions(state));
                 var purchase = purchaseActions.GetLegalAction(state);
                 var purchaseCandidate = state.business.details.candidates.Find(candidate => candidate.action == "purchase_visible_offer");
                 if (purchaseCandidate != null)
@@ -361,7 +364,7 @@ namespace PawnPilot
                     }
                 }
             }
-            state.interaction.operable = ready && !open && state.legal_actions.Count > 0;
+            state.interaction.operable = ready && !open && state.interaction.consistency != "blocked" && state.legal_actions.Count > 0;
             state.revision = 0;
             state.version = null;
             string signature = ToJson(state);
@@ -395,6 +398,7 @@ namespace PawnPilot
             if (command.action == "prepare_sale_items" || command.action == "sell_visible_offer")
             { saleActions.Invoke(command, Capture()); return; }
             if (command.action == "sort_inventory_default") { inventoryActions.Invoke(command, Capture()); return; }
+            if (GameBargainActions.Handles(command.action)) { bargainActions.Invoke(command, Capture()); return; }
             // The adapter rechecks local native evidence. A wire candidate never enables it.
             businessActions.Invoke(command, Capture());
         }
@@ -404,6 +408,7 @@ namespace PawnPilot
             command.action == "purchase_visible_offer" ? purchaseActions.Verify(command, before, after) :
             command.action == "prepare_sale_items" || command.action == "sell_visible_offer" ? saleActions.Verify(command, before, after) :
             command.action == "sort_inventory_default" ? inventoryActions.Verify(command, before, after) :
+            GameBargainActions.Handles(command.action) ? bargainActions.Verify(command, before, after) :
             businessActions.Verify(command, before, after);
 
         private static long MonotonicMilliseconds() =>

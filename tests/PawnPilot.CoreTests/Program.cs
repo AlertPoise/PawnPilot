@@ -344,6 +344,7 @@ PurchaseVerifierTests.Run(Check);
 CapacityProofTests.Run(Check);
 M3ObservationTests.Run(Check);
 M3ActionPolicyTests.Run(Check);
+BargainTests.Run(Check);
 TradePanelTests.Run(Check);
 SaleVerifierTests.Run(Check);
 InventoryVerifierTests.Run(Check);

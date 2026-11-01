@@ -1,7 +1,7 @@
 """Run an actual Codex CLI MCP client; retain its JSONL evidence locally.
 
 Default is read-only. --business-stage A/B/C/FLOW asks Codex to use only currently legal PawnPilot
-MCP actions for a bounded live test. Stages C/FLOW require an explicit caller spending ceiling.
+MCP actions for a bounded live test. Stages C/FLOW and --m3b require an explicit caller spending ceiling.
 This script neither installs the Mod nor starts the broker.
 """
 import argparse
@@ -20,21 +20,25 @@ def main():
     modes.add_argument("--dismiss-customer", action="store_true", help="Dismiss exactly one currently legal ordinary customer through MCP")
     modes.add_argument("--business-stage", choices=("A", "B", "C", "FLOW"), help="Run a bounded real MCP business stage")
     modes.add_argument("--m3a", choices=("FLOW", "SALE", "SORT"), help="Authorized isolated-slot M3-A acceptance")
+    modes.add_argument("--m3b", action="store_true", help="Authorized bounded ordinary bargain and settlement acceptance")
     modes.add_argument("--trade-panel", action="store_true", help="Authorized ordinary panel-open acceptance; never buys or sells")
     parser.add_argument("--business", action="store_true", help="Read v3 business completeness and quote evidence; never purchases")
-    parser.add_argument("--max-spend", type=int, help="Explicit maximum total for stage C; no purchase is submitted above it")
+    parser.add_argument("--max-spend", type=int, help="Explicit purchase ceiling for stage C/FLOW or M3-B")
     parser.add_argument("--model", default="gpt-5.6-luna")
-    parser.add_argument("--max-customers", type=int, default=6, help="Remaining M3-A customer budget, including resumed runs")
-    parser.add_argument("--max-writes", type=int, default=24, help="Remaining M3-A write-attempt budget, including resumed runs")
+    parser.add_argument("--max-customers", type=int, default=6, help="Remaining M3-A/M3-B customer budget, including resumed runs")
+    parser.add_argument("--max-writes", type=int, default=24, help="Remaining M3-A/M3-B write-attempt budget, including resumed runs")
     parser.add_argument("--skip-sort", action="store_true", help="M3-A resumed flow: sorting already completed in this slot")
     parser.add_argument("--label", default="read-only")
     args = parser.parse_args()
     if not 0 <= args.max_customers <= 6 or not 1 <= args.max_writes <= 24:
-        parser.error("M3-A budgets must be 0..6 customers and 1..24 writes")
-    if args.max_spend is not None and (args.business_stage not in ("C", "FLOW") or not 0 <= args.max_spend <= 2_147_483_647):
-        parser.error("--max-spend is an in-range nonnegative integer used only with --business-stage C/FLOW")
+        parser.error("M3-A/M3-B budgets must be 0..6 customers and 1..24 writes")
+    if args.max_spend is not None and ((args.business_stage not in ("C", "FLOW") and not args.m3b) or
+                                      not 0 <= args.max_spend <= 2_147_483_647):
+        parser.error("--max-spend is an in-range nonnegative integer used only with --business-stage C/FLOW or --m3b")
     if args.business_stage in ("C", "FLOW") and args.max_spend is None:
         parser.error("stage C/FLOW requires --max-spend as the caller-approved total ceiling")
+    if args.m3b and (args.max_spend is None or args.max_spend <= 0):
+        parser.error("--m3b requires a positive --max-spend as the caller-approved purchase ceiling")
     if (len(args.label) > 32 or not args.label.replace("-", "").replace("_", "").isalnum()):
         parser.error("label must be at most 32 alphanumeric characters, dash or underscore")
     codex = shutil.which("codex")
@@ -42,7 +46,7 @@ def main():
     if not codex or not python.is_file():
         parser.error("Codex CLI and project .venv are required")
     business_run = args.business or args.business_stage is not None or args.dismiss_customer
-    directory = ROOT / "artifacts" / ("m3a-panel" if args.trade_panel else "m3a" if args.m3a else "m2cd" if business_run else "m2b") / "codex"
+    directory = ROOT / "artifacts" / ("m3b" if args.m3b else "m3a-panel" if args.trade_panel else "m3a" if args.m3a else "m2cd" if business_run else "m2b") / "codex"
     directory.mkdir(parents=True, exist_ok=True)
     output = directory / f"{args.label}.jsonl"
     if output.exists():
@@ -57,6 +61,9 @@ def main():
         "arguments=legal.arguments, broker_epoch=observe.broker_epoch, "
         "expected_world_epoch=state.world_epoch, expected_revision=state.revision, "
         "expected_version=state.version). get_action_status uses flat command_id. "
+        "Here state means observe.snapshot.state. Copy schema_version from THAT state, never from the "
+        "outer tool-reply schema_version or business.details.schema_version (both may be 2 while the "
+        "actual state wire version is 3). Read this nested version explicitly before submitting act. "
         "ONLY wait_for_update has a request wrapper. For command waits use exactly "
         "request={criterion:'command_terminal', command_id:the_id, max_wait_ms:30000}; "
         "do not pass kind, broker_epoch or world_epoch to a command-terminal wait. "
@@ -91,6 +98,82 @@ def main():
             "or submit an illegal repeat. Report this successful opening and STOP without dismissing that customer. "
             "If a panel already opened automatically, report it as already open, NOT MCP-open success; normally "
             "dismiss only if currently legal and receive another within budget. Report command IDs and exact evidence. "
+        )
+    elif args.m3b:
+        prompt += (
+            "Perform the caller-authorized bounded M3-B ordinary bargaining acceptance through MCP. "
+            f"Prefix fresh command IDs with {args.label}. Maximum {args.max_writes} write attempts, "
+            f"{args.max_customers} received customers, and 12 revision waits of at most 10000 ms each; "
+            "stop after three unchanged waits. Count every act against the write budget. "
+            f"The explicit total purchase ceiling is {args.max_spend}; never spend above it or current cash. "
+            "At most ONE actual bargain attempt and ONE economic trade (purchase OR sale) in this run. "
+            "Allowed writes ONLY start_business, receive_next_customer, open_trade_panel, advance_dialogue, "
+            "choose_dialogue_option, prepare_purchase_items, purchase_visible_offer, prepare_sale_items, "
+            "sell_visible_offer, dismiss_customer, open_bargain_panel, choose_bargain_option, close_bargain_panel. "
+            "No sorting, day crossing, wholesale, appraisal, blackmail, threats, special deals, save operations or GUI. "
+            "Before EVERY write observe immediately; copy the exact current legal_actions entry and observed "
+            "schema/broker/world/revision/version. Never invent refs, modes, percentages or amounts; never use "
+            "a candidate or action from old wait/status evidence. Submit one write at a time. After EVERY act, "
+            "query get_action_status with its original ID, wait command_terminal if needed, query the SAME ID "
+            "again, then observe the actual post-result state. On failed, timeout, unknown, connection loss or "
+            "ambiguous submission, stop writes and query that original ID; never replay. A definite stale "
+            "rejection for a non-bargain action permits at most one fresh decision from a new observation. "
+            "Any submission of choose_bargain_option consumes the run's ONE bargain-attempt allowance, "
+            "including rejected, stale, failed or unknown results. Never submit a second bargain choice. "
+            "A succeeded command means the native choice attempt was handled, NOT that the customer accepted. "
+            "Similarly, any submission of purchase_visible_offer or sell_visible_offer consumes the ONE trade "
+            "allowance, even if rejected or unknown; never replay or switch to the other trade direction. "
+            "Read current dialogue text and actual visible option labels before deciding. Wait for automatic "
+            "typing; advance next only at visible manual waits. Choose only necessary ordinary dialogue options. "
+            "When absent, start/receive only if legal and within the customer budget; dismiss unsupported "
+            "customers normally if legal. Do not wait repeatedly for a revision needing your next receive action. "
+            "Identify direction from the NPC trade_type: sell means NPC sells to us, buy means NPC buys from us. "
+            "Open the normal trade panel via legal open_trade_panel if closed. "
+            "Before preparing items, wait for arrival/stock animation to settle and observe a trading customer "
+            "with trade_panel equal to its buy/sell direction. The early newspaper-only front collection can "
+            "change while the customer is still arriving. A definite stale non-bargain preparation rejection "
+            "does not count as a completed transfer; you may make the one permitted fresh decision. "
+            "Prepare an ordinary current offer once if needed: use prepare_purchase_items for an NPC SELL; "
+            "for an NPC BUY select ONE appropriate visible player item from current prepare_sale_items entries "
+            "using request text, visible names and units. Explain that choice. Read the current ordinary normal "
+            "quote, item set, cash, eligibility and capacity. If the current container is incomplete and no "
+            "preparation is legal after arrival settles, normally dismiss that unsupported selection when legal "
+            "and continue within the remaining customer budget. Do not open bargaining for an empty offer: "
+            "first obtain a complete normal quote with a nonempty item set. When open_bargain_panel is legal, open it and inspect "
+            "its actual visible option labels, "
+            "prices, percentages and available risk/reputation information. Explain visible prices and cash, "
+            "and state risk unknown if it is not shown. Decide autonomously whether bargaining is worthwhile "
+            "and which currently legal ordinary option to choose; do not hardcode the highest percentage or "
+            "insist on attempting a bargain. Use only a choose_bargain_option entry bound to this SAME current "
+            "customer_ref, NPC buy/sell mode and option_ref; copy its complete arguments exactly. Never use "
+            "payment mode normal as the NPC direction of a bargain choice. Do not infer acceptance odds from "
+            "hidden budget, random state, unexposed features or backend data. "
+            "After the single choice attempt, read its original command result and visible customer dialogue. "
+            "If the response needs manual advance while the bargain panel is open, first use the currently "
+            "legal close_bargain_panel, then advance the visible ordinary response; do not wait forever for "
+            "an advance action blocked by the open bargain panel. Read the resulting dialogue "
+            "to distinguish accepted, rejected or leaving; if evidence is inconclusive report unknown. Handle "
+            "ordinary visible dialogue/departure normally. Never loop for random acceptance, receive another "
+            "customer to try again, or demand that both NPC directions occur in one run. Rejected bargaining "
+            "may leave an ordinary trade available; decide from the fresh visible terms. If the customer leaves, "
+            "observe and report that actual result without chasing another bargain. "
+            "Close the bargain panel normally using current legal close_bargain_panel via MCP before any "
+            "purchase or sale, also if you chose not to bargain. Never use GUI or fabricate a close. Read a "
+            "fresh complete normal quote and fresh legal settlement arguments after dialogue/panel closure. "
+            "Normal primary payment mode already includes accepted bargain adjustments; it does not mean "
+            "unbargained pricing. Never reuse the old offer_ref even if the displayed amount is unchanged. "
+            "Trade only if currently legal with matching items and complete normal quote. Purchase requires "
+            "sufficient capacity/cash and amount within the explicit ceiling; sale requires the currently legal "
+            "single-item ordinary route. Do not recompute or override the quoted amount. Before trade retain "
+            "observed cash, item refs, units and ownership/container facts. After the ONE trade submission, "
+            "collect status and observe, compare actual cash delta against minus quoted purchase amount or "
+            "plus quoted sale amount, verify selected items' transfer/ownership/units and other goods retained, "
+            "and report any mismatch as unverified. Finish only that same customer's ordinary dialogue or "
+            "legal dismissal within remaining budgets; do not receive another customer after a trade submission. "
+            "Stop when this interaction is handled or any limit/blocker is reached. Report command IDs, exact "
+            "choice/option labels and direction, why bargaining was chosen or declined, visible risk or unknown, "
+            "attempt status separately from NPC acceptance, refreshed quote, cash/inventory delta and departure. "
+            "Report missing scenarios as untested; never fabricate acceptance, settlement or both-direction coverage. "
         )
     elif args.m3a:
         prompt += (
@@ -229,7 +312,7 @@ def main():
             "Never submit act again, even on timeout, unknown, stale or error. Then observe once. "
             "If prerequisites fail, stop and report. Include command ID and before/after evidence."
         )
-    elif args.business_stage is None and args.m3a is None and not args.trade_panel:
+    elif args.business_stage is None and args.m3a is None and not args.trade_panel and not args.m3b:
         prompt += (
             "Do not call act. Also query get_action_status for ID integration_nonexistent_readonly. "
             "Call wait_for_update with criterion=operable and max_wait_ms=500 to exercise bounded waiting."
@@ -250,7 +333,7 @@ def main():
     command += [prompt]
     with output.open("x", encoding="utf-8") as stdout, output.with_suffix(".stderr.log").open("x", encoding="utf-8") as stderr:
         result = subprocess.run(command, cwd=ROOT, stdout=stdout, stderr=stderr,
-                                timeout=900 if args.business_stage == "FLOW" or args.m3a == "FLOW" or args.trade_panel else 240)
+                                timeout=900 if args.business_stage == "FLOW" or args.m3a == "FLOW" or args.trade_panel or args.m3b else 240)
     print(json.dumps({"exit_code": result.returncode, "evidence": str(output)}))
     raise SystemExit(result.returncode)
 

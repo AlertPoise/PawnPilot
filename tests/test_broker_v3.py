@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from bridge.protocol import MAX_V2_MESSAGE_BYTES, MAX_V3_MESSAGE_BYTES
 from bridge.server import Broker, ProtocolError, Server
+from bridge.journal import Journal
 
 FIXTURE = json.loads((ROOT / "protocol/fixtures/v3-business-observation.json").read_text(encoding="utf-8"))
 
@@ -139,6 +140,102 @@ class BrokerV3Tests(unittest.TestCase):
                 "revision": 2, "expected_version": f"{self.state['world_epoch']}:2",
                 "operator_note": "no replay confirmed", "confirm_no_replay": True})
         self.assertEqual(caught.exception.reason, "command_not_reconcilable")
+
+    def test_only_pure_bargain_panels_support_durable_manual_alignment(self):
+        from test_bargain import state as bargain_state
+        parent = ROOT / 'artifacts' / 'm3b'
+        parent.mkdir(parents=True, exist_ok=True)
+        for action in ('open_bargain_panel', 'close_bargain_panel', 'choose_bargain_option', 'sell_visible_offer'):
+            with self.subTest(action=action), tempfile.TemporaryDirectory(dir=parent) as directory:
+                journal = Path(directory) / 'journal.json'
+                state = (json.loads((ROOT / 'protocol/fixtures/m3a-sell.json').read_text(encoding='utf-8'))
+                         if action == 'sell_visible_offer' else bargain_state(
+                             phase='closed' if action == 'open_bargain_panel' else 'choosing', action=action))
+                first = Broker('panel-alignment', clock=self.clock, monotonic=self.clock.monotonic,
+                    heartbeat_timeout=60, journal_path=journal)
+                def exchange(broker, snapshot, session):
+                    return broker.exchange({'schema_version':3, 'session_id':session,
+                        'broker_epoch':broker.broker_epoch, 'state':snapshot,
+                        'has_result':False, 'result':None, 'progress':None})
+                exchange(first, state, 'delivered-session')
+                request = {'schema_version':3, 'id':f'unknown-{action}', 'broker_epoch':first.broker_epoch,
+                    **state['legal_actions'][0], 'expected_world_epoch':state['world_epoch'],
+                    'expected_revision':state['revision'], 'expected_version':state['version']}
+                first.enqueue(request)
+                delivered = exchange(first, state, 'delivered-session')
+                self.assertEqual(delivered['command']['action'], action)
+                first.close()
+                restarted = Broker('panel-alignment', clock=self.clock, monotonic=self.clock.monotonic,
+                    heartbeat_timeout=60, journal_path=journal)
+                try:
+                    self.assertEqual(restarted.result(request['id'])['status'], 'outcome_unknown')
+                    advanced = copy.deepcopy(state)
+                    advanced.update(revision=state['revision']+1,
+                        version=f"{state['world_epoch']}:{state['revision']+1}", legal_actions=[])
+                    exchange(restarted, advanced, 'delivered-session')
+                    body = {'schema_version':3, 'id':request['id'], 'broker_epoch':restarted.broker_epoch,
+                        'world_epoch':advanced['world_epoch'], 'revision':advanced['revision'],
+                        'expected_version':advanced['version'], 'operator_note':'Fresh session reviewed; do not replay panel action.',
+                        'confirm_no_replay':True}
+                    if action not in {'open_bargain_panel', 'close_bargain_panel'}:
+                        exchange(restarted, advanced, 'fresh-session')
+                        self.clock.now += 60
+                        exchange(restarted, advanced, 'fresh-session')
+                        with self.assertRaises(ProtocolError) as caught:
+                            restarted.reconcile(body)
+                        self.assertEqual(caught.exception.reason, 'command_not_reconcilable')
+                        self.assertEqual(restarted.result(request['id'])['status'], 'outcome_unknown')
+                        self.assertFalse(restarted.result(request['id'])['resolved'])
+                        record = copy.deepcopy(restarted.records[request['id']])
+                        forbidden_resolution = {'schema_version':3, 'method':'manual_state_alignment',
+                            'command_id':request['id'], 'broker_epoch':restarted.broker_epoch,
+                            'command_expires_at_unix_ms':record['command']['start_deadline_unix_ms']
+                                + record['command']['execution_timeout_ms'],
+                            'session_id':'fresh-session', 'world_epoch':advanced['world_epoch'],
+                            'revision':advanced['revision'], 'version':advanced['version'],
+                            'snapshot':advanced, 'operator_note':body['operator_note'],
+                            'confirm_no_replay':True, 'recorded_at_unix_ms':int(self.clock.now*1000)}
+                        record['updated_at_unix_ms'] = int(self.clock.now*1000)
+                        self.assertFalse(Journal._valid_resolution(record, forbidden_resolution, 3))
+                        continue
+                    with self.assertRaises(ProtocolError) as caught:
+                        restarted.reconcile(body)
+                    self.assertEqual(caught.exception.reason, 'fresh_mod_session_required')
+                    exchange(restarted, advanced, 'fresh-session')
+                    with self.assertRaises(ProtocolError) as caught:
+                        restarted.reconcile(body)
+                    self.assertEqual(caught.exception.reason, 'command_not_expired')
+                    self.clock.now += 60
+                    exchange(restarted, advanced, 'fresh-session')
+                    with self.assertRaises(ProtocolError) as caught:
+                        restarted.reconcile({**body, 'expected_version':'stale:1'})
+                    self.assertEqual(caught.exception.reason, 'snapshot_mismatch_or_not_aligned')
+                    exchange(restarted, state, 'fresh-session')
+                    with self.assertRaises(ProtocolError) as caught:
+                        restarted.reconcile({**body, 'revision':state['revision'], 'expected_version':state['version']})
+                    self.assertEqual(caught.exception.reason, 'snapshot_not_advanced')
+                    exchange(restarted, advanced, 'fresh-session')
+                    reply = restarted.reconcile(body)
+                    self.assertTrue(reply['resolved'])
+                    self.assertEqual(reply['status'], 'outcome_unknown')
+                    self.assertEqual(reply['result']['status'], 'outcome_unknown')
+                    self.assertEqual(reply['resolution']['snapshot'], advanced)
+                    self.assertIsNone(restarted.snapshot()['blocking_reason'])
+                    self.assertFalse(exchange(restarted, advanced, 'fresh-session')['has_command'])
+                    persisted = json.loads(journal.read_text(encoding='utf-8'))
+                    self.assertTrue(Journal.valid_v2(persisted))
+                    restarted.close()
+                    restarted = Broker('panel-alignment', clock=self.clock, monotonic=self.clock.monotonic,
+                        heartbeat_timeout=60, journal_path=journal)
+                    restored = restarted.result(request['id'])
+                    self.assertEqual(restored['status'], 'outcome_unknown')
+                    self.assertTrue(restored['resolved'])
+                    self.assertEqual(restored['resolution'], reply['resolution'])
+                    self.assertFalse(exchange(restarted, advanced, 'third-session')['has_command'])
+                finally:
+                    restarted.close()
+                    journal.unlink(missing_ok=True)
+                    journal.with_suffix(journal.suffix + '.lock').unlink(missing_ok=True)
 
     def test_v3_close_menu_result_is_acknowledged_and_kept_as_v3_history(self):
         self.broker.enqueue(self.request(command_id="close-v3"))

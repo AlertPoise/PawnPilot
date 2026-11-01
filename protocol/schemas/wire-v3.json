@@ -605,6 +605,118 @@
             "arguments"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "open_bargain_panel"
+            },
+            "arguments": {
+              "type": "object",
+              "properties": {
+                "customer_ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_.:-]+$"
+                },
+                "mode": {
+                  "enum": [
+                    "buy",
+                    "sell"
+                  ]
+                }
+              },
+              "required": [
+                "customer_ref",
+                "mode"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "close_bargain_panel"
+            },
+            "arguments": {
+              "type": "object",
+              "properties": {
+                "customer_ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_.:-]+$"
+                },
+                "mode": {
+                  "enum": [
+                    "buy",
+                    "sell"
+                  ]
+                }
+              },
+              "required": [
+                "customer_ref",
+                "mode"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "choose_bargain_option"
+            },
+            "arguments": {
+              "type": "object",
+              "properties": {
+                "customer_ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_.:-]+$"
+                },
+                "mode": {
+                  "enum": [
+                    "buy",
+                    "sell"
+                  ]
+                },
+                "option_ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_.:-]+$"
+                }
+              },
+              "required": [
+                "customer_ref",
+                "mode",
+                "option_ref"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "arguments"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -770,7 +882,24 @@
           "maxLength": 128
         },
         "action": {
-          "const": "close_menu"
+          "enum": [
+            "close_menu",
+            "start_business",
+            "receive_next_customer",
+            "advance_dialogue",
+            "choose_dialogue_option",
+            "prepare_purchase_items",
+            "cancel_confirmation",
+            "dismiss_customer",
+            "purchase_visible_offer",
+            "prepare_sale_items",
+            "sell_visible_offer",
+            "sort_inventory_default",
+            "open_trade_panel",
+            "open_bargain_panel",
+            "close_bargain_panel",
+            "choose_bargain_option"
+          ]
         },
         "expected_world_epoch": {
           "type": "string",
@@ -788,10 +917,7 @@
           "maxLength": 256
         },
         "arguments": {
-          "type": "object",
-          "properties": {},
-          "required": [],
-          "additionalProperties": false
+          "$ref": "#/$defs/Arguments"
         },
         "start_deadline_unix_ms": {
           "type": "integer",
@@ -816,7 +942,265 @@
         "start_deadline_unix_ms",
         "execution_timeout_ms"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "close_menu"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/0/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "start_business"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/1/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "receive_next_customer"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/2/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "advance_dialogue"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/3/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "choose_dialogue_option"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/4/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "prepare_purchase_items"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/5/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "cancel_confirmation"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/6/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "dismiss_customer"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/7/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "purchase_visible_offer"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/8/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "prepare_sale_items"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/9/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "sell_visible_offer"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/10/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "sort_inventory_default"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/11/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "open_trade_panel"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/12/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "open_bargain_panel"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/13/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "close_bargain_panel"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/14/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "choose_bargain_option"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/15/properties/arguments"
+              }
+            }
+          }
+        }
+      ]
     },
     "Progress": {
       "type": "object",
@@ -1416,7 +1800,10 @@
             "refuse_trade",
             "dismiss_customer",
             "purchase_visible_offer",
-            "open_trade_panel"
+            "open_trade_panel",
+            "open_bargain_panel",
+            "close_bargain_panel",
+            "choose_bargain_option"
           ]
         },
         "status": {
@@ -1886,6 +2273,16 @@
               "type": "null"
             }
           ]
+        },
+        "bargain": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BargainState"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -1993,6 +2390,181 @@
         "wholesale_total"
       ],
       "additionalProperties": false
+    },
+    "BargainOption": {
+      "type": "object",
+      "properties": {
+        "option_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "enum": [
+            "lower_purchase_price",
+            "raise_purchase_price",
+            "raise_sale_price",
+            "lower_sale_price"
+          ]
+        },
+        "price_change_percent": {
+          "type": "integer",
+          "minimum": -100,
+          "maximum": 100,
+          "not": {
+            "const": 0
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "selected": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "option_ref",
+        "text",
+        "kind",
+        "price_change_percent",
+        "enabled",
+        "selected"
+      ],
+      "additionalProperties": false
+    },
+    "BargainState": {
+      "type": "object",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "phase": {
+          "enum": [
+            "unavailable",
+            "closed",
+            "choosing",
+            "responding"
+          ]
+        },
+        "direction": {
+          "enum": [
+            "buy",
+            "sell",
+            "unknown"
+          ]
+        },
+        "terms_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BargainOption"
+          },
+          "maxItems": 16
+        },
+        "reputation_text": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hint_text": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_option_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {
+          "enum": [
+            "none",
+            "responding",
+            "price_changed",
+            "unchanged",
+            "customer_left",
+            "unknown"
+          ]
+        },
+        "result_text": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "available",
+        "phase",
+        "direction",
+        "terms_revision",
+        "options",
+        "reputation_text",
+        "hint_text",
+        "last_option_ref",
+        "result",
+        "result_text"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "enum": [
+                  "closed",
+                  "unavailable"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "options": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

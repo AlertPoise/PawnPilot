@@ -1,4 +1,8 @@
-# PawnPilot — M3-A 基础卖出开发分支
+# PawnPilot — M3-B 普通自主议价
+
+M3-B **PASS（普通买入方向议价后正常结束）**：真实Codex CLI经MCP自主选择降价10%，顾客接受，正常报价265→238。既有嵌套容器容量限制阻止购买，Agent合法遣走，现金仍550；**没有实际成交**。卖出方向和议价后实际结算未实测。自动化436 managed +166 Python =602通过。详见 [M3-B 报告](docs/m3b-implementation.md)。
+
+新增普通议价观察及 `open_bargain_panel`、`choose_bargain_option`、`close_bargain_panel`，仍使用现有五个 MCP 工具和 ActionDriver。Codex 根据可见报价、现金、选项与提示决定是否议价；Mod 不预测随机结果或硬编码最大折扣。提议提交、客户接受和实际成交分开核验；普通买卖继续绑定游戏当前显示金额和新报价引用。
 
 M3-A **PASS（已验证的基础范围）**，交易面板自主开启收尾已通过：真实 Codex CLI 经 PawnPilot MCP 调用 `open_trade_panel(customer_ref)`，将普通 SELL 顾客的面板由 closed 打开为 sell，观察到 trading 和正常总价0（空柜台，无可执行成交报价），现金保持550；没有用 GUI 点击顾客。普通 BUY 开面板已有实现和自动化覆盖，本轮未取得实机样本。自动化 **377 managed + 149 Python = 526通过、0失败**。范围、原始证据索引与清理结果见 [M3-A 报告](docs/m3a-implementation.md)。
 
@@ -85,7 +89,7 @@ loaded 表示当前游戏场景中存档已初始化；ready 额外要求必要 
 
 journal 使用独占进程锁、同目录临时文件、flush/fsync 与原子替换。命令先落盘后交付，结果先落盘后确认。重启 pending 转 rejected，running 转 unknown；原 Mod 保留结果可按原 epoch/session 归档，不重放。已完成结果跨重启可查。上限 4096 条/16 MiB，满载、损坏、写失败停止写入，不淘汰 ID。此方案不宣称 exactly-once，不能抵御人为删除记录或断电磁盘损坏。
 
-若 Mod 退出使结果丢失，不能删除 journal 清零。操作者核对当前世界、正常关闭菜单、退出旧 Mod 并建立新会话，重新 observe 并记录画面证据。原命令最迟可能执行期限已过、快照新鲜就绪且版本前进后，才可执行：
+若 Mod 退出使结果丢失，不能删除 journal 清零。人工恢复仅允许 close_menu，以及 wire3 的 open_bargain_panel / close_bargain_panel；议价选择、成交等业务动作不允许此恢复。操作者核对当前世界、正常关闭菜单、退出旧 Mod 并建立新会话，重新 observe 并记录画面证据。原命令最迟可能执行期限已过、快照新鲜就绪且版本前进后，才可执行：
 
 ~~~powershell
 python bridge/client.py reconcile --schema-version 3 --id '<原ID>' --broker-epoch '<当前broker>' --world-epoch '<当前world>' --revision '<当前revision>' --expected-version '<当前world>:<当前revision>' --operator-note '<人工核对世界、菜单及证据位置>' --confirm-no-replay
@@ -111,6 +115,8 @@ python scripts/verify-codex.py --business-stage FLOW --max-spend 550 --label bus
 python scripts/verify-codex.py --m3a FLOW --max-customers 6 --max-writes 24 --label m3a-flow
 # 面板专项：需单独批准测试槽，禁止商品搬运/买卖/整理，成功开面板后停止：
 python scripts/verify-codex.py --trade-panel --max-customers 4 --max-writes 16 --label panel-check
+# M3-B：另行批准普通议价/交易和支出；每次运行最多一次提议、一次成交：
+python scripts/verify-codex.py --m3b --max-spend 550 --max-customers 4 --max-writes 24 --label bargain-check
 # 也可使用 --business-stage A/B/C 分阶段，C 必须提供 --max-spend。
 # 仅用于已批准的独立测试槽、正常打开的 ESC 菜单：
 python scripts/verify-codex.py --label live-check --close-menu

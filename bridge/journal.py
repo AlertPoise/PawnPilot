@@ -433,7 +433,8 @@ class Journal:
                 and type(resolution) is dict and set(resolution) == _RESOLUTION_KEYS
                 and type(resolution.get("schema_version")) is int and resolution["schema_version"] == version
                 and resolution.get("method") == "manual_state_alignment"
-                and command.get("action") == "close_menu"
+                and (command.get("action") == "close_menu" or version == WIRE_VERSION_V3
+                     and command.get("action") in {"open_bargain_panel", "close_bargain_panel"})
                 and resolution.get("command_id") == record["command_id"]
                 and isinstance(resolution.get("broker_epoch"), str) and 1 <= len(resolution["broker_epoch"]) <= 128
                 and resolution.get("command_expires_at_unix_ms") == deadline

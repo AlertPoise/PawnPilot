@@ -84,7 +84,8 @@ class LegalActionV3(StrictModel):
     action: Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                     "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
                     "dismiss_customer", "purchase_visible_offer", "prepare_sale_items",
-                    "sell_visible_offer", "sort_inventory_default", "open_trade_panel"]
+                    "sell_visible_offer", "sort_inventory_default", "open_trade_panel",
+                    "open_bargain_panel", "close_bargain_panel", "choose_bargain_option"]
     arguments: dict[str, Any]
 
 
@@ -335,7 +336,8 @@ class ObserveReply(ToolReply):
     legal_actions: list[Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                                  "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
                                  "refuse_trade", "dismiss_customer", "purchase_visible_offer", "prepare_sale_items",
-                                 "sell_visible_offer", "sort_inventory_default", "open_trade_panel"]] = Field(default_factory=list, max_length=64)
+                                 "sell_visible_offer", "sort_inventory_default", "open_trade_panel",
+                                 "open_bargain_panel", "close_bargain_panel", "choose_bargain_option"]] = Field(default_factory=list, max_length=64)
     wait_reason: str | None = None
     manual_action_required: bool = False
 
@@ -872,7 +874,8 @@ def act(schema_version: Annotated[Literal[2, 3], BeforeValidator(_exact_schema_2
         action: Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                         "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
                         "refuse_trade", "dismiss_customer", "purchase_visible_offer", "prepare_sale_items",
-                        "sell_visible_offer", "sort_inventory_default", "open_trade_panel"],
+                        "sell_visible_offer", "sort_inventory_default", "open_trade_panel",
+                        "open_bargain_panel", "close_bargain_panel", "choose_bargain_option"],
         arguments: CloseMenuArguments | ActionArgumentsV3,
         broker_epoch: Annotated[str, Field(min_length=1, max_length=128)],
         expected_world_epoch: Annotated[str, Field(min_length=1, max_length=128)],

@@ -43,6 +43,9 @@ V3_ACTION_ARGUMENTS = {
     "cancel_confirmation": frozenset(), "refuse_trade": frozenset({"customer_ref"}),
     "dismiss_customer": frozenset({"customer_ref"}),
     "open_trade_panel": frozenset({"customer_ref"}),
+    "open_bargain_panel": frozenset({"customer_ref", "mode"}),
+    "close_bargain_panel": frozenset({"customer_ref", "mode"}),
+    "choose_bargain_option": frozenset({"customer_ref", "mode", "option_ref"}),
     "purchase_visible_offer": frozenset({"customer_ref", "offer_ref", "item_refs",
         "collection_fingerprint", "mode", "amount", "max_spend"}),
 }
@@ -54,6 +57,7 @@ V3_OPTIONAL_ARGUMENTS = frozenset({"customer_ref", "item_refs", "offer_ref",
                                     "collection_fingerprint", "option_ref", "dialogue_ref",
                                     "mode", "amount", "max_spend", "authorization_ref"})
 V3_OPTIONAL_ARGUMENTS |= {"container"}
+BARGAIN_ACTIONS = frozenset({"open_bargain_panel", "close_bargain_panel", "choose_bargain_option"})
 
 
 def integer(value, minimum=0, maximum=MAX_INT):
@@ -307,10 +311,49 @@ def _has_action_blocking_evidence(blockers, action):
             continue
         if action in {"advance_dialogue", "choose_dialogue_option"} and blocker == "dialogue_active":
             continue
-        if action in {"prepare_purchase_items", "dismiss_customer"} and blocker in {"dialogue_active", "bargain_panel"}:
+        if action in {"prepare_purchase_items", "dismiss_customer"} and blocker == "dialogue_active":
+            continue
+        if action in BARGAIN_ACTIONS and blocker == "bargain_panel":
+            continue
+        if action == "close_bargain_panel" and blocker == "dialogue_active":
             continue
         return True
     return False
+
+
+def _valid_bargain_v3(value):
+    keys = {"available", "phase", "direction", "terms_revision", "options", "reputation_text",
+            "hint_text", "last_option_ref", "result", "result_text"}
+    if not (shape(value, keys) and type(value["available"]) is bool
+            and value["phase"] in {"unavailable", "closed", "choosing", "responding"}
+            and value["direction"] in {"buy", "sell", "unknown"}
+            and integer(value["terms_revision"])
+            and type(value["options"]) is list and len(value["options"]) <= 16
+            and all(_v3_text(value[k], nullable=True) for k in ("reputation_text", "hint_text", "result_text"))
+            and (value["last_option_ref"] is None or
+                 type(value["last_option_ref"]) is str and REF.fullmatch(value["last_option_ref"]) is not None)
+            and value["result"] in {"none", "responding", "price_changed", "unchanged", "customer_left", "unknown"}):
+        return False
+    if value["phase"] in {"closed", "unavailable"} and value["options"]:
+        return False
+    refs = []
+    for option in value["options"]:
+        if not (shape(option, {"option_ref", "text", "kind", "price_change_percent", "enabled", "selected"})
+                and type(option["option_ref"]) is str and REF.fullmatch(option["option_ref"]) is not None
+                and _v3_text(option["text"])
+                and option["kind"] in {"lower_purchase_price", "raise_purchase_price", "raise_sale_price", "lower_sale_price"}
+                and integer(option["price_change_percent"], -100, 100) and option["price_change_percent"] != 0
+                and type(option["enabled"]) is bool and type(option["selected"]) is bool):
+            return False
+        refs.append(option["option_ref"])
+    return len(refs) == len(set(refs))
+
+
+def _blocks_trade_observation_v3(ui):
+    blockers = ui["blockers"]
+    return ("ui_reader_failed" in blockers or ui["status"] == "blocked" and not (
+        "bargain_panel" in blockers and all(blocker == "bargain_panel"
+            or blocker in _NONBLOCKING_UNOBSERVABLE_UI_BLOCKERS for blocker in blockers)))
 
 
 def _valid_business_v3(business):
@@ -331,7 +374,11 @@ def _valid_business_v3(business):
                    "ui", "capacity", "eligibility", "candidates"}
     if schema == 2:
         detail_keys.add("front_collection_fingerprint")
+        if "bargain" in d:
+            detail_keys.add("bargain")
     if not shape(d, detail_keys):
+        return False
+    if schema == 2 and d.get("bargain") is not None and not _valid_bargain_v3(d["bargain"]):
         return False
     if (d["status"] not in {"unavailable", "partial", "complete"}
             or (schema == 2 and d["front_collection_fingerprint"] is not None
@@ -519,7 +566,8 @@ def _valid_business_v3(business):
                 total = sum(row["amount"] for row in q["rows"])
                 if total > MAX_INT or total != q["displayed_total"]:
                     return False
-        if d["status"] == "unavailable" or ui["status"] in {"blocked", "updating"}:
+        if (d["status"] == "unavailable" or ui["status"] == "updating"
+                or (ui["status"] == "blocked" if schema == 1 else _blocks_trade_observation_v3(ui))):
             return False
     cap = d["capacity"]
     if not (shape(cap, {"status", "reason", "scope"})
@@ -603,6 +651,9 @@ def valid_snapshot_v3(value):
 def valid_action_binding_v3(business, action, arguments):
     """Tie every emitted opaque handle back to the same observed business snapshot."""
     details = business["details"]
+    if ("bargain_panel" in details["ui"]["blockers"]
+            and action not in BARGAIN_ACTIONS and action != "close_menu"):
+        return False
     if action in {"advance_dialogue", "choose_dialogue_option", "prepare_purchase_items",
                   "prepare_sale_items", "sell_visible_offer",
                   "refuse_trade", "dismiss_customer", "open_trade_panel"}:
@@ -623,6 +674,38 @@ def valid_action_binding_v3(business, action, arguments):
         if arguments.get("option_ref") not in business["details"]["customer"]["option_refs"]:
             return False
     schema = details["schema_version"]
+    if action in BARGAIN_ACTIONS:
+        customer = details["customer"]
+        bargain = details.get("bargain")
+        leaving_response = (action == "close_bargain_panel" and bargain is not None
+            and customer["trade_type"] == "other" and bargain["phase"] == "responding"
+            and bargain["result"] == "responding"
+            and bargain["terms_revision"] > 0 and bargain["last_option_ref"] is not None)
+        if (schema != 2 or bargain is None or business["customer_ref"] is None
+                or arguments.get("customer_ref") != business["customer_ref"]
+                or customer["presence"] != "present" or customer["arrived"] is not True
+                or arguments.get("mode") not in {"buy", "sell"}
+                or arguments["mode"] != customer["trade_type"] and not leaving_response
+                or arguments["mode"] != bargain["direction"]
+                or _has_action_blocking_evidence(details["ui"]["blockers"], action)
+                or details["ui"]["status"] == "updating"
+                or details["ui"]["status"] == "blocked" and not details["ui"]["blockers"]):
+            return False
+        if action == "close_bargain_panel":
+            return bargain["phase"] in {"choosing", "responding"}
+        if (not bargain["available"] or customer["dialogue_ref"] is not None
+                or customer["phase"] in {"dialogue", "leaving"}
+                or customer["dialogue_stage"] in {"typing", "waiting", "choices", "updating"}
+                or customer.get("is_typing") is True or customer.get("waiting_for_advance") is True):
+            return False
+        if action == "open_bargain_panel":
+            return bargain["phase"] == "closed"
+        quote = details["quote"]
+        return (bargain["phase"] == "choosing" and quote["status"] == "complete"
+            and quote["mode"] == "normal" and quote["displayed_total"] is not None
+            and business["offer_ref"] is not None and bool(business["item_refs"]) and any(
+            option["option_ref"] == arguments.get("option_ref") and option["enabled"] and not option["selected"]
+            for option in bargain["options"]))
     if action == "open_trade_panel":
         customer = details["customer"]
         if (schema != 2 or customer["presence"] != "present" or customer["arrived"] is not True
@@ -704,6 +787,8 @@ def valid_action_state_v3(snapshot, action, arguments):
     """Minimal per-action game-phase checks; unrelated business completeness is irrelevant."""
     if action == "start_business":
         return snapshot["ready"] and snapshot["phase"] == "MORNING"
+    if action in BARGAIN_ACTIONS:
+        return snapshot["ready"] and valid_action_binding_v3(snapshot["business"], action, arguments)
     if action == "receive_next_customer":
         customer = snapshot["business"]["details"]["customer"]
         return (snapshot["ready"] and snapshot["phase"] == "OPEN"
@@ -740,6 +825,7 @@ def valid_command_v3(value):
             and set(value["arguments"]) == V3_ACTION_ARGUMENTS[value["action"]]
             and (value["action"] != "advance_dialogue" or value["arguments"]["mode"] in {"skip", "next"})
             and (value["action"] not in {"purchase_visible_offer", "sell_visible_offer"} or value["arguments"].get("mode") == "normal")
+            and (value["action"] not in BARGAIN_ACTIONS or value["arguments"].get("mode") in {"buy", "sell"})
             and (value["action"] != "sell_visible_offer" or len(value["arguments"].get("item_refs", [])) == 1)
             and integer(value["start_deadline_unix_ms"], 1, MAX_TIME)
             and integer(value["execution_timeout_ms"], 1, 30_000))
@@ -793,6 +879,27 @@ def valid_success_evidence_v3(before, after):
 def valid_action_success_evidence_v3(command, before, after):
     """Validate only the observable postcondition for the command's own operation."""
     action = command["action"]
+    if action in BARGAIN_ACTIONS:
+        args = command["arguments"]
+        old_business, new_business = before["business"], after["business"]
+        old = old_business["details"].get("bargain")
+        new = new_business["details"].get("bargain")
+        if (not valid_action_binding_v3(old_business, action, args) or old is None or new is None
+                or before["world_epoch"] != after["world_epoch"] or before["scene"] != after["scene"]
+                or after["revision"] <= before["revision"] or before["cash"] != after["cash"]
+                or new_business["customer_ref"] != args["customer_ref"]
+                or new_business["details"]["customer"]["presence"] != "present"
+                or new_business["details"]["customer"]["arrived"] is not True
+                or new_business["details"]["customer"]["trade_type"] not in (
+                    {args["mode"], "other"} if action in {"choose_bargain_option", "close_bargain_panel"} else {args["mode"]})
+                or new["direction"] != args["mode"]):
+            return False
+        if action == "open_bargain_panel":
+            return old["phase"] == "closed" and new["phase"] == "choosing" and bool(new["options"])
+        if action == "close_bargain_panel":
+            return old["phase"] in {"choosing", "responding"} and new["phase"] == "closed"
+        return (new["last_option_ref"] == args["option_ref"]
+                and new["terms_revision"] > old["terms_revision"] and new["result"] != "none")
     if action == "open_trade_panel":
         old = before["business"]["details"]["customer"]
         new = after["business"]["details"]["customer"]

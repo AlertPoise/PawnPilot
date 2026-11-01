@@ -25,6 +25,7 @@ namespace PawnPilot
                 d.customer.dialogue_ref != null || d.customer.option_refs == null || d.customer.option_refs.Count != 0)) return false;
 
             if ((d.schema_version == 1 && d.front_collection_fingerprint != null) ||
+                (d.schema_version == 1 && d.bargain != null) || (d.bargain != null && !ValidateBargain(d.bargain)) ||
                 (d.schema_version == 2 && !OptionalRef(d.front_collection_fingerprint)) ||
                 !ValidateCustomer(d.customer, business.customer_ref, d.schema_version) || !ValidateUi(d.ui) ||
                 !ValidateItemsAndContainers(d.containers, d.items, business.item_refs, d) ||
@@ -56,6 +57,12 @@ namespace PawnPilot
             foreach (var c in d.containers) { S(c.container); S(c.completeness); S(c.reason); L(c.item_refs); }
             foreach (var i in d.items) { S(i.item_ref); S(i.container); S(i.name); S(i.shape_status); }
             S(d.front_collection_fingerprint); S(d.quote.status); S(d.quote.mode); S(d.quote.reason);
+            if (d.bargain != null)
+            {
+                S(d.bargain.phase); S(d.bargain.direction); S(d.bargain.reputation_text); S(d.bargain.hint_text);
+                S(d.bargain.last_option_ref); S(d.bargain.result); S(d.bargain.result_text);
+                foreach (var option in d.bargain.options) { S(option.option_ref); S(option.text); S(option.kind); }
+            }
             foreach (var row in d.quote.rows) { S(row.item_ref); S(row.name); S(row.price_text); }
             S(d.ui.status); S(d.ui.coverage); L(d.ui.blockers);
             S(d.capacity.status); S(d.capacity.reason); S(d.capacity.scope); L(d.eligibility.missing);
@@ -93,6 +100,16 @@ namespace PawnPilot
                     shape_status = x.shape_status, width = x.width, height = x.height
                 }),
                 front_collection_fingerprint = details.front_collection_fingerprint,
+                bargain = details.bargain == null ? null : new BargainState
+                {
+                    available = details.bargain.available, phase = details.bargain.phase, direction = details.bargain.direction,
+                    terms_revision = details.bargain.terms_revision, reputation_text = details.bargain.reputation_text,
+                    hint_text = details.bargain.hint_text, last_option_ref = details.bargain.last_option_ref,
+                    result = details.bargain.result, result_text = details.bargain.result_text,
+                    options = CopyMapped(details.bargain.options, x => x == null ? null : new BargainOptionState
+                    { option_ref = x.option_ref, text = x.text, kind = x.kind, price_change_percent = x.price_change_percent,
+                        enabled = x.enabled, selected = x.selected })
+                },
                 quote = details.quote == null ? null : new QuoteState
                 {
                     status = details.quote.status, mode = details.quote.mode, displayed_total = details.quote.displayed_total,
@@ -110,6 +127,22 @@ namespace PawnPilot
                 candidates = CopyMapped(details.candidates, x => x == null ? null : new BusinessCandidate
                 { action = x.action, status = x.status, reason = x.reason })
             };
+        }
+
+        internal static bool ValidateBargain(BargainState b)
+        {
+            if (b == null || !OneOf(b.phase, "unavailable", "closed", "choosing", "responding") ||
+                !OneOf(b.direction, "buy", "sell", "unknown") || b.terms_revision < 0 ||
+                b.options == null || b.options.Count > 16 || !OptionalText(b.reputation_text) || !OptionalText(b.hint_text) ||
+                !OptionalRef(b.last_option_ref) || !OneOf(b.result, "none", "responding", "price_changed", "unchanged", "customer_left", "unknown") ||
+                !OptionalText(b.result_text) || ((b.phase == "closed" || b.phase == "unavailable") && b.options.Count != 0)) return false;
+            var refs = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var option in b.options)
+                if (option == null || !ValidRef(option.option_ref) || !refs.Add(option.option_ref) ||
+                    string.IsNullOrEmpty(option.text) || !OptionalText(option.text) ||
+                    !OneOf(option.kind, "lower_purchase_price", "raise_purchase_price", "raise_sale_price", "lower_sale_price") ||
+                    option.price_change_percent == 0 || option.price_change_percent < -100 || option.price_change_percent > 100) return false;
+            return true;
         }
 
         private static bool ValidateCustomer(CustomerState c, string customerRef, int schemaVersion)
@@ -261,7 +294,7 @@ namespace PawnPilot
                     business.offer_ref == null || !ValidRef(business.collection_fingerprint) ||
                     q.mode != "normal" || !q.displayed_total.HasValue || business.item_refs.Count == 0 ||
                     back == null || back.completeness != "complete" || back.item_refs.Count == 0 ||
-                    d.ui.status == "blocked") return false;
+                    BusinessUiEvidence.BlocksTradeObservation(d.ui.status, d.ui.blockers)) return false;
                 foreach (string reference in business.item_refs)
                 {
                     bool found = false;
@@ -271,7 +304,7 @@ namespace PawnPilot
                 }
                 if (q.reason != null) return false;
             }
-            if ((d.status == "unavailable" || d.ui.status == "blocked" || d.ui.status == "updating" ||
+            if ((d.status == "unavailable" || (d.schema_version == 1 ? d.ui.status == "blocked" : BusinessUiEvidence.BlocksTradeObservation(d.ui.status, d.ui.blockers)) || d.ui.status == "updating" ||
                 (d.schema_version == 1 && (d.ui.status == "unverified" || d.ui.coverage != "verified"))) && q.status == "complete") return false;
             return true;
         }
@@ -298,7 +331,8 @@ namespace PawnPilot
             foreach (var c in candidates)
                 if (c == null || !OneOf(c.action, "close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                     "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer",
-                    "purchase_visible_offer", "prepare_sale_items", "sell_visible_offer", "sort_inventory_default", "open_trade_panel") ||
+                    "purchase_visible_offer", "prepare_sale_items", "sell_visible_offer", "sort_inventory_default", "open_trade_panel",
+                    "open_bargain_panel", "close_bargain_panel", "choose_bargain_option") ||
                     !OneOf(c.status, "candidate", "blocked", "unverified") || !ValidText(c.reason, MaxText)) return false;
             return true;
         }

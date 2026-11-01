@@ -86,7 +86,7 @@ namespace PawnPilot
             bool dismissAction = command.action == "dismiss_customer";
             evidence.OrdinarySeller = IsSupportedOrdinarySeller(blueprint) ||
                 (dialogueAction && (GameSaleActions.IsSupportedOrdinaryBuyer(blueprint) ||
-                    IsSupportedTutorialMentorDialogue(blueprint))) ||
+                    IsSupportedTutorialMentorDialogue(blueprint) || IsAcknowledgedBargainDeparture(blueprint, snapshot))) ||
                 (dismissAction && IsTutorialFoodBuyerDismissal(blueprint));
             // The reader never invokes or exposes customer callbacks. Enabled dialogue, prepare,
             // and dismissal actions are narrowly scoped to this ordinary arrived customer and the
@@ -481,7 +481,7 @@ namespace PawnPilot
                 if (KnownUnobservableFinding(blocker)) continue;
                 if ((action == "advance_dialogue" || action == "choose_dialogue_option") && blocker == "dialogue_active") continue;
                 if ((action == "prepare_purchase_items" || action == "dismiss_customer") &&
-                    (blocker == "dialogue_active" || blocker == "bargain_panel")) continue;
+                    blocker == "dialogue_active") continue;
                 return true;
             }
             return false;
@@ -493,6 +493,14 @@ namespace PawnPilot
 
         private static bool IsSupportedTutorialMentorDialogue(StoreClient client) => client != null &&
             client.identifier == "mentor" && client.clientIntent == StoreClient.ClientIntent.DIALOGUE;
+
+        // Normal failed bargaining changes intent to LEAVE before its visible final dialogue.
+        // Permit only that acknowledged ordinary encounter's existing dialogue continuation.
+        private static bool IsAcknowledgedBargainDeparture(StoreClient client, Snapshot snapshot) => client != null &&
+            (int)client.clientIntent == 5 && snapshot.business.details.bargain?.result == "responding" &&
+            snapshot.business.details.bargain.terms_revision > 0 && snapshot.business.details.bargain.last_option_ref != null &&
+            (client.identifier == "scavGeneral" || client.identifier == "shadyPharma" || client.identifier == "food_scav_story" ||
+             client.identifier == "spacerFood" || client.identifier == "spacerFoodStory");
 
         // Tutorial-specific callbacks below only advance/close the tutorial UI. Keep dismissal
         // permission tied to the exact current factory delegates; arbitrary customer callbacks

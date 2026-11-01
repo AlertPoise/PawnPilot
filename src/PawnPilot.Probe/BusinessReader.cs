@@ -16,8 +16,7 @@ namespace PawnPilot
             var input = BusinessCustomerReader.Read();
             var entry = EmporiumEntry.Instance;
             input.Ui = ReadUi();
-            bool uiBlocked = input.Ui.Status == "blocked" ||
-                Array.IndexOf(input.Ui.Blockers, "ui_reader_failed") >= 0;
+            bool uiBlocked = BusinessUiEvidence.BlocksTradeObservation(input.Ui.Status, input.Ui.Blockers);
             int totalItems = 0;
             input.Containers = new[]
             {
@@ -177,7 +176,7 @@ namespace PawnPilot
             try
             {
                 var ui = BusinessUiReader.Read();
-                if (ui.status == "blocked" || ui.blockers == null || ui.blockers.Contains("ui_reader_failed"))
+                if (BusinessUiEvidence.BlocksTradeObservation(ui.status, ui.blockers))
                 {
                     unavailable.Reason = "ui_blocked_or_unverified";
                     return unavailable;

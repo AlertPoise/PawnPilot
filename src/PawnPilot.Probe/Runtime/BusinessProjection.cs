@@ -15,6 +15,24 @@ namespace PawnPilot
         public BusinessContainerInput[] Containers = Array.Empty<BusinessContainerInput>();
         public BusinessQuoteInput Quote = new BusinessQuoteInput();
         public BusinessUiInput Ui = new BusinessUiInput();
+        public BusinessBargainInput Bargain;
+    }
+
+    public sealed class BusinessBargainInput
+    {
+        public bool Available;
+        public string Phase = "unavailable", Direction = "unknown";
+        public int TermsRevision;
+        public BusinessBargainOptionInput[] Options = Array.Empty<BusinessBargainOptionInput>();
+        public string ReputationText, HintText, LastOptionRef;
+        public string Result = "none", ResultText;
+    }
+    public sealed class BusinessBargainOptionInput
+    {
+        public object Identity;
+        public string Text, Kind;
+        public int PriceChangePercent;
+        public bool Enabled, Selected;
     }
 
     public sealed class BusinessCustomerInput
@@ -237,6 +255,10 @@ namespace PawnPilot
 
         private readonly Dictionary<object, ItemRecord> itemRefs = new Dictionary<object, ItemRecord>(RefComparer.Instance);
         private readonly Dictionary<object, RefState> optionRefs = new Dictionary<object, RefState>(RefComparer.Instance);
+        private readonly Dictionary<object, RefState> bargainRefs = new Dictionary<object, RefState>(RefComparer.Instance);
+        private object[] bargainIdentities = Array.Empty<object>();
+        private string bargainContext;
+        private int currentOfferTermsRevision;
         private object customerIdentity, dialogueIdentity;
         private string customerRef, dialogueRef, dialogueFingerprint;
         private object[] dialogueOptions = Array.Empty<object>();
@@ -292,6 +314,15 @@ namespace PawnPilot
                 identity = entry.Key;
                 return identity != null;
             }
+            return false;
+        }
+
+        internal bool TryResolveBargainOption(string worldEpoch, string expectedCustomerRef, string optionRef, out object identity)
+        {
+            identity = null;
+            if (!TryResolveCustomer(worldEpoch, expectedCustomerRef, out _) || string.IsNullOrEmpty(optionRef)) return false;
+            foreach (var pair in bargainRefs)
+                if (pair.Value.reference == optionRef) { identity = pair.Key; return true; }
             return false;
         }
 
@@ -467,9 +498,11 @@ namespace PawnPilot
             }
             else ClearDialogueRefs();
 
+            details.bargain = ProjectBargain(input.Bargain, hasCustomer);
+
             var containersByName = new Dictionary<string, BusinessContainerInput>(StringComparer.Ordinal);
             foreach (var container in input.Containers) containersByName.Add(container.Container, container);
-            bool uiBlocksItems = input.Ui.Status == "blocked" || Array.IndexOf(input.Ui.Blockers, "ui_reader_failed") >= 0;
+            bool uiBlocksItems = BusinessUiEvidence.BlocksTradeObservation(input.Ui.Status, input.Ui.Blockers);
             var presentObservedItems = new HashSet<object>(RefComparer.Instance);
             var itemReferenceByIdentity = new Dictionary<object, string>(RefComparer.Instance);
             bool allContainersComplete = true;
@@ -562,8 +595,10 @@ namespace PawnPilot
                     purchaseMembers, "normal", "complete", details.quote.displayed_total);
                 if (collectionFingerprint != null)
                 {
-                    if (!string.Equals(currentOfferFingerprint, collectionFingerprint, StringComparison.Ordinal) || currentOfferRef == null)
+                    int termsRevision = input.Bargain?.TermsRevision ?? 0;
+                    if (!string.Equals(currentOfferFingerprint, collectionFingerprint, StringComparison.Ordinal) || currentOfferRef == null || currentOfferTermsRevision != termsRevision)
                         currentOfferRef = NewRef("offer");
+                    currentOfferTermsRevision = termsRevision;
                     currentOfferFingerprint = collectionFingerprint;
                     nextOfferRef = currentOfferRef;
                     currentPurchaseIdentities = purchaseIdentities.ToArray();
@@ -590,7 +625,8 @@ namespace PawnPilot
             details.eligibility.purchase_enabled = false;
             details.eligibility.missing = new List<string> { quoteComplete ? "purchase_preflight_pending" : "quote_binding" };
             foreach (string action in new[] { "start_business", "receive_next_customer", "advance_dialogue",
-                "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation", "dismiss_customer", "open_trade_panel" })
+                "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation", "dismiss_customer", "open_trade_panel",
+                "open_bargain_panel", "close_bargain_panel", "choose_bargain_option" })
                 details.candidates.Add(new BusinessCandidate { action = action, status = uiBlocksItems ? "blocked" : "unverified",
                     reason = uiBlocksItems ? "ui_blocked_or_unverified" : "native_scope_not_verified" });
             details.candidates.Add(new BusinessCandidate { action = "refuse_trade", status = "blocked", reason = "unsupported_native_path" });
@@ -718,6 +754,35 @@ namespace PawnPilot
 
         private string NewRef(string type) => type + "-" + (++nextReference).ToString(CultureInfo.InvariantCulture);
 
+        private BargainState ProjectBargain(BusinessBargainInput source, bool hasCustomer)
+        {
+            bool active = hasCustomer && source != null && (source.Phase == "choosing" || source.Phase == "responding");
+            if (!active) { bargainRefs.Clear(); bargainIdentities = Array.Empty<object>(); bargainContext = null; }
+            if (source == null) return null;
+            var state = new BargainState { available = source.Available, phase = source.Phase, direction = source.Direction,
+                terms_revision = source.TermsRevision, reputation_text = source.ReputationText, hint_text = source.HintText,
+                last_option_ref = source.LastOptionRef, result = source.Result, result_text = source.ResultText };
+            if (!active) return state;
+            var identities = new object[source.Options.Length];
+            var context = new StringBuilder();
+            context.Append(customerRef).Append('|').Append(source.Direction).Append('|').Append(source.Phase).Append('|').Append(source.Available).Append('|').Append(source.TermsRevision);
+            for (int i = 0; i < source.Options.Length; i++)
+            {
+                var option = source.Options[i]; identities[i] = option.Identity;
+                context.Append('|').Append(option.Text.Length).Append(':').Append(option.Text).Append('|').Append(option.Kind)
+                    .Append('|').Append(option.PriceChangePercent).Append('|').Append(option.Enabled).Append('|').Append(option.Selected);
+            }
+            string nextContext = context.ToString();
+            if (bargainContext != nextContext || !SameIdentities(bargainIdentities, identities))
+            {
+                bargainRefs.Clear(); bargainContext = nextContext; bargainIdentities = identities;
+                foreach (object identity in identities) bargainRefs.Add(identity, new RefState { identity = identity, reference = NewRef("bargain-option") });
+            }
+            foreach (var option in source.Options) state.options.Add(new BargainOptionState { option_ref = bargainRefs[option.Identity].reference,
+                text = option.Text, kind = option.Kind, price_change_percent = option.PriceChangePercent, enabled = option.Enabled, selected = option.Selected });
+            return state;
+        }
+
         private void ClearDialogueRefs()
         {
             optionRefs.Clear();
@@ -735,6 +800,7 @@ namespace PawnPilot
             ClearItemRefs();
             ClearDialogueRefs();
             ClearCollectionRefs();
+            bargainRefs.Clear(); bargainIdentities = Array.Empty<object>(); bargainContext = null;
             customerIdentity = null;
             customerRef = null;
         }
@@ -777,6 +843,23 @@ namespace PawnPilot
         {
             if (input == null || input.Customer == null || input.Containers == null || input.Quote == null || input.Ui == null)
                 return "incomplete_sample";
+            if (input.Bargain != null)
+            {
+                var b = input.Bargain;
+                if (b.Options == null || b.Options.Length > 16) return "invalid_bargain";
+                var dto = new BargainState { available = b.Available, phase = b.Phase, direction = b.Direction,
+                    terms_revision = b.TermsRevision, reputation_text = b.ReputationText, hint_text = b.HintText,
+                    last_option_ref = b.LastOptionRef, result = b.Result, result_text = b.ResultText };
+                var identities = new HashSet<object>(RefComparer.Instance);
+                for (int i = 0; i < b.Options.Length; i++)
+                {
+                    var option = b.Options[i];
+                    if (option == null || option.Identity == null || !option.Identity.GetType().IsClass || !identities.Add(option.Identity)) return "invalid_bargain_identity";
+                    dto.options.Add(new BargainOptionState { option_ref = "input-" + i, text = option.Text, kind = option.Kind,
+                        price_change_percent = option.PriceChangePercent, enabled = option.Enabled, selected = option.Selected });
+                }
+                if (!BusinessWire.ValidateBargain(dto)) return "invalid_bargain";
+            }
             if (input.Containers.Length > 3 || input.Quote.Rows == null || input.Quote.Rows.Length > 64 ||
                 input.Ui.Blockers == null || input.Ui.Blockers.Length > 16 || input.Customer.OptionIdentities == null ||
                 input.Customer.OptionIdentities.Length > 16 || input.Customer.OptionTexts == null ||
