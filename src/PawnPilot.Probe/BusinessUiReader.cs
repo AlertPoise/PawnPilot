@@ -27,6 +27,10 @@ namespace PawnPilot
                 AddIfActive(blockers, ui.gameOptionUIManager == null ? null : ui.gameOptionUIManager.optionPanel, "options");
                 AddIfActive(blockers, ui.confirmPanelUIManager == null ? null : ui.confirmPanelUIManager.panel, "confirmation");
                 AddIfActive(blockers, ui.closeShutterConfirmationPanel, "shutter_confirmation");
+                AddIfActive(blockers, EndOfDayUIManager.Instance?.UI, "end_of_day");
+                var calendar = AdvCalendarUIManager.Instance;
+                if (Active(calendar?.UIPanel) && Active(calendar?.nightlyReportSection)) blockers.Add("nightly_report");
+                if (ui.blackscreen != null && Active(ui.blackscreen.gameObject)) blockers.Add("day_transition");
                 if (Active(ui.controlHintOverlay)) unverifiedFindings.Add("control_hints_active_unverified");
                 if (Active(ui.tutorialGroup)) unverifiedFindings.Add("tutorial_group_active_unverified");
                 if (Active(ui.backgroundBlocking)) unverifiedFindings.Add("background_blocker_active_unverified");

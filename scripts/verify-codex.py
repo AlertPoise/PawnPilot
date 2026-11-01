@@ -6,11 +6,420 @@ This script neither installs the Mod nor starts the broker.
 """
 import argparse
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+M4_DIR = ROOT / "artifacts" / "m4" / "codex"
+M4_SESSION_SCHEMA = 1
+M4_ACTIONS = {
+    "start_business", "receive_next_customer", "open_trade_panel", "advance_dialogue",
+    "choose_dialogue_option", "prepare_purchase_items", "purchase_visible_offer",
+    "prepare_sale_items", "sell_visible_offer", "dismiss_customer", "open_bargain_panel",
+    "choose_bargain_option", "close_bargain_panel", "sort_inventory_default",
+    "close_business", "open_end_of_day", "confirm_end_of_day", "close_day_report",
+}
+
+
+def _decode_payload(result):
+    """Decode the common MCP structured-content and Codex text result shapes."""
+    if not isinstance(result, dict):
+        return {}
+    structured = result.get("structured_content") or result.get("structuredContent")
+    if isinstance(structured, dict):
+        return structured
+    for part in result.get("content", []):
+        if isinstance(part, dict) and isinstance(part.get("text"), str):
+            try:
+                value = json.loads(part["text"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(value, dict):
+                return value
+    return {}
+
+
+def _extract_observed_state(payload):
+    if not isinstance(payload, dict):
+        return None
+    snapshot = payload.get("snapshot")
+    state = snapshot.get("state") if isinstance(snapshot, dict) else None
+    if isinstance(state, dict):
+        return state
+    if isinstance(payload.get("state"), dict):
+        return payload["state"]
+    return None
+
+
+def analyze_m4_evidence(paths):
+    """Rebuild a conservative, auditable session ledger from Codex JSONL tool events."""
+    events = []
+    for run_index, path in enumerate(paths):
+        with Path(path).open("r", encoding="utf-8") as stream:
+            for line_number, line in enumerate(stream, 1):
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"malformed M4 evidence {path}:{line_number}") from exc
+                if isinstance(event, dict):
+                    events.append((len(events), run_index, event))
+
+    calls = {}
+    act_order = []
+    status_queries = []
+    observations = []
+    duplicate_command_ids = set()
+    for sequence, run_index, event in events:
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "mcp_tool_call" or item.get("server") != "pawnpilot":
+            continue
+        tool = item.get("tool")
+        tool_id = item.get("id")
+        arguments = item.get("arguments") if isinstance(item.get("arguments"), dict) else {}
+        # Codex item IDs restart at item_0 for each exec invocation, so include the evidence
+        # file/run index while still linking statuses by the PawnPilot command_id.
+        key = (run_index, tool_id if tool_id is not None else f"line-{sequence}", tool)
+        if tool == "act":
+            existing = calls.get(key)
+            if existing is None:
+                command_id = arguments.get("command_id")
+                record = {
+                    "sequence": sequence, "tool_id": tool_id, "command_id": command_id,
+                    "run_index": run_index,
+                    "action": arguments.get("action"),
+                    "arguments": arguments.get("arguments") if isinstance(arguments.get("arguments"), dict) else {},
+                    "payload": {},
+                }
+                calls[key] = record
+                act_order.append(record)
+                if command_id:
+                    if any(previous.get("command_id") == command_id for previous in act_order[:-1]):
+                        duplicate_command_ids.add(command_id)
+            payload = _decode_payload(item.get("result"))
+            if payload:
+                calls[key]["payload"] = payload
+        elif tool == "get_action_status":
+            payload = _decode_payload(item.get("result"))
+            status_queries.append({
+                "sequence": sequence, "command_id": arguments.get("command_id"),
+                "payload": payload, "run_index": run_index,
+            })
+        elif tool == "observe":
+            payload = _decode_payload(item.get("result"))
+            state = _extract_observed_state(payload)
+            if state is not None:
+                observations.append({"sequence": sequence, "run_index": run_index, "state": state})
+
+    # Status is linked by the command ID from the act, not by generated Codex item IDs.
+    for attempt in act_order:
+        command_id = attempt.get("command_id")
+        matches = [q for q in status_queries if q.get("command_id") == command_id and
+                   q["sequence"] > attempt["sequence"]]
+        payload = matches[-1]["payload"] if matches else attempt.get("payload", {})
+        attempt["status"] = payload.get("command_status") or payload.get("status")
+        attempt["status_query_sequence"] = matches[-1]["sequence"] if matches else None
+        outcome = payload.get("result")
+        if isinstance(outcome, dict):
+            before = outcome.get("before")
+            after = outcome.get("after")
+            before_cash = before.get("cash") if isinstance(before, dict) else None
+            after_cash = after.get("cash") if isinstance(after, dict) else None
+            attempt["cash_delta"] = before_cash - after_cash if isinstance(before_cash, int) and isinstance(after_cash, int) else None
+        else:
+            attempt["cash_delta"] = None
+
+    day_observations = []
+    for record in observations:
+        day = record["state"].get("business", {}).get("details", {}).get("day", {})
+        if isinstance(day, dict) and isinstance(day.get("day_number"), int):
+            day_observations.append({"sequence": record["sequence"], "day_number": day["day_number"],
+                                     "stage": day.get("stage"), "state": record["state"]})
+    latest_day = day_observations[-1] if day_observations else None
+    first_act_sequence = min((attempt["sequence"] for attempt in act_order), default=None)
+    baseline_valid = bool(observations and day_observations and
+                          day_observations[0]["sequence"] == observations[0]["sequence"] and
+                          (first_act_sequence is None or day_observations[0]["sequence"] < first_act_sequence))
+
+    def action_count(action):
+        return sum(1 for attempt in act_order if attempt.get("action") == action)
+
+    purchase_reserved = 0
+    night_fee_reserved = 0
+    unknown_purchase_reservation = False
+    unknown_fee_reservation = False
+    actual_paid = 0
+    actual_night_fee = 0
+    for attempt in act_order:
+        action = attempt.get("action")
+        args = attempt.get("arguments") or {}
+        if action == "purchase_visible_offer":
+            amount = args.get("amount")
+            if isinstance(amount, int) and not isinstance(amount, bool) and amount >= 0:
+                purchase_reserved += max(amount, attempt.get("cash_delta") or 0)
+            else:
+                unknown_purchase_reservation = True
+            delta = attempt.get("cash_delta")
+            if isinstance(delta, int) and delta > 0:
+                actual_paid += delta
+        elif action == "confirm_end_of_day":
+            amount = args.get("amount")
+            if isinstance(amount, int) and not isinstance(amount, bool):
+                night_fee_reserved += max(0, amount)
+            else:
+                unknown_fee_reservation = True
+            delta = attempt.get("cash_delta")
+            if isinstance(delta, int) and delta > 0:
+                actual_night_fee += delta
+            elif isinstance(delta, int) and delta < 0:
+                actual_night_fee += delta
+
+    latest_handoff = None
+    resumed_refs = set()
+    for record in observations:
+        details = record["state"].get("business", {}).get("details", {})
+        handoff = details.get("inspection_handoff") if isinstance(details, dict) else None
+        if isinstance(handoff, dict):
+            latest_handoff = {"sequence": record["sequence"], "handoff_ref": handoff.get("handoff_ref"),
+                              "status": handoff.get("status")}
+            if handoff.get("last_resumed_handoff_ref"):
+                resumed_refs.add(handoff["last_resumed_handoff_ref"])
+        elif record is observations[-1]:
+            latest_handoff = None
+
+    # Commands with no terminal status, or explicit unknown outcomes, must be looked up by their
+    # original ID before the session can issue another write. Rejected IDs are retained as audit.
+    unresolved = []
+    rejected = []
+    for attempt in act_order:
+        status = attempt.get("status")
+        if (not attempt.get("command_id") or attempt.get("status_query_sequence") is None and
+                status in ("rejected", "failed", "error")) or status in (
+                    None, "pending", "running", "outcome_unknown", "unknown", "timeout", "not_found", "failed", "error"):
+            unresolved.append(attempt.get("command_id") or "<missing-command-id>")
+        elif status == "rejected":
+            rejected.append(attempt.get("command_id"))
+
+    return {
+        "act_attempts": len(act_order),
+        "customer_attempts": action_count("receive_next_customer"),
+        "trade_attempts": action_count("purchase_visible_offer") + action_count("sell_visible_offer"),
+        "bargain_attempts": action_count("choose_bargain_option"),
+        "purchase_reserved": purchase_reserved,
+        "night_fee_reserved": night_fee_reserved,
+        "actual_paid": actual_paid,
+        "actual_night_fee": actual_night_fee,
+        "unknown_purchase_reservation": unknown_purchase_reservation,
+        "unknown_fee_reservation": unknown_fee_reservation,
+        "unresolved_command_ids": [value for value in unresolved if value],
+        "rejected_command_ids": [value for value in rejected if value],
+        "duplicate_command_ids": sorted(duplicate_command_ids),
+        "initial_day": day_observations[0]["day_number"] if day_observations else None,
+        "baseline_valid": baseline_valid,
+        "latest_day": latest_day,
+        "latest_handoff": latest_handoff,
+        "resumed_handoff_refs": sorted(resumed_refs),
+        "attempts": act_order,
+    }
+
+
+def _atomic_write_json(path, data):
+    path = Path(path)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temp.replace(path)
+
+
+def load_or_create_m4_session(session_id, budgets, label, confirmed_handoff=None):
+    """Validate the immutable session contract, register this evidence file, and audit history."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", session_id or ""):
+        raise ValueError("--session-id must be 1..64 letters, digits, dash or underscore")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", label or ""):
+        raise ValueError("M4 label must be 1..32 letters, digits, dash or underscore")
+    M4_DIR.mkdir(parents=True, exist_ok=True)
+    manifest_path = M4_DIR / f"session-{session_id}.json"
+    output = M4_DIR / f"{label}.jsonl"
+    if output.exists() or output.with_suffix(".stderr.log").exists():
+        raise ValueError("M4 evidence label already exists; choose a unique label")
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("schema_version") != M4_SESSION_SCHEMA or manifest.get("session_id") != session_id:
+            raise ValueError("M4 session manifest is invalid")
+        if manifest.get("budgets") != budgets:
+            raise ValueError("M4 budgets are fixed at session creation; resume with identical totals")
+    else:
+        manifest = {"schema_version": M4_SESSION_SCHEMA, "session_id": session_id,
+                    "budgets": budgets, "initial_day": None, "runs": [], "audit": {}}
+    if any(run.get("label") == label for run in manifest.get("runs", [])):
+        raise ValueError("M4 label is already registered in this session")
+    paths = []
+    for run in manifest.get("runs", []):
+        relative = run.get("evidence")
+        path = (ROOT / relative).resolve() if isinstance(relative, str) else None
+        if path is None or M4_DIR.resolve() not in path.parents or not path.is_file():
+            raise ValueError("M4 session history evidence is missing or outside artifacts/m4/codex")
+        paths.append(path)
+    audit = analyze_m4_evidence(paths) if paths else analyze_m4_evidence([])
+    if "<missing-command-id>" in audit["unresolved_command_ids"]:
+        raise ValueError("M4 history contains an act attempt without a queryable command_id")
+    if manifest.get("runs") and not audit["baseline_valid"]:
+        raise ValueError("M4 session has no valid initial-day observation before its first write")
+    if audit["duplicate_command_ids"]:
+        raise ValueError("M4 history reuses command IDs; stop for manual audit")
+    if audit["unknown_purchase_reservation"] or audit["unknown_fee_reservation"]:
+        raise ValueError("M4 history has an unbounded economic amount; stop for manual audit")
+    initial_day = manifest.get("initial_day")
+    if initial_day is not None and audit["initial_day"] is not None and initial_day != audit["initial_day"]:
+        raise ValueError("M4 initial day conflicts with session history")
+    if initial_day is None:
+        initial_day = audit["initial_day"]
+        manifest["initial_day"] = initial_day
+    limits = budgets
+    if audit["act_attempts"] >= limits["max_writes"] and not audit["unresolved_command_ids"]:
+        raise ValueError("M4 cumulative write-attempt budget is exhausted")
+    if audit["customer_attempts"] >= limits["max_customers"] and limits["max_customers"] >= 0:
+        remaining_customers = 0
+    else:
+        remaining_customers = limits["max_customers"] - audit["customer_attempts"]
+    if (audit["trade_attempts"] > limits["max_trades"] or audit["bargain_attempts"] > limits["max_bargains"]) and not audit["unresolved_command_ids"]:
+        raise ValueError("M4 cumulative trade or bargain budget is exceeded")
+    remaining = {
+        "max_writes": max(0, limits["max_writes"] - audit["act_attempts"]),
+        "max_customers": max(0, remaining_customers),
+        "max_spend": max(0, limits["max_spend"] - audit["purchase_reserved"]),
+        "max_trades": max(0, limits["max_trades"] - audit["trade_attempts"]),
+        "max_bargains": max(0, limits["max_bargains"] - audit["bargain_attempts"]),
+        "max_night_fee": max(0, limits["max_night_fee"] - audit["night_fee_reserved"]),
+    }
+    if (audit["purchase_reserved"] > limits["max_spend"] or audit["night_fee_reserved"] > limits["max_night_fee"]) and not audit["unresolved_command_ids"]:
+        raise ValueError("M4 cumulative economic budget is exceeded")
+    if (audit["latest_day"] and initial_day is not None and audit["latest_day"]["day_number"] > initial_day + 1 and
+            not audit["unresolved_command_ids"]):
+        raise ValueError("M4 observed a day beyond the single-day boundary")
+    latest_waiting = (audit["latest_handoff"] or {}).get("handoff_ref") if (audit["latest_handoff"] or {}).get("status") == "waiting_for_user" else None
+    handoff_ref = latest_waiting
+    if confirmed_handoff and (not handoff_ref or confirmed_handoff != handoff_ref or
+                              confirmed_handoff in audit["resumed_handoff_refs"]):
+        raise ValueError("M4 --confirmed-handoff must exactly match the latest waiting, not-yet-resumed handoff in this session history")
+    manifest["runs"].append({"label": label, "evidence": str(output.relative_to(ROOT).as_posix()), "status": "running"})
+    manifest["audit"] = {key: value for key, value in audit.items() if key != "attempts"}
+    manifest["initial_day"] = initial_day
+    _atomic_write_json(manifest_path, manifest)
+    return manifest_path, output, manifest, audit, remaining, handoff_ref
+
+
+def finish_m4_session(manifest_path, manifest, return_code):
+    paths = []
+    for run in manifest.get("runs", []):
+        relative = run.get("evidence")
+        path = (ROOT / relative).resolve() if isinstance(relative, str) else None
+        if path is not None and M4_DIR.resolve() in path.parents and path.is_file():
+            paths.append(path)
+    try:
+        audit = analyze_m4_evidence(paths) if paths else analyze_m4_evidence([])
+    except ValueError as exc:
+        manifest["audit_error"] = str(exc)
+        audit = None
+    if audit is not None:
+        if manifest.get("initial_day") is None and audit["initial_day"] is not None:
+            manifest["initial_day"] = audit["initial_day"]
+        manifest["audit"] = {key: value for key, value in audit.items() if key != "attempts"}
+    if manifest.get("runs"):
+        manifest["runs"][-1]["status"] = "completed" if return_code == 0 else "exit_" + str(return_code)
+    _atomic_write_json(manifest_path, manifest)
+    return audit
+
+
+def build_m4_prompt(args, audit, remaining, handoff_ref):
+    prefix = args.label
+    unresolved = audit["unresolved_command_ids"]
+    unresolved_text = ", ".join(unresolved) if unresolved else "none"
+    previous_rejected = ", ".join(audit["rejected_command_ids"]) if audit["rejected_command_ids"] else "none"
+    initial_day = audit["initial_day"]
+    latest = audit["latest_day"]
+    latest_day = latest["day_number"] if latest else "not yet observed"
+    next_morning_only = initial_day is not None and latest is not None and latest_day >= initial_day + 1
+    prompt = (
+        "You are running one bounded PawnPilot M4 continuous single-day ordinary-business session as a real Codex CLI MCP client. "
+        "Use ONLY PawnPilot MCP tools; never shell, filesystem, GUI, save editing, installation or other tools. "
+        "Do not operate the game outside exact current legal_actions. This is autonomous ordinary business, "
+        "not a strategy engine: do not invent or add business actions. "
+        f"Evidence label {prefix}; session id {args.session_id}; initial day {initial_day if initial_day is not None else 'must be established by the first observation'}; "
+        f"latest observed day {latest_day}. Remaining cumulative ceilings: {remaining['max_writes']} act attempts, "
+        f"{remaining['max_customers']} receive attempts, gross purchase budget {remaining['max_spend']}, "
+        f"{remaining['max_trades']} trade attempts, {remaining['max_bargains']} bargain-choice attempts, "
+        f"night-fee budget {remaining['max_night_fee']}. Past purchase reservation {audit['purchase_reserved']}, "
+        f"past confirmed paid {audit['actual_paid']}; past night-fee reservation {audit['night_fee_reserved']}, "
+        f"past confirmed night fees {audit['actual_night_fee']}. "
+        "Call health_check and observe first; establish initial_day from business.details.day.day_number before any write. "
+        "If day details are missing, stop without writes. For every write observe fresh and use one exact current legal_actions "
+        "entry and exact observed schema/broker/world/revision/version. Use a fresh unique command_id prefixed with the evidence label. "
+        "After EVERY act, query get_action_status with the original ID; if nonterminal wait only for that same ID, query it again, "
+        "then observe fresh. A rejected, stale, failed, timeout or unknown write consumes budgets; query the SAME original ID and "
+        "stop all further writes in this run. Never auto-refresh into a new ID/retry of that operation. "
+        f"Historical unresolved command IDs that must be queried first by their ORIGINAL ID: {unresolved_text}. "
+        f"Historical rejected command IDs (never replay): {previous_rejected}. Resolve required old IDs before any new action; "
+        "if any remains unknown/pending, stop. Use at most three 10-second revision waits when waiting for visible automatic progress; "
+        "stop after three unchanged waits. Never wait instead of taking a currently legal bounded next step. "
+        "Use only ordinary currently legal actions and capabilities already exposed: start/receive, ordinary visible dialogue, "
+        "trade panel, prepare and normal purchase/sale, normal dismiss, ordinary bargain flow, and fixed default inventory sort. "
+        "Make customer and economic decisions autonomously from visible cash, the current exact normal quote, current inventory and "
+        "known item costs/profit information, verified capacity, visible risk terms, and remaining trade/spend/night-fee budgets. "
+        "Do not infer hidden costs, profit, acceptance odds, capacity, customer intent, or risk; say unknown when not exposed. "
+        "Do not hardcode a maximum bargain discount; compare each currently visible option and risk against the actual quote and cash. "
+        "If declining a customer/trade is better, use only currently legal ordinary visible refusal/dismiss/dialogue actions. "
+        "Leave day settlement services at their default selection; do not toggle or reconfigure services. "
+        "Respect remaining customer/trade/bargain/spend/night-fee ceilings before every submission. Never reuse a command ID, "
+        "offer ref, customer ref, or old legal arguments. No wholesale, special deals, appraisal, blackmail, threats, or other unsupported paths. "
+        "Use the observed day object as the phase controller: PREPARE -> OPENING -> SERVING -> BETWEEN_CUSTOMERS -> CLOSING -> "
+        "SETTLEMENT -> NEXT_MORNING -> DONE; report actual stage/reason and do not infer a transition. "
+        "Read day_number, remaining_customers, stage, can_close, can_sleep, can_confirm, report_open, transition_pending, reason, "
+        "and settlement.settlement_ref/total/services when present; treat absent/unverified fields as unknown. "
+        "At the customer limit, finish/leave the current customer normally but do not receive another. "
+        "When day.can_close/can_sleep/can_confirm and legal actions permit it, use only the current exact day action: "
+        "close_business {}, open_end_of_day {}, confirm_end_of_day {settlement_ref,amount,max_spend}, close_day_report {}. "
+        "For confirm_end_of_day copy all exact current legal arguments including settlement_ref, amount, max_spend; ensure the fee amount "
+        "is within remaining max_night_fee and the day's displayed settlement; do not override any argument. After each settlement action observe and re-evaluate. "
+        "After observing day_number == initial_day + 1, NEVER start_business/open the store or receive another customer. "
+        "Report the observed next morning and stop, except close_day_report may be submitted once if currently legal to close the report. "
+        "At completion report initial/current day, actual stage, customer/trade/bargain/write counts, command IDs/statuses, "
+        "cash deltas, inventory/service settlement evidence, reserved budget totals, and blockers. Do not fabricate outcomes. "
+    )
+    if handoff_ref:
+        prompt += (
+            f"Current session evidence shows a waiting manual inspection handoff {handoff_ref}. The caller supplied --confirmed-handoff "
+            f"with this exact reference, representing explicit current-conversation user confirmation. Observe now and verify the same ref is "
+            "still the waiting current handoff. Resume only by the currently legal matching resume_inspection_handoff with the exact ref, once. "
+            "Then observe again and rebuild current customer/day/action state from that new observation. This confirmation is one-use and "
+            "cannot authorize any later handoff; if another appears, stop and request a new user confirmation. "
+        )
+    elif args.confirmed_handoff:
+        prompt += "The supplied handoff confirmation did not match a currently evidenced waiting handoff; stop without any write. "
+    else:
+        prompt += (
+            "If business.details.inspection_handoff.requires_manual_inspection becomes true, stop all business writes immediately. "
+            "Report exact handoff_ref and visible item names, and tell the user in Chinese: 我已暂停自动经营操作。请在游戏中手动检查，"
+            "并自行决定是否质疑、购买或拒绝。处理结束后，请在本会话回复“检查完成，继续”。 Never resume by elapsed time, "
+            "reconnection, customer departure, or simulated confirmation. A later run can resume only when its caller supplies "
+            "--confirmed-handoff with the exact currently waiting reference from this same M4 session. "
+        )
+    if next_morning_only:
+        prompt += (
+            "The session has already observed day+1. This invocation is report-only: do not start/open, receive, trade, bargain, sort, "
+            "or perform any other business write. Observe and report; close_day_report is the sole possible write, only once if "
+            "currently legal, then observe and stop. "
+        )
+    if unresolved:
+        prompt += (
+            "RECOVERY-ONLY INVOCATION: because this session has an earlier act with no verified terminal status, "
+            "use only health_check, observe, and get_action_status for each listed ORIGINAL command ID. "
+            "Do not submit any act, even after a status becomes terminal; report the recovered state and stop. "
+            "A later separately started M4 invocation may continue from this audit, but never replay the old command. "
+        )
+    return prompt
 
 
 def main():
@@ -22,42 +431,71 @@ def main():
     modes.add_argument("--m3a", choices=("FLOW", "SALE", "SORT"), help="Authorized isolated-slot M3-A acceptance")
     modes.add_argument("--m3b", action="store_true", help="Authorized bounded ordinary bargain and settlement acceptance")
     modes.add_argument("--m3c", choices=("HANDOFF", "RESUME"), help="Separate authorized handoff and user-confirmed resume phases")
+    modes.add_argument("--m4", action="store_true", help="Authorized bounded continuous single-day ordinary-business session")
     parser.add_argument("--confirmed-handoff", help="Exact handoff_ref, supplied ONLY after the user says 检查完成，继续")
     modes.add_argument("--trade-panel", action="store_true", help="Authorized ordinary panel-open acceptance; never buys or sells")
     parser.add_argument("--business", action="store_true", help="Read v3 business completeness and quote evidence; never purchases")
     parser.add_argument("--max-spend", type=int, help="Explicit purchase ceiling for stage C/FLOW or M3-B")
     parser.add_argument("--model", default="gpt-5.6-luna")
-    parser.add_argument("--max-customers", type=int, default=6, help="Remaining M3-A/M3-B customer budget, including resumed runs")
-    parser.add_argument("--max-writes", type=int, default=24, help="Remaining M3-A/M3-B write-attempt budget, including resumed runs")
+    parser.add_argument("--max-customers", type=int, help="Customer budget (M4 cumulative across --session-id)")
+    parser.add_argument("--max-writes", type=int, help="Write-attempt budget (M4 cumulative across --session-id)")
+    parser.add_argument("--max-trades", type=int, help="M4 cumulative purchase/sale attempt ceiling")
+    parser.add_argument("--max-bargains", type=int, help="M4 cumulative bargain-choice attempt ceiling")
+    parser.add_argument("--max-night-fee", type=int, help="M4 cumulative day-settlement fee ceiling")
+    parser.add_argument("--session-id", help="Bounded persistent M4 session id used to audit cumulative budgets")
     parser.add_argument("--skip-sort", action="store_true", help="M3-A resumed flow: sorting already completed in this slot")
     parser.add_argument("--label", default="read-only")
     args = parser.parse_args()
-    if not 0 <= args.max_customers <= 6 or not 1 <= args.max_writes <= 24:
-        parser.error("M3-A/M3-B budgets must be 0..6 customers and 1..24 writes")
-    if args.max_spend is not None and ((args.business_stage not in ("C", "FLOW") and not args.m3b and args.m3c != "RESUME") or
+    if args.m4:
+        if any(value is None for value in (args.session_id, args.max_customers, args.max_writes,
+                args.max_spend, args.max_trades, args.max_bargains, args.max_night_fee)):
+            parser.error("M4 requires --session-id and explicit --max-customers/--max-writes/--max-spend/--max-trades/--max-bargains/--max-night-fee")
+        if not 0 <= args.max_customers <= 32 or not 1 <= args.max_writes <= 256 or \
+                not 0 <= args.max_spend <= 2_147_483_647 or not 0 <= args.max_trades <= 32 or \
+                not 0 <= args.max_bargains <= 32 or not 0 <= args.max_night_fee <= 2_147_483_647:
+            parser.error("M4 budgets must be customers 0..32, writes 0..256, trades/bargains 0..32, and monetary ceilings in-range nonnegative integers")
+        if args.max_bargains > args.max_writes:
+            parser.error("M4 max-bargains cannot exceed max-writes")
+    else:
+        if args.max_customers is None:
+            args.max_customers = 6
+        if args.max_writes is None:
+            args.max_writes = 24
+        if not 0 <= args.max_customers <= 6 or not 1 <= args.max_writes <= 24:
+            parser.error("M3-A/M3-B budgets must be 0..6 customers and 1..24 writes")
+    if args.max_spend is not None and ((args.business_stage not in ("C", "FLOW") and not args.m3b and args.m3c != "RESUME" and not args.m4) or
                                       not 0 <= args.max_spend <= 2_147_483_647):
-        parser.error("--max-spend is an in-range nonnegative integer used only with --business-stage C/FLOW or --m3b")
+        parser.error("--max-spend is an in-range nonnegative integer used only with business-stage C/FLOW, M3-B/M3-C RESUME, or M4")
     if args.business_stage in ("C", "FLOW") and args.max_spend is None:
         parser.error("stage C/FLOW requires --max-spend as the caller-approved total ceiling")
     if args.m3b and (args.max_spend is None or args.max_spend <= 0):
         parser.error("--m3b requires a positive --max-spend as the caller-approved purchase ceiling")
     if args.m3c == "RESUME" and (not args.confirmed_handoff or args.max_spend is None):
         parser.error("M3-C RESUME requires --confirmed-handoff from explicit user confirmation and --max-spend")
-    if args.confirmed_handoff is not None and (args.m3c != "RESUME" or
+    if args.confirmed_handoff is not None and ((args.m3c != "RESUME" and not args.m4) or
             not 1 <= len(args.confirmed_handoff) <= 256 or
             any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_:" for c in args.confirmed_handoff)):
-        parser.error("--confirmed-handoff must be a bounded exact reference used only in M3-C RESUME")
+        parser.error("--confirmed-handoff must be a bounded exact reference used only in M3-C RESUME or M4")
     if (len(args.label) > 32 or not args.label.replace("-", "").replace("_", "").isalnum()):
         parser.error("label must be at most 32 alphanumeric characters, dash or underscore")
     codex = shutil.which("codex")
     python = ROOT / ".venv" / "Scripts" / "python.exe"
     if not codex or not python.is_file():
         parser.error("Codex CLI and project .venv are required")
-    business_run = args.business or args.business_stage is not None or args.dismiss_customer
-    directory = ROOT / "artifacts" / ("m3c" if args.m3c else "m3b" if args.m3b else "m3a-panel" if args.trade_panel else "m3a" if args.m3a else "m2cd" if business_run else "m2b") / "codex"
+    business_run = args.business or args.business_stage is not None or args.dismiss_customer or args.m4
+    directory = ROOT / "artifacts" / ("m4" if args.m4 else "m3c" if args.m3c else "m3b" if args.m3b else "m3a-panel" if args.trade_panel else "m3a" if args.m3a else "m2cd" if business_run else "m2b") / "codex"
     directory.mkdir(parents=True, exist_ok=True)
     output = directory / f"{args.label}.jsonl"
-    if output.exists():
+    m4_context = None
+    if args.m4:
+        budgets = {name: getattr(args, name) for name in (
+            "max_customers", "max_writes", "max_spend", "max_trades", "max_bargains", "max_night_fee")}
+        try:
+            m4_context = load_or_create_m4_session(args.session_id, budgets, args.label, args.confirmed_handoff)
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            parser.error(str(exc))
+        manifest_path, output, manifest, audit, remaining, current_handoff = m4_context
+    elif output.exists():
         parser.error("evidence label already exists; choose a new one")
     prompt = (
         "You are verifying the PawnPilot MCP integration with a real Codex client. "
@@ -83,7 +521,7 @@ def main():
         "Report handoff_ref and visible item names, and tell the user in Chinese: 我已暂停自动经营操作。"
         "请在游戏中手动检查，并自行决定是否质疑、购买或拒绝。处理结束后，请在本会话回复“检查完成，继续”。 "
         "Never resume based on time, reconnection, customer departure or a simulated confirmation. "
-        "Only the separately caller-confirmed M3-C RESUME phase below permits resuming its exact reference. "
+        "Only a separately caller-confirmed M3-C RESUME or M4 session phase permits resuming its exact reference. "
     )
     if args.business:
         prompt += (
@@ -93,6 +531,9 @@ def main():
             "unavailable or incomplete. Unverified displayed text does not prove quote binding or legal purchase. "
             "Report the exact world/revision and missing evidence; never infer hidden names or prices. "
         )
+    if args.m4:
+        prompt += build_m4_prompt(args, audit, remaining,
+                                  current_handoff if args.confirmed_handoff else None)
     if args.m3c:
         prompt += (
             f"Authorized isolated-slot M3-C test. Prefix IDs {args.label}; maximum {args.max_writes} act attempts "
@@ -366,7 +807,7 @@ def main():
             "Never submit act again, even on timeout, unknown, stale or error. Then observe once. "
             "If prerequisites fail, stop and report. Include command ID and before/after evidence."
         )
-    elif args.business_stage is None and args.m3a is None and not args.trade_panel and not args.m3b and not args.m3c:
+    elif args.business_stage is None and args.m3a is None and not args.trade_panel and not args.m3b and not args.m3c and not args.m4:
         prompt += (
             "Do not call act. Also query get_action_status for ID integration_nonexistent_readonly. "
             "Call wait_for_update with criterion=operable and max_wait_ms=500 to exercise bounded waiting."
@@ -385,10 +826,25 @@ def main():
     for key, value in config.items():
         command += ["-c", key + "=" + json.dumps(value)]
     command += [prompt]
-    with output.open("x", encoding="utf-8") as stdout, output.with_suffix(".stderr.log").open("x", encoding="utf-8") as stderr:
-        result = subprocess.run(command, cwd=ROOT, stdout=stdout, stderr=stderr,
-                                timeout=900 if args.business_stage == "FLOW" or args.m3a == "FLOW" or args.trade_panel or args.m3b or args.m3c else 240)
-    print(json.dumps({"exit_code": result.returncode, "evidence": str(output)}))
+    try:
+        with output.open("x", encoding="utf-8") as stdout, output.with_suffix(".stderr.log").open("x", encoding="utf-8") as stderr:
+            result = subprocess.run(command, cwd=ROOT, stdout=stdout, stderr=stderr,
+                                    timeout=1800 if args.m4 else 900 if args.business_stage == "FLOW" or args.m3a == "FLOW" or args.trade_panel or args.m3b or args.m3c else 240)
+    except BaseException:
+        if m4_context:
+            try:
+                finish_m4_session(manifest_path, manifest, 124)
+            except (ValueError, OSError):
+                pass
+        raise
+    if m4_context:
+        audit = finish_m4_session(manifest_path, manifest, result.returncode)
+        audit_summary = {key: value for key, value in audit.items()
+                         if key not in ("attempts", "latest_day", "latest_handoff")} if audit else {"error": "invalid_or_truncated_jsonl"}
+        print(json.dumps({"exit_code": result.returncode, "evidence": str(output),
+                          "session_id": args.session_id, "audit": audit_summary}, ensure_ascii=False))
+    else:
+        print(json.dumps({"exit_code": result.returncode, "evidence": str(output)}))
     raise SystemExit(result.returncode)
 
 

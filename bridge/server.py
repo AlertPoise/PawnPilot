@@ -399,8 +399,18 @@ class Broker:
                 raise ProtocolError(409, "precondition")
             if self.session_wire_version != version:
                 raise ProtocolError(409, "session_wire_version_mismatch")
-            if not any(a["action"] == body["action"] and a["arguments"] == body["arguments"]
-                       for a in self.state["legal_actions"]):
+            if body["action"] == "confirm_end_of_day":
+                request_args = body["arguments"]
+                legal_match = any(
+                    entry["action"] == body["action"]
+                    and {k: v for k, v in entry["arguments"].items() if k != "max_spend"}
+                        == {k: v for k, v in request_args.items() if k != "max_spend"}
+                    and request_args.get("max_spend", -1) >= entry["arguments"].get("max_spend", 0)
+                    for entry in self.state["legal_actions"])
+            else:
+                legal_match = any(a["action"] == body["action"] and a["arguments"] == body["arguments"]
+                                  for a in self.state["legal_actions"])
+            if not legal_match:
                 raise ProtocolError(409, "precondition")
             if version == WIRE_VERSION_V3 and not valid_action_binding_v3(
                     self.state["business"], body["action"], body["arguments"]):

@@ -34,7 +34,7 @@ namespace PawnPilot
         private static readonly HashSet<string> KnownRootBlockers = new HashSet<string>(StringComparer.Ordinal)
         {
             "escape_menu", "options", "confirmation", "shutter_confirmation",
-            "screen_transition", "store_power_off", "generic_confirmation",
+            "screen_transition", "store_power_off", "generic_confirmation", "end_of_day", "nightly_report", "day_transition",
             "bargain_panel", "trade_confirmation", "dialogue_active", "ui_window_drag_active",
             "item_drag_active", "item_selection_active", "item_group_drag_active", "item_equip_selection_active"
         };

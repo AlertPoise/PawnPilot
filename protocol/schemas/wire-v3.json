@@ -57,7 +57,7 @@
         },
         "amount": {
           "type": "integer",
-          "minimum": 0,
+          "minimum": -2147483648,
           "maximum": 2147483647
         },
         "max_spend": {
@@ -78,6 +78,12 @@
           "pattern": "^[A-Za-z0-9_.:-]+$"
         },
         "handoff_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "settlement_ref": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
@@ -751,6 +757,103 @@
             "arguments"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "close_business"
+            },
+            "arguments": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "open_end_of_day"
+            },
+            "arguments": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "close_day_report"
+            },
+            "arguments": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "confirm_end_of_day"
+            },
+            "arguments": {
+              "type": "object",
+              "properties": {
+                "settlement_ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_.:-]+$"
+                },
+                "amount": {
+                  "type": "integer",
+                  "minimum": -2147483648,
+                  "maximum": 2147483647
+                },
+                "max_spend": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                }
+              },
+              "required": [
+                "settlement_ref",
+                "amount",
+                "max_spend"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "arguments"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -933,7 +1036,11 @@
             "open_bargain_panel",
             "close_bargain_panel",
             "choose_bargain_option",
-            "resume_inspection_handoff"
+            "resume_inspection_handoff",
+            "close_business",
+            "open_end_of_day",
+            "confirm_end_of_day",
+            "close_day_report"
           ]
         },
         "expected_world_epoch": {
@@ -1247,6 +1354,70 @@
             "properties": {
               "arguments": {
                 "$ref": "#/$defs/LegalAction/oneOf/16/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "close_business"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/17/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "open_end_of_day"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/18/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "close_day_report"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/19/properties/arguments"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "confirm_end_of_day"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "$ref": "#/$defs/LegalAction/oneOf/20/properties/arguments"
               }
             }
           }
@@ -2345,6 +2516,16 @@
               "type": "null"
             }
           ]
+        },
+        "day": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DayState"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2721,6 +2902,151 @@
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "DaySettlement": {
+      "type": "object",
+      "properties": {
+        "settlement_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "services": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "cost_text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "cost": {
+                "type": "integer",
+                "minimum": -2147483648,
+                "maximum": 2147483647
+              },
+              "selected": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "label",
+              "cost_text",
+              "cost",
+              "selected"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "settlement_ref",
+        "total",
+        "services"
+      ],
+      "additionalProperties": false
+    },
+    "DayState": {
+      "type": "object",
+      "properties": {
+        "day_number": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "remaining_customers": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stage": {
+          "enum": [
+            "unavailable",
+            "morning",
+            "open",
+            "closed",
+            "settlement",
+            "next_morning"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "can_close": {
+          "type": "boolean"
+        },
+        "can_sleep": {
+          "type": "boolean"
+        },
+        "can_confirm": {
+          "type": "boolean"
+        },
+        "report_open": {
+          "type": "boolean"
+        },
+        "transition_pending": {
+          "type": "boolean"
+        },
+        "settlement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DaySettlement"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "day_number",
+        "remaining_customers",
+        "stage",
+        "reason",
+        "can_close",
+        "can_sleep",
+        "can_confirm",
+        "report_open",
+        "transition_pending",
+        "settlement"
+      ],
+      "additionalProperties": false
     }
   }
 }

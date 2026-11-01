@@ -18,10 +18,31 @@ namespace PawnPilot
         public bool ShouldSerializebargain() => bargain != null;
         public InspectionHandoffState inspection_handoff;
         public bool ShouldSerializeinspection_handoff() => inspection_handoff != null;
+        public DayState day;
+        public bool ShouldSerializeday() => day != null;
         public BusinessUiState ui = new BusinessUiState();
         public CapacityState capacity = new CapacityState();
         public PurchaseEligibility eligibility = new PurchaseEligibility();
         public List<BusinessCandidate> candidates = new List<BusinessCandidate>();
+    }
+    [Serializable] public sealed class DayState
+    {
+        public int? day_number, remaining_customers;
+        public string stage = "unavailable", reason;
+        public bool can_close, can_sleep, can_confirm, report_open, transition_pending;
+        public SettlementState settlement;
+    }
+    [Serializable] public sealed class SettlementState
+    {
+        public string settlement_ref;
+        public int total;
+        public List<DayServiceState> services = new List<DayServiceState>();
+    }
+    [Serializable] public sealed class DayServiceState
+    {
+        public string label, cost_text;
+        public int cost;
+        public bool selected;
     }
     [Serializable] public sealed class InspectionHandoffState
     {

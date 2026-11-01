@@ -351,6 +351,7 @@ M3ObservationTests.Run(Check);
 M3ActionPolicyTests.Run(Check);
 BargainTests.Run(Check);
 InspectionHandoffTests.Run(Check);
+DayActionPolicyTests.Run(Check);
 TradePanelTests.Run(Check);
 SaleVerifierTests.Run(Check);
 InventoryVerifierTests.Run(Check);
@@ -360,4 +361,173 @@ catch (Exception ex)
 {
     Console.Error.WriteLine(ex);
     Environment.ExitCode = 1;
+}
+
+public static class DayActionPolicyTests
+{
+    public static void Run(Action<string, bool> check)
+    {
+        var open = State("OPEN", "open"); open.business.details.day.can_close = true;
+        var close = Command("close_business", open);
+        check("day_optional_schema2_extension_valid", BusinessWire.Validate(open.business) && ActionGate.IsSnapshotValid(open));
+        check("day_close_registered_enabled_empty_arguments", BusinessActionPolicy.IsRegistered(close.action) &&
+            BusinessActionPolicy.IsEnabled(close.action) && BusinessActionPolicy.ArgumentsValid(close.action, close.arguments));
+        check("day_close_requires_native_closable_zero_remaining_absent_customer", DayActionPolicy.Validate(close, open) == null);
+        open.business.details.day.remaining_customers = 1;
+        check("day_close_cannot_equate_no_receive_action_with_finished_queue", DayActionPolicy.Validate(close, open) != null);
+        open.business.details.day.remaining_customers = 0;
+        open.business.details.customer.presence = "present";
+        check("day_close_current_customer_blocks", DayActionPolicy.Validate(close, open) != null);
+        open.business.details.customer.presence = "absent";
+        open.business.details.day.transition_pending = true;
+        check("day_close_animation_blocks", DayActionPolicy.Validate(close, open) == "day_transition_pending");
+        open.business.details.day.transition_pending = false;
+        open.business.details.day.can_close = false;
+        check("day_close_explicit_native_permission_required", DayActionPolicy.Validate(close, open) != null);
+        open.business.details.day.can_close = true;
+        var closed = State("CLOSED", "closed", revision: 2); closed.business.details.day.can_sleep = true;
+        check("day_close_verifies_stage_without_advancing_date_or_cash", DayActionPolicy.Postcondition(close, open, closed));
+        var sleep = Command("open_end_of_day", closed);
+        check("day_sleep_only_closed_permitted_state", DayActionPolicy.Validate(sleep, closed) == null && DayActionPolicy.Validate(sleep, open) != null);
+        var settlement = State("CLOSED", "settlement", revision: 3); SetSettlement(settlement, 7);
+        check("day_sleep_verifies_visible_settlement", DayActionPolicy.Postcondition(sleep, closed, settlement));
+        settlement.business.details.day.can_confirm = false;
+        check("day_sleep_can_open_disabled_confirmation", DayActionPolicy.Postcondition(sleep, closed, settlement));
+        settlement.business.details.day.can_confirm = true;
+        var confirm = Command("confirm_end_of_day", settlement);
+        check("day_confirm_fresh_visible_total_admitted", DayActionPolicy.Validate(confirm, settlement) == null && ActionGate.IsSnapshotValid(settlement));
+        confirm.arguments.max_spend = 30;
+        check("day_confirm_accepts_caller_ceiling_above_default_legal_amount", BusinessActionPolicy.Validate(confirm, settlement) == null &&
+            new ActionGate().Accept(confirm, settlement, "broker", 1) == null);
+        confirm.arguments.max_spend = 101;
+        check("day_confirm_positive_cost_ceiling_cannot_exceed_cash", DayActionPolicy.Validate(confirm, settlement) == "settlement_spend_limit");
+        confirm.arguments.max_spend = 6;
+        check("day_confirm_ceiling_below_amount_rejected", !DayActionPolicy.ArgumentsValid(confirm.action, confirm.arguments));
+        confirm.arguments.max_spend = 7; confirm.arguments.settlement_ref = "old-settlement";
+        check("day_confirm_stale_settlement_ref_rejected", DayActionPolicy.Validate(confirm, settlement) == "settlement_changed");
+        confirm.arguments.settlement_ref = "settlement-current"; confirm.arguments.amount = 8; confirm.arguments.max_spend = 8;
+        check("day_confirm_visible_total_must_match_exactly", DayActionPolicy.Validate(confirm, settlement) == "settlement_changed");
+        confirm.arguments.amount = 7; confirm.arguments.max_spend = 7;
+        var next = State("MORNING", "next_morning", day: 6, revision: 4, cash: 93); next.business.details.day.report_open = true;
+        check("day_confirm_exact_cash_and_next_day_report_proves_success", DayActionPolicy.Postcondition(confirm, settlement, next) &&
+            BusinessActionPolicy.Verify(confirm, settlement, next).outcome == "succeeded");
+        next.business.details.day.transition_pending = true;
+        check("day_confirm_transition_must_finish", !DayActionPolicy.Postcondition(confirm, settlement, next) && DayActionPolicy.Verify(confirm, settlement, next).outcome == "pending");
+        next.business.details.day.transition_pending = false; next.cash = 94;
+        check("day_confirm_wrong_cash_after_date_advance_is_unknown", DayActionPolicy.Verify(confirm, settlement, next).outcome == "uncertain");
+        next.cash = 93; next.business.details.day.day_number = 7;
+        check("day_confirm_cannot_skip_two_days", !DayActionPolicy.Postcondition(confirm, settlement, next));
+        next.business.details.day.day_number = 6; next.business.details.day.report_open = false;
+        check("day_confirm_requires_report_evidence", !DayActionPolicy.Postcondition(confirm, settlement, next));
+        next.business.details.day.report_open = true;
+        var report = Command("close_day_report", next);
+        var startDuringReport = Command("start_business", next);
+        check("day_nightly_report_prevents_next_morning_opening", BusinessActionPolicy.Validate(startDuringReport, next) == "day_ui_blocked");
+        next.business.details.ui.blockers.Add("nightly_report");
+        next.business.details.ui.status = "blocked"; next.interaction.consistency = "blocked"; next.interaction.operable = false;
+        check("day_report_own_panel_does_not_block_native_report_close", BusinessActionPolicy.Validate(report, next) == null);
+        next.business.details.ui.blockers.Clear(); next.business.details.ui.status = "consistent";
+        next.interaction.consistency = "consistent"; next.interaction.operable = true;
+        var prepareDuringSettlement = Command("start_business", settlement);
+        check("day_settlement_blocks_ordinary_business_actions", BusinessActionPolicy.Validate(prepareDuringSettlement, settlement) == "day_ui_blocked");
+        settlement.business.details.ui.blockers.Add("end_of_day"); settlement.business.details.ui.status = "blocked";
+        settlement.interaction.consistency = "blocked"; settlement.interaction.operable = false;
+        check("day_settlement_own_panel_keeps_confirmation_legal", BusinessActionPolicy.Validate(confirm, settlement) == null);
+        settlement.business.details.ui.blockers.Clear(); settlement.business.details.ui.status = "consistent";
+        settlement.interaction.consistency = "consistent"; settlement.interaction.operable = true;
+        var transition = State("OPEN", "open"); transition.business.details.day.transition_pending = true;
+        var receiveDuringTransition = Command("receive_next_customer", transition);
+        check("day_transition_blocks_ordinary_receive", BusinessActionPolicy.Validate(receiveDuringTransition, transition) == "day_ui_blocked");
+        var morning = State("MORNING", "morning", day: 6, revision: 5, cash: 93);
+        check("day_report_close_requires_report_and_preserves_day_cash", DayActionPolicy.Validate(report, next) == null && DayActionPolicy.Postcondition(report, next, morning));
+        check("day_report_cannot_close_absent_report", DayActionPolicy.Validate(Command("close_day_report", morning), morning) != null);
+
+        var refund = State("CLOSED", "settlement"); SetSettlement(refund, -7);
+        var refundCommand = Command("confirm_end_of_day", refund);
+        check("day_refund_signed_amount_and_zero_ceiling_admitted_by_gate", refundCommand.arguments.max_spend == 0 &&
+            DayActionPolicy.Validate(refundCommand, refund) == null && new ActionGate().Accept(refundCommand, refund, "broker", 1) == null);
+        var credited = State("MORNING", "next_morning", day: 6, revision: 2, cash: 107); credited.business.details.day.report_open = true;
+        check("day_refund_negative_total_checks_actual_credit", DayActionPolicy.Postcondition(refundCommand, refund, credited));
+        var zero = State("CLOSED", "settlement"); SetSettlement(zero, 0);
+        var zeroCommand = Command("confirm_end_of_day", zero);
+        var zeroNext = State("MORNING", "next_morning", day: 6, revision: 2); zeroNext.business.details.day.report_open = true;
+        check("day_zero_total_still_requires_day_and_report_transition", DayActionPolicy.Postcondition(zeroCommand, zero, zeroNext));
+
+        var copied = BusinessWire.Clone(settlement.business.details);
+        copied.day.settlement.services[0].label = "mutated";
+        check("day_clone_deep_copies_service_rows", settlement.business.details.day.settlement.services[0].label == "Visible service");
+        copied.day.stage = "invented";
+        check("day_wire_rejects_unknown_stage", !BusinessWire.ValidateDay(copied.day));
+        copied = BusinessWire.Clone(settlement.business.details); copied.schema_version = 1;
+        var oldBusiness = new BusinessObservation { support = "partial", item_refs = new List<string>(), details = copied };
+        check("day_extension_rejected_on_historical_schema1", !BusinessWire.Validate(oldBusiness));
+        copied = BusinessWire.Clone(settlement.business.details); copied.day.settlement.services[0].cost_text = new string('x', 257);
+        check("day_visible_service_text_bounded", !BusinessWire.ValidateDay(copied.day));
+        copied = BusinessWire.Clone(settlement.business.details);
+        copied.day.settlement.services = Enumerable.Range(0, 33).Select(_ => new DayServiceState { label = "Visible service", cost_text = "1", cost = 1 }).ToList();
+        check("day_visible_service_rows_capped_at_32", !BusinessWire.ValidateDay(copied.day));
+        var fingerprint = ActionGate.Fingerprint(confirm); confirm.arguments.settlement_ref = "settlement-new";
+        check("day_settlement_ref_enters_command_fingerprint", fingerprint != ActionGate.Fingerprint(confirm));
+        confirm.arguments.settlement_ref = "settlement-current";
+        var negativeOther = Command("close_business", open); negativeOther.arguments.amount = -1;
+        check("day_signed_amount_exception_does_not_expand_other_actions", new ActionGate().Accept(negativeOther, open, "broker", 1)?.reason == "invalid_arguments");
+        var inspection = State("CLOSED", "settlement"); SetSettlement(inspection, 7);
+        inspection.business.details.inspection_handoff = new InspectionHandoffState { status = "waiting_for_user", requires_manual_inspection = true,
+            handoff_ref = "inspection-pending", customer_ref = "historical-customer", reason = "manual_item_inspection",
+            items = new List<InspectionHandoffItem> { new InspectionHandoffItem { item_ref = "historical-item", name = "Visible item" } } };
+        check("day_actions_cannot_bypass_manual_inspection", DayActionPolicy.Validate(Command("confirm_end_of_day", inspection), inspection) == "inspection_handoff");
+
+        var gate = new ActionGate(); var once = Command("confirm_end_of_day", settlement); once.id = "day-once"; int calls = 0;
+        gate.Accept(once, settlement, "broker", 1); gate.Accept(once, settlement, "broker", 1);
+        gate.Advance("broker", settlement, 2, 2, _ => calls++, DayActionPolicy.Verify);
+        var result = gate.Advance("broker", next, 3, 3, _ => calls++, DayActionPolicy.Verify).result;
+        check("day_confirm_invokes_once_and_gate_rechecks_day_postcondition", calls == 1 && result?.status == "succeeded");
+        check("day_confirm_duplicate_returns_retained_result", gate.Accept(once, next, "broker", 4)?.status == "succeeded" && calls == 1);
+        gate.Acknowledge(once.id);
+        check("day_confirm_acknowledged_command_cannot_replay", gate.Accept(once, next, "broker", 5)?.reason == "command_already_acknowledged");
+
+        var projection = new BusinessProjection(); var item = new BusinessItemInput { Identity = new object(), Identifier = "box_tampon", Name = "Visible item", Units = 1 };
+        var input = new BusinessInput { Customer = new BusinessCustomerInput { Identity = new object(), Presence = "present", Arrived = true, TradeType = "sell", Phase = "trading", DialogueStage = "absent", MultiBuyDisabled = false },
+            Containers = new[] { new BusinessContainerInput { Container = "front", Completeness = "complete" }, new BusinessContainerInput { Container = "back", Completeness = "complete", Items = new[] { item } }, new BusinessContainerInput { Container = "player", Completeness = "complete" } },
+            Quote = new BusinessQuoteInput { Status = "complete", Mode = "normal", BindingVerified = true, DisplayedTotal = 10, PurchaseIdentities = new[] { item.Identity } },
+            Ui = new BusinessUiInput { Status = "consistent", Coverage = "verified", Complete = true } };
+        var previous = projection.Capture("w", true, () => input);
+        projection.Invalidate("w", "day_changed");
+        var refreshed = projection.Capture("w", true, () => input);
+        check("day_change_invalidates_business_refs_without_rotating_world", previous.customer_ref != refreshed.customer_ref && previous.offer_ref != refreshed.offer_ref && previous.item_refs[0] != refreshed.item_refs[0]);
+    }
+
+    private static Snapshot State(string phase, string stage, int day = 5, int revision = 1, int cash = 100)
+    {
+        var business = new BusinessProjection().Capture("w", true, () => new BusinessInput
+        {
+            Customer = new BusinessCustomerInput { Presence = "absent", Phase = "absent", DialogueStage = "absent" },
+            Containers = new[] { new BusinessContainerInput { Container = "front", Completeness = "complete" },
+                new BusinessContainerInput { Container = "back", Completeness = "complete" }, new BusinessContainerInput { Container = "player", Completeness = "complete" } },
+            Ui = new BusinessUiInput { Status = "consistent", Coverage = "verified", Complete = true }
+        });
+        business.details.day = new DayState { day_number = day, remaining_customers = 0, stage = stage };
+        return new Snapshot { schema_version = 3, world_epoch = "w", revision = revision, version = "w:" + revision,
+            scene = "shop", phase = phase, loaded = true, ready = true, cash = cash, business = business,
+            interaction = new InteractionObservation { phase = phase, consistency = "consistent", operable = true }, legal_actions = new List<LegalAction>() };
+    }
+
+    private static void SetSettlement(Snapshot state, int total)
+    {
+        state.business.details.day.can_confirm = true;
+        state.business.details.day.settlement = new SettlementState { settlement_ref = "settlement-current", total = total,
+            services = new List<DayServiceState> { new DayServiceState { label = "Visible service", cost_text = total.ToString(), cost = total, selected = true } } };
+    }
+
+    private static Command Command(string action, Snapshot state)
+    {
+        var args = action == "confirm_end_of_day" ? new ActionArguments { settlement_ref = state.business.details.day.settlement.settlement_ref,
+            amount = state.business.details.day.settlement.total, max_spend = Math.Max(0, state.business.details.day.settlement.total) } : new ActionArguments();
+        var legalArgs = action == "confirm_end_of_day" ? new ActionArguments { settlement_ref = args.settlement_ref, amount = args.amount, max_spend = args.max_spend } : new ActionArguments();
+        if (!state.legal_actions.Any(legal => legal.action == action && BusinessActionPolicy.SameArguments(legal.arguments, legalArgs)))
+            state.legal_actions.Add(new LegalAction { action = action, arguments = legalArgs });
+        return new Command { schema_version = 3, id = "day-command", broker_epoch = "broker", action = action, arguments = args,
+            expected_world_epoch = state.world_epoch, expected_version = state.version, expected_revision = state.revision,
+            start_deadline_unix_ms = 100, execution_timeout_ms = 5000 };
+    }
 }

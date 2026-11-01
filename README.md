@@ -1,4 +1,6 @@
-# PawnPilot — M3-C 人工商品检查接管
+# PawnPilot — M4 单日自主经营
+
+M4 **PARTIAL（实现与自动化完成，待授权实机验收）**，位于 `feature/m4-single-day`。新增正常关门、睡袋日结、费用绑定确认与次晨报告收尾，真实 Codex CLI 的连续经营模式到次日停止。正式构建0错误，当前自动化覆盖 **550 managed + 195 Python = 745项**，包含全量回归及最后新增的会话恢复专项。原生流程、逐次测试记录与授权状态见 [M4 报告](docs/m4-implementation.md)。此前 M2/M3 的单项 PASS 不代表 M4 已通过。
 
 M3-C **PASS（人工接管与恢复、防重复买入路径）**：七个已核实的香烟/水容器 identifier 经生产观察触发 `inspection_handoff`，等待时拦截经营写操作；只有用户明确检查结束后才通过 `resume_inspection_handoff(handoff_ref)` 恢复并重新观察。真实 Codex CLI/MCP 已对授权测试商品完成接管，两次购买/议价门禁探测均被拒绝；用户手动处理后确认，MCP恢复成功，发现商品已自有且顾客离场，未重复购买。**本轮没有 Agent 自动成交**，七类指定商品未取得各自实机触发样本。自动化 **506 managed + 178 Python = 684 项通过**。测试槽与Mod已清理，原存档和程序集哈希不变。详见 [M3-C 报告](docs/m3c-implementation.md)。
 
@@ -74,7 +76,9 @@ loaded 表示当前游戏场景中存档已初始化；ready 额外要求必要 
 
 `GamePurchaseActions` 已接通 legal-action 生成、即时原生复核、单次 OnBuyAllClick 和 settlement verifier。容量模型采用真实 occupied grid mask，既有物品不受类型白名单限制；待购物品限已支持的简单接收 profile，允许已核实的默认 onSlotAdd、现有 features 和无 childElement 的空窗口，非空复杂子窗口等仍不支持。购买前后用进程内对象身份核验13件转移及ownership变化，不因公开引用重发或正常顾客离场误判。跨帧等待不停止心跳。
 
-普通 SELL 支持 scavGeneral、shadyPharma 和 food_scav_story；买入实机成交证据仍为 M2 的 scavGeneral，原始 M3-A 验证了食品卖家的正常拒绝。普通 BUY 支持 spacerFood / spacerFoodStory 的单件卖出，原始 M3-A 成交样本为后者的第一位食品买家。advance_dialogue / choose_dialogue_option 已接入；M2 三次手动推进在执行前因 stale_state 拒绝，M3-A 自动播放场景没有必要手动推进/选项，不能计作这两个动作的成功验收。批发、议价、特殊交易、日结，以及独立 cancel_confirmation / refuse_trade 仍不支持；结束交互使用当前合法的 dismiss_customer 或正常离场。
+普通 SELL 支持 scavGeneral、shadyPharma 和 food_scav_story；买入实机成交证据仍为 M2 的 scavGeneral，原始 M3-A 验证了食品卖家的正常拒绝。普通 BUY 支持 spacerFood / spacerFoodStory 的单件卖出，原始 M3-A 成交样本为后者的第一位食品买家。advance_dialogue / choose_dialogue_option 已接入；M2 三次手动推进在执行前因 stale_state 拒绝，M3-A 自动播放场景没有必要手动推进/选项，不能计作这两个动作的成功验收。批发、特殊交易及独立 cancel_confirmation / refuse_trade 仍不支持；结束交互使用当前合法的 dismiss_customer 或正常离场。普通议价见 M3-B，单日日结见 M4 报告。
+
+`business.details.day` 提供当前日期、界面显示的剩余人数、日末可用动作和可见结算条款。只有剩余人数0且无当前顾客等原生条件通过才提供 `close_business`；`open_end_of_day` 经睡袋打开日结，`confirm_end_of_day(settlement_ref,amount,max_spend)` 绑定当前费用和授权，`close_day_report` 只关闭已核验的次晨夜报。服务开关保持原生默认；费用不完整或超出授权时停止。正常跨日不改变存档身份，但会使旧交易引用失效。
 
 `customer.trade_panel` 是可选观察字段：closed 表示关闭，buy/sell 表示已开面板的 NPC 交易方向，unavailable/null/缺失表示未确认。对话结束、顾客到达且原生交互可用时，按当前合法 `open_trade_panel(customer_ref)` 打开；对话或动画期间使用 `wait_for_update`。动作调用原生 OpenUI，后置检查同一顾客、实际模式、trading、正常总价可读和现金不变。已开时不再提供该动作；不因无关全局 UI 未知标记阻止正常开启。空柜台总价0保持 quote.status=unverified、offer_ref=null，后续仍须合法准备和完整报价才能成交。
 

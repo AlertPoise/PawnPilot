@@ -25,6 +25,7 @@ namespace PawnPilot
                 d.customer.dialogue_ref != null || d.customer.option_refs == null || d.customer.option_refs.Count != 0)) return false;
 
             if ((d.schema_version == 1 && d.front_collection_fingerprint != null) ||
+                (d.day != null && (d.schema_version != 2 || !ValidateDay(d.day))) ||
                 (d.inspection_handoff != null && (d.schema_version != 2 || !ValidateInspection(d.inspection_handoff))) ||
                 (d.schema_version == 1 && d.bargain != null) || (d.bargain != null && !ValidateBargain(d.bargain)) ||
                 (d.schema_version == 2 && !OptionalRef(d.front_collection_fingerprint)) ||
@@ -58,6 +59,15 @@ namespace PawnPilot
             foreach (var c in d.containers) { S(c.container); S(c.completeness); S(c.reason); L(c.item_refs); }
             foreach (var i in d.items) { S(i.item_ref); S(i.container); S(i.name); S(i.shape_status); }
             S(d.front_collection_fingerprint); S(d.quote.status); S(d.quote.mode); S(d.quote.reason);
+            if (d.day != null)
+            {
+                S(d.day.stage); S(d.day.reason);
+                if (d.day.settlement != null)
+                {
+                    S(d.day.settlement.settlement_ref);
+                    foreach (var service in d.day.settlement.services) { S(service.label); S(service.cost_text); }
+                }
+            }
             if (d.inspection_handoff != null)
             {
                 var h = d.inspection_handoff;
@@ -107,6 +117,7 @@ namespace PawnPilot
                     shape_status = x.shape_status, width = x.width, height = x.height
                 }),
                 front_collection_fingerprint = details.front_collection_fingerprint,
+                day = CloneDay(details.day),
                 inspection_handoff = CloneInspection(details.inspection_handoff),
                 bargain = details.bargain == null ? null : new BargainState
                 {
@@ -135,6 +146,28 @@ namespace PawnPilot
                 candidates = CopyMapped(details.candidates, x => x == null ? null : new BusinessCandidate
                 { action = x.action, status = x.status, reason = x.reason })
             };
+        }
+
+        public static DayState CloneDay(DayState value) => value == null ? null : new DayState
+        {
+            day_number = value.day_number, remaining_customers = value.remaining_customers,
+            stage = value.stage, reason = value.reason, can_close = value.can_close, can_sleep = value.can_sleep,
+            can_confirm = value.can_confirm, report_open = value.report_open, transition_pending = value.transition_pending,
+            settlement = value.settlement == null ? null : new SettlementState { settlement_ref = value.settlement.settlement_ref,
+                total = value.settlement.total, services = CopyMapped(value.settlement.services, service => service == null ? null : new DayServiceState
+                { label = service.label, cost_text = service.cost_text, cost = service.cost, selected = service.selected }) }
+        };
+
+        public static bool ValidateDay(DayState value)
+        {
+            if (value == null || !OneOf(value.stage, "morning", "open", "closed", "settlement", "next_morning", "unavailable") ||
+                value.day_number < 0 || value.remaining_customers < 0 || !OptionalText(value.reason)) return false;
+            var settlement = value.settlement;
+            if (settlement == null) return true;
+            if (!ValidRef(settlement.settlement_ref) || settlement.services == null || settlement.services.Count > 32) return false;
+            foreach (var service in settlement.services)
+                if (service == null || !ValidText(service.label, MaxText) || !ValidText(service.cost_text, MaxText)) return false;
+            return true;
         }
 
         public static InspectionHandoffState CloneInspection(InspectionHandoffState value) => value == null ? null : new InspectionHandoffState
@@ -362,7 +395,8 @@ namespace PawnPilot
                 if (c == null || !OneOf(c.action, "close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                     "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer",
                     "purchase_visible_offer", "prepare_sale_items", "sell_visible_offer", "sort_inventory_default", "open_trade_panel",
-                    "open_bargain_panel", "close_bargain_panel", "choose_bargain_option", "resume_inspection_handoff") ||
+                    "open_bargain_panel", "close_bargain_panel", "choose_bargain_option", "resume_inspection_handoff",
+                    "close_business", "open_end_of_day", "confirm_end_of_day", "close_day_report") ||
                     !OneOf(c.status, "candidate", "blocked", "unverified") || !ValidText(c.reason, MaxText)) return false;
             return true;
         }

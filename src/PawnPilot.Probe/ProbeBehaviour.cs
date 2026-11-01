@@ -27,6 +27,9 @@ namespace PawnPilot
         private GameSaleActions saleActions;
         private GameInventoryActions inventoryActions;
         private GameBargainActions bargainActions;
+        private GameDayActions dayActions;
+        private int? observedDay;
+        private string observedDayWorld;
         private UnityWebRequest current;
         private bool stopped, subscribed;
         private int activeSceneHandle = -1;
@@ -73,6 +76,7 @@ namespace PawnPilot
                     authorization_ref = value["authorization_ref"]?.Value<string>(),
                     container = value["container"]?.Value<string>(),
                     handoff_ref = value["handoff_ref"]?.Value<string>(),
+                    settlement_ref = value["settlement_ref"]?.Value<string>(),
                     amount = value["amount"]?.Value<int>(), max_spend = value["max_spend"]?.Value<int>()
                 };
             }
@@ -95,6 +99,7 @@ namespace PawnPilot
                     WriteString(writer, "authorization_ref", value.authorization_ref);
                     WriteString(writer, "container", value.container);
                     WriteString(writer, "handoff_ref", value.handoff_ref);
+                    WriteString(writer, "settlement_ref", value.settlement_ref);
                     if (value.amount.HasValue) { writer.WritePropertyName("amount"); writer.WriteValue(value.amount.Value); }
                     if (value.max_spend.HasValue) { writer.WritePropertyName("max_spend"); writer.WriteValue(value.max_spend.Value); }
                 }
@@ -119,6 +124,7 @@ namespace PawnPilot
             saleActions = new GameSaleActions(businessProjection);
             inventoryActions = new GameInventoryActions(businessProjection);
             bargainActions = new GameBargainActions(businessProjection);
+            dayActions = new GameDayActions();
             ModHook.OnGameLoadedLate += OnGameLoaded;
             SceneManager.activeSceneChanged += SceneChanged;
             activeSceneHandle = SceneManager.GetActiveScene().handle;
@@ -141,6 +147,7 @@ namespace PawnPilot
             if (pendingResult == null && gate.PendingResult != null)
             {
                 pendingResult = gate.PendingResult;
+                dayActions?.ObserveResult(pendingResult);
                 log.Log("PAWNPILOT_RESULT " + ToJson(pendingResult));
             }
 #if M2A_READ_ONLY_PROBE
@@ -303,6 +310,20 @@ namespace PawnPilot
             bool ready = latestReadiness.ready;
             var menu = ready ? ui.escapeUIManager : null;
             bool open = menu != null && menu.menuPanel != null && menu.menuPanel.activeInHierarchy;
+            var day = ready ? dayActions.Read(worldVersion.Epoch) : null;
+            if (observedDayWorld != worldVersion.Epoch)
+            {
+                observedDayWorld = worldVersion.Epoch;
+                observedDay = null;
+            }
+            if (day?.day_number != null)
+            {
+                // Native BeginDay retains the run/slot identity. Invalidate short-lived
+                // business references without changing the in-flight settlement's world.
+                if (observedDay.HasValue && observedDay != day.day_number)
+                    businessProjection.Invalidate(worldVersion.Epoch, "day_changed");
+                observedDay = day.day_number;
+            }
             var state = new Snapshot
             {
                 schema_version = Protocol.BusinessSchemaVersion,
@@ -325,6 +346,7 @@ namespace PawnPilot
                 business = businessProjection.Capture(worldVersion.Epoch, ready, () => bargainActions.Read(worldVersion.Epoch)),
                 legal_actions = new List<LegalAction>()
             };
+            state.business.details.day = day;
             state.interaction.consistency = state.business.details.ui.status;
             state.interaction.reason = state.business.details.ui.blockers.Count > 0
                 ? state.business.details.ui.blockers[0] : ready ? "business_consistency_unverified" : latestReadiness.reason;
@@ -337,6 +359,7 @@ namespace PawnPilot
                 state.legal_actions.AddRange(saleActions.BuildLegalActions(state));
                 state.legal_actions.AddRange(inventoryActions.BuildLegalActions(state));
                 state.legal_actions.AddRange(bargainActions.BuildLegalActions(state));
+                state.legal_actions.AddRange(dayActions.BuildLegalActions(state));
                 var purchase = purchaseActions.GetLegalAction(state);
                 var purchaseCandidate = state.business.details.candidates.Find(candidate => candidate.action == "purchase_visible_offer");
                 if (purchaseCandidate != null)
@@ -420,6 +443,7 @@ namespace PawnPilot
             { saleActions.Invoke(command, current); return; }
             if (command.action == "sort_inventory_default") { inventoryActions.Invoke(command, current); return; }
             if (GameBargainActions.Handles(command.action)) { bargainActions.Invoke(command, current); return; }
+            if (GameDayActions.Handles(command.action)) { dayActions.Invoke(command, current); return; }
             // The adapter rechecks local native evidence. A wire candidate never enables it.
             businessActions.Invoke(command, current);
         }
@@ -431,6 +455,7 @@ namespace PawnPilot
             command.action == "prepare_sale_items" || command.action == "sell_visible_offer" ? saleActions.Verify(command, before, after) :
             command.action == "sort_inventory_default" ? inventoryActions.Verify(command, before, after) :
             GameBargainActions.Handles(command.action) ? bargainActions.Verify(command, before, after) :
+            GameDayActions.Handles(command.action) ? dayActions.Verify(command, before, after) :
             businessActions.Verify(command, before, after);
 
         private static long MonotonicMilliseconds() =>
@@ -578,11 +603,12 @@ namespace PawnPilot
                     RequireInteger(command, "start_deadline_unix_ms", 1, long.MaxValue);
                     RequireInteger(command, "execution_timeout_ms", 1, 30000);
                     if (!(command["arguments"] is JObject arguments)) throw new InvalidOperationException("arguments must be object");
-                    RequireAllowedOptionalKeys(arguments, "customer_ref", "item_refs", "offer_ref", "collection_fingerprint", "option_ref", "dialogue_ref", "mode", "amount", "max_spend", "authorization_ref", "container", "handoff_ref");
-                    foreach (var key in new[] { "customer_ref", "offer_ref", "collection_fingerprint", "option_ref", "dialogue_ref", "mode", "authorization_ref", "container", "handoff_ref" })
+                    RequireAllowedOptionalKeys(arguments, "customer_ref", "item_refs", "offer_ref", "collection_fingerprint", "option_ref", "dialogue_ref", "mode", "amount", "max_spend", "authorization_ref", "container", "handoff_ref", "settlement_ref");
+                    foreach (var key in new[] { "customer_ref", "offer_ref", "collection_fingerprint", "option_ref", "dialogue_ref", "mode", "authorization_ref", "container", "handoff_ref", "settlement_ref" })
                         if (arguments.Property(key) != null) RequireString(arguments, key, false);
                     foreach (var key in new[] { "amount", "max_spend" })
-                        if (arguments.Property(key) != null) RequireInteger(arguments, key, 0, int.MaxValue);
+                        if (arguments.Property(key) != null) RequireInteger(arguments, key,
+                            key == "amount" && command["action"]?.Value<string>() == "confirm_end_of_day" ? int.MinValue : 0, int.MaxValue);
                     if (arguments.Property("item_refs") != null)
                     {
                         if (!(arguments["item_refs"] is JArray items)) throw new InvalidOperationException("item_refs must be array");
@@ -645,6 +671,7 @@ namespace PawnPilot
         public void Shutdown()
         {
             if (stopped) return;
+            dayActions?.Dispose();
             try
             {
                 var cancelled = gate.Cancel("mod_shutdown", null);

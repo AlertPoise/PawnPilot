@@ -41,6 +41,9 @@ V3_ACTION_ARGUMENTS = {
         "collection_fingerprint", "mode", "amount"}),
     "sort_inventory_default": frozenset({"container"}),
     "resume_inspection_handoff": frozenset({"handoff_ref"}),
+    "close_business": frozenset(), "open_end_of_day": frozenset(),
+    "confirm_end_of_day": frozenset({"settlement_ref", "amount", "max_spend"}),
+    "close_day_report": frozenset(),
     "cancel_confirmation": frozenset(), "refuse_trade": frozenset({"customer_ref"}),
     "dismiss_customer": frozenset({"customer_ref"}),
     "open_trade_panel": frozenset({"customer_ref"}),
@@ -54,11 +57,13 @@ V3_CANDIDATE_ARGUMENTS = V3_ACTION_ARGUMENTS
 # Availability is asserted per snapshot by legal_actions, then bound to that snapshot below.
 # refuse_trade remains descriptive only until it has its own native operation.
 V3_PRODUCTION_ACTIONS = frozenset(V3_ACTION_ARGUMENTS) - {"refuse_trade"}
+DAY_ACTIONS = frozenset({"close_business", "open_end_of_day", "confirm_end_of_day", "close_day_report"})
 V3_OPTIONAL_ARGUMENTS = frozenset({"customer_ref", "item_refs", "offer_ref",
                                     "collection_fingerprint", "option_ref", "dialogue_ref",
                                     "mode", "amount", "max_spend", "authorization_ref"})
 V3_OPTIONAL_ARGUMENTS |= {"container"}
 V3_OPTIONAL_ARGUMENTS |= {"handoff_ref"}
+V3_OPTIONAL_ARGUMENTS |= {"settlement_ref"}
 BARGAIN_ACTIONS = frozenset({"open_bargain_panel", "close_bargain_panel", "choose_bargain_option"})
 
 
@@ -120,7 +125,13 @@ def valid_arguments_v3(value):
                     or any(type(ref) is not str or REF.fullmatch(ref) is None for ref in entry)
                     or len(entry) != len(set(entry))):
                 return False
-        elif key in {"amount", "max_spend"}:
+        elif key == "amount":
+            if "settlement_ref" in value:
+                if not integer(entry, -2_147_483_648, MAX_INT):
+                    return False
+            elif not integer(entry):
+                return False
+        elif key == "max_spend":
             if not integer(entry):
                 return False
         elif type(entry) is not str or REF.fullmatch(entry) is None:
@@ -329,6 +340,36 @@ def _valid_inspection_handoff(value):
     return len(refs) == len(set(refs))
 
 
+def _valid_day_v3(value):
+    keys = {"day_number", "remaining_customers", "stage", "reason", "can_close", "can_sleep",
+            "can_confirm", "report_open", "transition_pending", "settlement"}
+    if not shape(value, keys):
+        return False
+    if (value["day_number"] is not None and not integer(value["day_number"])
+            or value["remaining_customers"] is not None and not integer(value["remaining_customers"])
+            or value["stage"] not in {"unavailable", "morning", "open", "closed", "settlement", "next_morning"}
+            or not _v3_text(value["reason"], nullable=True)
+            or any(type(value[k]) is not bool for k in ("can_close", "can_sleep", "can_confirm",
+                                                         "report_open", "transition_pending"))):
+        return False
+    settlement = value["settlement"]
+    if settlement is None:
+        return True
+    if (not shape(settlement, {"settlement_ref", "total", "services"})
+            or type(settlement["settlement_ref"]) is not str
+            or REF.fullmatch(settlement["settlement_ref"]) is None
+            or not integer(settlement["total"], -2_147_483_648, MAX_INT)
+            or type(settlement["services"]) is not list or len(settlement["services"]) > 32):
+        return False
+    for service in settlement["services"]:
+        if (not shape(service, {"label", "cost_text", "cost", "selected"})
+                or not _v3_text(service["label"]) or not _v3_text(service["cost_text"])
+                or not integer(service["cost"], -2_147_483_648, MAX_INT)
+                or type(service["selected"]) is not bool):
+            return False
+    return True
+
+
 _NONBLOCKING_UNOBSERVABLE_UI_BLOCKERS = frozenset({
     "global_ui_stack_unobservable", "global_raycast_order_unobservable",
     "quote_rebuild_completion_unobservable", "tutorial_group_active_unverified",
@@ -413,9 +454,13 @@ def _valid_business_v3(business):
             detail_keys.add("inspection_handoff")
         if "bargain" in d:
             detail_keys.add("bargain")
+        if "day" in d:
+            detail_keys.add("day")
     if not shape(d, detail_keys):
         return False
     if schema == 2 and d.get("bargain") is not None and not _valid_bargain_v3(d["bargain"]):
+        return False
+    if schema == 2 and d.get("day") is not None and not _valid_day_v3(d["day"]):
         return False
     if (d["status"] not in {"unavailable", "partial", "complete"}
             or (schema == 2 and d["front_collection_fingerprint"] is not None
@@ -675,6 +720,9 @@ def valid_snapshot_v3(value):
             return False
         if not valid_action_binding_v3(value["business"], action, arguments):
             return False
+        if (action == "confirm_end_of_day"
+                and arguments["max_spend"] != max(0, arguments["amount"])):
+            return False
         if not valid_action_state_v3(value, action, arguments):
             return False
         seen.add(action_identity)
@@ -703,6 +751,32 @@ def valid_snapshot_v3(value):
 def valid_action_binding_v3(business, action, arguments):
     """Tie every emitted opaque handle back to the same observed business snapshot."""
     details = business["details"]
+    day_gate = details.get("day") if details["schema_version"] == 2 else None
+    if (type(day_gate) is dict and (day_gate["transition_pending"] or day_gate["report_open"]
+                                    or day_gate["stage"] == "settlement")
+            and action not in DAY_ACTIONS and action != "resume_inspection_handoff"):
+        return False
+    if action in DAY_ACTIONS:
+        day = details.get("day") if details["schema_version"] == 2 else None
+        if type(day) is not dict:
+            return False
+        if action == "close_business":
+            customer = details["customer"]
+            return (day["stage"] == "open" and day["remaining_customers"] == 0
+                    and day["can_close"] is True and not day["report_open"] and day["settlement"] is None
+                    and customer["presence"] == "absent")
+        if action == "open_end_of_day":
+            return (day["stage"] == "closed" and day["can_sleep"] is True
+                    and not day["report_open"] and day["settlement"] is None)
+        if action == "confirm_end_of_day":
+            settlement = day["settlement"]
+            return (day["stage"] == "settlement" and day["can_confirm"] is True and not day["report_open"]
+                    and type(settlement) is dict
+                    and arguments.get("settlement_ref") == settlement["settlement_ref"]
+                    and arguments.get("amount") == settlement["total"]
+                    and arguments.get("max_spend", -1) >= max(0, arguments.get("amount", 0)))
+        return (day["stage"] == "next_morning" and day["report_open"] is True
+                and day["settlement"] is None)
     if action == "resume_inspection_handoff":
         handoff = details.get("inspection_handoff")
         return (details["schema_version"] == 2 and type(handoff) is dict
@@ -844,6 +918,7 @@ def valid_action_binding_v3(business, action, arguments):
 def valid_action_state_v3(snapshot, action, arguments):
     """Minimal per-action game-phase checks; unrelated business completeness is irrelevant."""
     details = snapshot["business"]["details"]
+    day = details.get("day") if details["schema_version"] == 2 else None
     handoff = details.get("inspection_handoff")
     pending_handoff = (type(handoff) is dict and handoff["requires_manual_inspection"]
                        and handoff["status"] == "waiting_for_user")
@@ -852,6 +927,31 @@ def valid_action_state_v3(snapshot, action, arguments):
                 and arguments.get("handoff_ref") == handoff["handoff_ref"])
     if action == "resume_inspection_handoff":
         return False
+    if (type(day) is dict and (day["transition_pending"] or day["report_open"]
+                               or day["stage"] == "settlement")
+            and action not in DAY_ACTIONS and action != "resume_inspection_handoff"):
+        return False
+    if action in DAY_ACTIONS:
+        if (not snapshot["ready"] or snapshot["menu_open"] or type(day) is not dict
+                or day["day_number"] is None
+                or day["transition_pending"]
+                or not valid_action_binding_v3(snapshot["business"], action, arguments)):
+            return False
+        if action == "close_business":
+            return (snapshot["phase"] == "OPEN" and day["stage"] == "open"
+                    and day["remaining_customers"] == 0
+                    and not day["report_open"] and day["settlement"] is None
+                    and snapshot["business"]["details"]["customer"]["presence"] == "absent")
+        if action == "open_end_of_day":
+            return (snapshot["phase"] == "CLOSED" and day["stage"] == "closed" and day["can_sleep"]
+                    and not day["report_open"] and day["settlement"] is None)
+        if action == "confirm_end_of_day":
+            amount = arguments["amount"]
+            return (snapshot["phase"] == "CLOSED" and day["stage"] == "settlement"
+                    and day["can_confirm"] and not day["report_open"]
+                    and (amount <= 0 or arguments["max_spend"] <= snapshot["cash"]))
+        return (snapshot["phase"] == "MORNING" and day["stage"] == "next_morning"
+                and day["report_open"] and day["settlement"] is None)
     if action == "start_business":
         return snapshot["ready"] and snapshot["phase"] == "MORNING"
     if action in BARGAIN_ACTIONS:
@@ -894,6 +994,8 @@ def valid_command_v3(value):
             and (value["action"] not in {"purchase_visible_offer", "sell_visible_offer"} or value["arguments"].get("mode") == "normal")
             and (value["action"] not in BARGAIN_ACTIONS or value["arguments"].get("mode") in {"buy", "sell"})
             and (value["action"] != "sell_visible_offer" or len(value["arguments"].get("item_refs", [])) == 1)
+            and (value["action"] != "confirm_end_of_day"
+                 or value["arguments"].get("max_spend", -1) >= max(0, value["arguments"].get("amount", 0)))
             and (value["action"] != "resume_inspection_handoff"
                  or set(value["arguments"]) == {"handoff_ref"})
             and integer(value["start_deadline_unix_ms"], 1, MAX_TIME)
@@ -948,6 +1050,43 @@ def valid_success_evidence_v3(before, after):
 def valid_action_success_evidence_v3(command, before, after):
     """Validate only the observable postcondition for the command's own operation."""
     action = command["action"]
+    if action in {"close_business", "open_end_of_day", "confirm_end_of_day", "close_day_report"}:
+        old = before["business"]["details"].get("day")
+        new = after["business"]["details"].get("day")
+        if (type(old) is not dict or type(new) is not dict
+                or before["world_epoch"] != after["world_epoch"]
+                or before["scene"] != after["scene"] or not after["ready"]
+                or after["revision"] <= before["revision"]
+                or not valid_action_binding_v3(before["business"], action, command["arguments"])
+                or not valid_action_state_v3(before, action, command["arguments"])
+                or new["day_number"] is None or new["transition_pending"]):
+            return False
+        if action == "confirm_end_of_day":
+            return (old["stage"] == "settlement" and old["can_confirm"]
+                    and old["settlement"] is not None
+                    and old["settlement"]["settlement_ref"] == command["arguments"]["settlement_ref"]
+                    and old["settlement"]["total"] == command["arguments"]["amount"]
+                    and old["day_number"] is not None
+                    and new["day_number"] == old["day_number"] + 1
+                    and after["phase"] == "MORNING" and new["stage"] == "next_morning"
+                    and not new["transition_pending"] and new["report_open"]
+                    and new["settlement"] is None
+                    and after["cash"] - before["cash"] == command["arguments"]["amount"])
+        if (old["day_number"] is None or new["day_number"] != old["day_number"]
+                or before["cash"] != after["cash"]):
+            return False
+        if action == "close_business":
+            return (before["phase"] == "OPEN" and after["phase"] == "CLOSED"
+                    and old["stage"] == "open" and new["stage"] == "closed"
+                    and not new["report_open"] and new["settlement"] is None)
+        if action == "open_end_of_day":
+            return (before["phase"] == "CLOSED" and after["phase"] == "CLOSED"
+                    and old["stage"] == "closed" and new["stage"] == "settlement"
+                    and new["can_confirm"] and new["settlement"] is not None and not new["report_open"])
+        return (before["phase"] == "MORNING" and after["phase"] == "MORNING"
+                and old["stage"] == "next_morning" and old["report_open"]
+                and new["stage"] in {"morning", "next_morning"} and not new["report_open"]
+                and new["settlement"] is None)
     if action == "resume_inspection_handoff":
         old = before["business"]["details"].get("inspection_handoff")
         new = after["business"]["details"].get("inspection_handoff")

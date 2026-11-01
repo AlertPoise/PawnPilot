@@ -193,6 +193,42 @@ Clients must observe again after resume and use fresh actual terms. Confirmed ba
 by world, visit and real object identity; names never identify a batch. Historical v2 and business
 schema-1 records keep their original shapes and do not acquire this extension.
 
+## Single-day close and settlement (M4)
+
+Schema-2 `details.day` is an optional nullable object so earlier business-schema-2 journal records
+remain valid. When present it contains `day_number` and `remaining_customers` (nullable nonnegative
+integers), `stage` (`unavailable`, `morning`, `open`, `closed`, `settlement`, or `next_morning`),
+nullable `reason`, the `can_close`, `can_sleep`, `can_confirm`, `report_open`, and
+`transition_pending` flags, plus nullable `settlement`. A settlement has a bounded `settlement_ref`,
+signed 32-bit `total`, and at most 32 services; each service carries visible `label`, `cost_text`,
+signed `cost`, and `selected`. This describes current visible day state only; it does not imply
+approval of optional services.
+
+The registered day actions are `close_business {}`, `open_end_of_day {}`,
+`confirm_end_of_day {settlement_ref, amount, max_spend}`, and `close_day_report {}`. Close requires
+phase/stage `OPEN`/`open`, zero remaining customers, absent current customer, and `can_close`.
+Opening end-of-day requires phase/stage `CLOSED`/`closed` and `can_sleep`. Confirmation requires
+`CLOSED`/`settlement`, `can_confirm`, and the currently displayed settlement reference and total.
+Report close requires `MORNING`/`next_morning` with `report_open`. All four require a ready snapshot,
+an observed day number, no open menu or pending transition, and pass the existing inspection-handoff
+gate. While `transition_pending`, `report_open`, or `stage=settlement` holds, other business writes
+are blocked; only the day action valid for the current stage (or a pending inspection resume) can be
+submitted. In particular the next-day report must be closed before `start_business` becomes legal.
+
+The legal confirmation template carries `max_spend=max(0, total)`. A caller may submit a higher
+ceiling only as explicit authorization in its `confirm_end_of_day` arguments; it must still be at
+least `max(0, amount)`, and a positive amount requires enough current cash to cover that ceiling.
+Negative totals are allowed and are checked against the observed signed total. The broker permits
+only this ceiling adjustment while keeping settlement reference and amount bound to the current
+legal action. It does not alter the snapshot's canonical legal template.
+
+Successful close/open/report actions preserve day number and cash and must reach their corresponding
+observable stage. Closing the day report clears `report_open`; the game may retain `stage=next_morning`
+as the completed-settlement state. Successful confirmation must remain in the same world, advance the day number by
+one, enter `MORNING`/`next_morning`, clear `transition_pending` and settlement, open the report, and
+change cash by exactly the confirmed amount. Old schema-2 history without `day` and all schema-1
+business records retain their original shape and action space.
+
 ## Transport size budgets
 
 MCP tool replies retain their independent outer `schema_version: 2` envelope format.

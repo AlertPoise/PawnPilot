@@ -32,7 +32,7 @@ namespace PawnPilot
         public static bool IsEnabled(string action) => action == "start_business" || action == "receive_next_customer" ||
             action == "advance_dialogue" || action == "choose_dialogue_option" ||
             action == "prepare_purchase_items" || action == "dismiss_customer" || action == "purchase_visible_offer" ||
-            action == "prepare_sale_items" || action == "sell_visible_offer" || action == "sort_inventory_default" || action == "open_trade_panel" || action == "resume_inspection_handoff" || IsBargainAction(action);
+            action == "prepare_sale_items" || action == "sell_visible_offer" || action == "sort_inventory_default" || action == "open_trade_panel" || action == "resume_inspection_handoff" || IsBargainAction(action) || DayActionPolicy.Handles(action);
         [Obsolete("Use IsEnabled(action); runtime actions are enabled per action scope.")]
         public static bool ProductionDispatchEnabled => IsEnabled("start_business") || IsEnabled("receive_next_customer");
 
@@ -41,7 +41,8 @@ namespace PawnPilot
             "start_business", "receive_next_customer", "advance_dialogue", "choose_dialogue_option",
             "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer", "purchase_visible_offer",
             "prepare_sale_items", "sell_visible_offer", "sort_inventory_default", "open_trade_panel",
-            "open_bargain_panel", "close_bargain_panel", "choose_bargain_option", "resume_inspection_handoff"
+            "open_bargain_panel", "close_bargain_panel", "choose_bargain_option", "resume_inspection_handoff",
+            "close_business", "open_end_of_day", "confirm_end_of_day", "close_day_report"
         };
 
         public static bool IsRegistered(string action) => action != null && Array.IndexOf(Registered, action) >= 0;
@@ -49,6 +50,8 @@ namespace PawnPilot
         public static bool ArgumentsValid(string action, ActionArguments a)
         {
             if (!IsRegistered(action) || a == null) return false;
+            if (DayActionPolicy.Handles(action)) return DayActionPolicy.ArgumentsValid(action, a);
+            if (a.settlement_ref != null) return false;
             if (action != "resume_inspection_handoff" && a.handoff_ref != null) return false;
             if (action != "sort_inventory_default" && a.container != null) return false;
             switch (action)
@@ -123,7 +126,7 @@ namespace PawnPilot
             if (a == null || b == null || a.customer_ref != b.customer_ref || a.offer_ref != b.offer_ref ||
                 a.collection_fingerprint != b.collection_fingerprint || a.option_ref != b.option_ref ||
                 a.dialogue_ref != b.dialogue_ref || a.mode != b.mode || a.authorization_ref != b.authorization_ref || a.container != b.container ||
-                a.handoff_ref != b.handoff_ref || a.amount != b.amount || a.max_spend != b.max_spend) return false;
+                a.handoff_ref != b.handoff_ref || a.settlement_ref != b.settlement_ref || a.amount != b.amount || a.max_spend != b.max_spend) return false;
             if (a.item_refs == null || b.item_refs == null) return a.item_refs == null && b.item_refs == null;
             return a.item_refs.SequenceEqual(b.item_refs, StringComparer.Ordinal);
         }
@@ -143,7 +146,7 @@ namespace PawnPilot
             if (reason != null) return reason;
             // These adapters have dedicated native preflight/verification paths. Their contract
             // remains the DTO boundary here; do not require generic NativeActionEvidence routing.
-            if (command.action == "prepare_sale_items" || command.action == "sell_visible_offer" || command.action == "sort_inventory_default" || command.action == "resume_inspection_handoff" || IsBargainAction(command.action)) return null;
+            if (command.action == "prepare_sale_items" || command.action == "sell_visible_offer" || command.action == "sort_inventory_default" || command.action == "resume_inspection_handoff" || IsBargainAction(command.action) || DayActionPolicy.Handles(command.action)) return null;
             if (evidence == null || !evidence.Captured || evidence.Action != command.action) return "native_action_evidence_missing";
             if (!evidence.SceneReady) return evidence.Reason ?? "scene_not_ready";
             if (command.action == "cancel_confirmation")
@@ -228,9 +231,13 @@ namespace PawnPilot
             if (!IsEnabled(command.action)) return "action_not_enabled";
             if (!BaseSnapshotReady(snapshot)) return "not_ready";
             if (BusinessProjection.IsInspectionWaitingIn(snapshot) && command.action != "resume_inspection_handoff") return "inspection_handoff";
+            var observedDay = snapshot.business.details.day;
+            if (observedDay != null && (observedDay.transition_pending || observedDay.report_open || observedDay.stage == "settlement") &&
+                !DayActionPolicy.Handles(command.action) && command.action != "resume_inspection_handoff") return "day_ui_blocked";
             if (requireLegalCandidate && !HasMatchingLegalAction(command, snapshot)) return "action_not_legal_in_snapshot";
             if (command.action == "resume_inspection_handoff") return BusinessProjection.IsInspectionWaitingIn(snapshot) &&
                 snapshot.business.details.inspection_handoff.handoff_ref == command.arguments.handoff_ref ? null : "inspection_handoff_changed";
+            if (DayActionPolicy.Handles(command.action)) return DayActionPolicy.Validate(command, snapshot);
             var ui = snapshot.business.details.ui;
             if (snapshot.menu_open) return "ui_scope_unverified";
             bool localNativeAction = IsEnabled(command.action);
@@ -367,6 +374,7 @@ namespace PawnPilot
         {
             foreach (var legal in s.legal_actions)
                 if (legal != null && legal.action == c.action && SameArguments(legal.arguments, c.arguments)) return true;
+                else if (DayActionPolicy.MatchesLegal(c, legal)) return true;
             return false;
         }
 
@@ -446,6 +454,7 @@ namespace PawnPilot
         {
             if (command == null || !IsRegistered(command.action) && command.action != "close_menu")
                 return VerificationDecision.Uncertain("unsupported_verifier_action");
+            if (DayActionPolicy.Handles(command.action)) return DayActionPolicy.Verify(command, before, after);
             if (command.action == "resume_inspection_handoff") return Postcondition(command, before, after)
                 ? VerificationDecision.Succeeded() : VerificationDecision.Pending();
             if (after == null || !after.ready) return VerificationDecision.Pending();
@@ -478,6 +487,7 @@ namespace PawnPilot
         public static bool Postcondition(Command command, Snapshot before, Snapshot after)
         {
             if (command == null) return false;
+            if (DayActionPolicy.Handles(command.action)) return DayActionPolicy.Postcondition(command, before, after);
             if (command.action == "resume_inspection_handoff")
                 return ArgumentsValid(command.action, command.arguments) && before != null && after != null &&
                     before.world_epoch == after.world_epoch && after.revision > before.revision &&

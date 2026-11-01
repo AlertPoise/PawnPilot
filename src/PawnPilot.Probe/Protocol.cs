@@ -71,6 +71,7 @@ namespace PawnPilot
         public string option_ref;
         public string dialogue_ref, mode, authorization_ref;
         public string handoff_ref;
+        public string settlement_ref;
         public int? amount, max_spend;
     }
 
@@ -176,7 +177,7 @@ namespace PawnPilot
 
             if (!Protocol.Supported(command.schema_version))
                 return NewResult(command, "rejected", "schema_version_unsupported", before, null, Completed(command, false, 1));
-            string shapeError = ValidateArgumentsShape(command.arguments);
+            string shapeError = ValidateArgumentsShape(command.arguments, command.action);
             if (command.schema_version == Protocol.SchemaVersion && HasV3Arguments(command.arguments)) shapeError = "invalid_arguments";
             if (shapeError != null) return NewResult(command, "rejected", shapeError, before, null, Completed(command, false, 1));
             string fingerprint = EnvelopeFingerprint(command);
@@ -501,11 +502,12 @@ namespace PawnPilot
             return false;
         }
 
-        private static string ValidateArgumentsShape(ActionArguments a)
+        private static string ValidateArgumentsShape(ActionArguments a, string action)
         {
             if (a == null) return "invalid_arguments";
             if (!ValidRef(a.customer_ref) || !ValidRef(a.offer_ref) || !ValidRef(a.option_ref) || !ValidRef(a.collection_fingerprint) ||
-                !ValidRef(a.dialogue_ref) || !ValidRef(a.mode) || !ValidRef(a.authorization_ref) || !ValidRef(a.handoff_ref) || a.amount < 0 || a.max_spend < 0)
+                !ValidRef(a.dialogue_ref) || !ValidRef(a.mode) || !ValidRef(a.authorization_ref) || !ValidRef(a.handoff_ref) ||
+                !ValidRef(a.settlement_ref) || (action != "confirm_end_of_day" && a.amount < 0) || a.max_spend < 0)
                 return "invalid_arguments";
             if (a.container != null && (a.container.Length < 1 || a.container.Length > 32)) return "invalid_arguments";
             if (a.item_refs != null)
@@ -531,7 +533,7 @@ namespace PawnPilot
             a.offer_ref == null && a.collection_fingerprint == null && a.container == null && a.option_ref == null && !HasV3Arguments(a);
 
         private static bool HasV3Arguments(ActionArguments a) => a != null && (a.container != null || a.dialogue_ref != null || a.mode != null ||
-            a.authorization_ref != null || a.handoff_ref != null || a.amount.HasValue || a.max_spend.HasValue);
+            a.authorization_ref != null || a.handoff_ref != null || a.settlement_ref != null || a.amount.HasValue || a.max_spend.HasValue);
 
         private static bool ValidText(string value, int max) => !string.IsNullOrEmpty(value) && value.Length <= max;
         private static int Next(int value) => value == int.MaxValue ? int.MaxValue : value + 1;
@@ -602,6 +604,7 @@ namespace PawnPilot
             if (c.arguments.mode != null) Property(args, ref argFirst, "mode", Quote(c.arguments.mode));
             if (c.arguments.offer_ref != null) Property(args, ref argFirst, "offer_ref", Quote(c.arguments.offer_ref));
             if (c.arguments.option_ref != null) Property(args, ref argFirst, "option_ref", Quote(c.arguments.option_ref));
+            if (c.arguments.settlement_ref != null) Property(args, ref argFirst, "settlement_ref", Quote(c.arguments.settlement_ref));
             args.Append('}');
             Property(s, ref first, "arguments", args.ToString());
             Property(s, ref first, "broker_epoch", Quote(c.broker_epoch));
@@ -666,7 +669,8 @@ namespace PawnPilot
         {
             customer_ref = a.customer_ref, item_refs = a.item_refs == null ? null : new List<string>(a.item_refs),
             offer_ref = a.offer_ref, collection_fingerprint = a.collection_fingerprint, container = a.container, option_ref = a.option_ref,
-            dialogue_ref = a.dialogue_ref, mode = a.mode, authorization_ref = a.authorization_ref, handoff_ref = a.handoff_ref, amount = a.amount, max_spend = a.max_spend
+            dialogue_ref = a.dialogue_ref, mode = a.mode, authorization_ref = a.authorization_ref, handoff_ref = a.handoff_ref,
+            settlement_ref = a.settlement_ref, amount = a.amount, max_spend = a.max_spend
         };
 
         private static Progress Clone(Progress p) => p == null ? null : new Progress

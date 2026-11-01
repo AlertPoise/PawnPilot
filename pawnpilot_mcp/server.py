@@ -48,11 +48,13 @@ class ActionArgumentsV3(StrictModel):
     option_ref: str | None = None
     dialogue_ref: str | None = None
     mode: str | None = None
-    amount: int | None = Field(default=None, strict=True, ge=0, le=2147483647)
+    amount: int | None = Field(default=None, strict=True, ge=-2147483648, le=2147483647)
     max_spend: int | None = Field(default=None, strict=True, ge=0, le=2147483647)
     container: str | None = None
     handoff_ref: str | None = Field(default=None, min_length=1, max_length=128,
                                     pattern=r"^[A-Za-z0-9_.:-]+$")
+    settlement_ref: str | None = Field(default=None, min_length=1, max_length=128,
+                                        pattern=r"^[A-Za-z0-9_.:-]+$")
 
     @model_validator(mode="before")
     @classmethod
@@ -87,7 +89,8 @@ class LegalActionV3(StrictModel):
                     "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
                     "dismiss_customer", "purchase_visible_offer", "prepare_sale_items",
                     "sell_visible_offer", "sort_inventory_default", "resume_inspection_handoff", "open_trade_panel",
-                    "open_bargain_panel", "close_bargain_panel", "choose_bargain_option"]
+                    "open_bargain_panel", "close_bargain_panel", "choose_bargain_option",
+                    "close_business", "open_end_of_day", "confirm_end_of_day", "close_day_report"]
     arguments: dict[str, Any]
 
 
@@ -346,7 +349,8 @@ class ObserveReply(ToolReply):
                                  "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
                                  "refuse_trade", "dismiss_customer", "purchase_visible_offer", "prepare_sale_items",
                                  "sell_visible_offer", "sort_inventory_default", "resume_inspection_handoff", "open_trade_panel",
-                                 "open_bargain_panel", "close_bargain_panel", "choose_bargain_option"]] = Field(default_factory=list, max_length=64)
+                                 "open_bargain_panel", "close_bargain_panel", "choose_bargain_option",
+                                 "close_business", "open_end_of_day", "confirm_end_of_day", "close_day_report"]] = Field(default_factory=list, max_length=64)
     wait_reason: str | None = None
     manual_action_required: bool = False
 
@@ -896,7 +900,8 @@ def act(schema_version: Annotated[Literal[2, 3], BeforeValidator(_exact_schema_2
                         "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
                         "refuse_trade", "dismiss_customer", "purchase_visible_offer", "prepare_sale_items",
                         "sell_visible_offer", "sort_inventory_default", "resume_inspection_handoff", "open_trade_panel",
-                        "open_bargain_panel", "close_bargain_panel", "choose_bargain_option"],
+                        "open_bargain_panel", "close_bargain_panel", "choose_bargain_option",
+                        "close_business", "open_end_of_day", "confirm_end_of_day", "close_day_report"],
         arguments: CloseMenuArguments | ActionArgumentsV3,
         broker_epoch: Annotated[str, Field(min_length=1, max_length=128)],
         expected_world_epoch: Annotated[str, Field(min_length=1, max_length=128)],
@@ -905,7 +910,10 @@ def act(schema_version: Annotated[Literal[2, 3], BeforeValidator(_exact_schema_2
     """Submit one version-guarded action using observe.action_schema_version as schema_version.
     Query the same ID after ambiguous outcomes; never replay automatically. Submit
     resume_inspection_handoff only after explicit user confirmation; bind handoff_ref from the latest
-    observe result, then observe again before any further action.
+    observe result, then observe again before any further action. Use the day-stage legal actions to
+    close business, open end-of-day, confirm the currently displayed settlement, and close its report.
+    For confirm_end_of_day, pass the observed settlement_ref and total as amount; max_spend must be
+    at least max(0, amount), and a positive amount is limited by current cash.
     """
     if schema_version == 2 and (action != "close_menu" or arguments.model_dump(mode="json") != {}):
         reason = "action_not_allowed"
