@@ -577,6 +577,34 @@
             "arguments"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "open_trade_panel"
+            },
+            "arguments": {
+              "type": "object",
+              "properties": {
+                "customer_ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_.:-]+$"
+                }
+              },
+              "required": [
+                "customer_ref"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "arguments"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -1387,7 +1415,8 @@
             "cancel_confirmation",
             "refuse_trade",
             "dismiss_customer",
-            "purchase_visible_offer"
+            "purchase_visible_offer",
+            "open_trade_panel"
           ]
         },
         "status": {
@@ -1765,6 +1794,19 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "trade_panel": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            null,
+            "closed",
+            "buy",
+            "sell",
+            "unavailable"
           ]
         }
       },

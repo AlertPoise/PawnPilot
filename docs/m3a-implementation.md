@@ -1,5 +1,46 @@
 # M3-A 基础卖出、顾客交互与默认整理
 
+## 收尾：交易面板自主开启
+
+本次在 `bd813e03325368fb011c5c60e214425b84602604` 上继续，保留原分支。用户要求先判断必要性：上一轮 `m3a-flow-2b` revision41中，MCP能读库存，但客户 phase=unknown、正常报价为空，原因 `quote_surface_unavailable`，且没有合法遣走；普通买入准备仍合法。UI点击后 revision42变为trading并开放遣走。故这是部分普通场景的自主操作缺口，不是单纯画面未显示，也不意味着所有原有交易都失效。
+
+重新读取当前同哈希 DLL，正常入口为 `StoreClientMono.OnClick → NegociationUIManager.ToggleUI → OpenUI`。开分支执行原生 HideConfirmPanel、SetActive、焦点更新、RefreshNow及声音；后续按当前客户 ResolveMode / Rebuild 生成交易内容。新增 `open_trade_panel(customer_ref)` 调用该 open-only 分支，避免 toggle 误关面板；执行前确认当前顾客引用、普通 SELL/BUY 白名单、到达且未移动、必要对话结束、原生角色交互可用、面板确实关闭及相关阻挡。
+
+观察新增兼容可选 `customer.trade_panel`：closed / buy / sell / unavailable；buy/sell是已构建面板的 NPC 方向，不以客户意向冒充面板模式。未知旧记录可缺失或为null，schema1保持原契约。只读反射 mode字段，不从观察调用刷新或隐藏价格 getter。
+
+动作仍经过现有 ActionDriver、世界/版本校验、单写、去重、原ID查询及后置核验。成功必须看到同一顾客、正确已开模式、trading、正常总价可读、现金不变及版本前进；面板已开时动作不合法。空交易集合仍可读取画面正常总价0，但不会生成可执行空集合报价。没有搬运、购买或卖出来制造这项测试。
+
+自动化为 **377 managed + 149 Python = 526通过、0失败**，保留普通买入、卖出、拒绝、整理及既有恢复回归。初次完整Python回归发现测试模拟器显式序列化可选字段null的兼容问题，修复后149项完整重跑通过。新增测试覆盖SELL/BUY、已开不重复、错误顾客、到达/对话/确认阻挡、错误模式、缺失报价、现金异常和旧快照兼容。记录位于 `artifacts/m3a-panel/`；本小范围收尾由主Agent复核，未新增子Agent。
+
+本轮实机授权已单独取得：最多2槽，每槽4位顾客/16次写入、最多2位普通顾客的面板开启；允许初始提示/设置与清理，禁止CU点击顾客开面板，禁止商品搬运、买卖、整理、日结和跨日。
+
+### 收尾实机结果：PASS（普通 SELL 面板自主开启）
+
+使用真实 Codex CLI `gpt-5.6-luna` 与 PawnPilot MCP，五个工具均有实际调用。仅创建 save_13，开门、接待 mentor 和食品卖家，必要对话自动播放期间使用 `wait_for_update`；Computer Use 仅完成启动、初始设置、观察和清理，没有点击顾客或打开交易面板。共4次 MCP 写入，各自按原ID查询到 succeeded / postcondition_observed：
+
+| command_id | 动作 | 结果 |
+|---|---|---|
+| panel-1-start | start_business | 自主开门 |
+| panel-1-receive | receive_next_customer | 接待导师并等待普通对话 |
+| panel-1-receive-2 | receive_next_customer | 接待普通食品卖家 |
+| panel-1b-open-1 | open_trade_panel | 当前 customer-51 面板自主开启 |
+
+第一次 CLI 达到有界等待次数后停止，第二次只读确认对话结束后续跑，未重放前三次命令。开面板前 revision39：customer-51、arrived=true、trade_type=sell、trade_panel=closed、phase=unknown、displayed_total=null；开后 revision40：仍为 customer-51、trade_panel=sell、phase=trading、quote.mode=normal、displayed_total=0，cash550→550。后续 legal_actions 保留 prepare_purchase_items 并新增 dismiss_customer，open_trade_panel 消失且候选原因明确为 trade_panel_already_open。画面观察与这些状态一致。
+
+本轮禁止搬运商品，因此0是空后柜的正常显示总价，quote.status仍为unverified、offer_ref=null；不宣称验证了正金额的商品绑定报价或成交。主库存8件及前后柜集合未因开面板改变，没有买入、卖出、整理或跨日。普通 BUY 的开面板支持和不误开顾客/不重复等边界由自动化覆盖，本轮未取得 BUY 实机样本；原始买入/卖出/拒绝/整理功能的回归通过，但未在本轮重新实机成交。
+
+原始证据：`artifacts/m3a-panel/codex/panel-1.jsonl`、`panel-1b.jsonl`；精确 before/after 为 `live/panel-result.json`，写动作核对为 `live/mcp-write-audit.json`。Release 构建0错误，仅有离线 NuGet 漏洞源 NU1900 警告；自动化日志为 `managed.log` 和 `python-recheck.log`，未删除早期失败记录。协议、README、Agent Skill 与专项 `verify-codex.py --trade-panel` 已同步。
+
+### 收尾清理与提交
+
+通过游戏 UI 删除唯一测试槽save_13，列表只剩原第7天394点进度；停用Mod后正常退出，安装脚本按收据校验并移除三文件及空目录，停止broker，确认18765不再监听。20份原始根目录文件备份、测试槽副本、journal和原始证据保留于本机，不提交敏感配置、存档或游戏DLL。`live/cleanup-audit.json` 记录原save_0及day5/day6两份历史备份全部SHA-256不变，游戏程序集仍为上述同一哈希；原进度没有加载或删除。
+
+允许发生变化的配置/索引/日志中，实际变化为SaveFile.es3、saves_index.es3、Player.log、Player-prev.log和一份旧GameLog；原日志轮转也可能移除旧日志，备份保留，不回滚整个目录。测试槽和安装目录均已不存在，游戏与broker已退出。
+
+沿用 `feature/m3a-basic-sell`，收尾提交标题为 `feat:补齐普通顾客交易面板自主开启`；提交包含本节、README、Skill、实现和回归测试，推送至同名远端分支，不合并main、不force push。提交SHA在交付消息及Git记录中给出。
+
+## 原始 M3-A 验收记录
+
 2026-11-01：**PASS（下述已验证的基础范围）**。真实 Codex CLI 经 PawnPilot MCP 完成一笔普通卖出，现金550→579；正常拒绝、成交后遣走及游戏原生固定整理通过。手动推进/选项未出现必要样本，明确未覆盖；不将自动播放算作这两项成功。原有普通买入自动化回归保持通过。
 
 ## 基线与架构

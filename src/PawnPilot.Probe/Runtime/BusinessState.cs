@@ -25,6 +25,9 @@ namespace PawnPilot
         public bool? arrived;
         public string trade_type = "unknown", phase = "unknown";
         public string request_text;
+        // Optional schema-2 extension: closed, buy, sell, or unavailable (NPC direction).
+        public string trade_panel;
+        public bool ShouldSerializetrade_panel() => trade_panel != null;
         // Null keeps historical business schema 1 serialization byte shape unchanged.
         public bool ShouldSerializerequest_text() => request_text != null;
         public string dialogue_ref;

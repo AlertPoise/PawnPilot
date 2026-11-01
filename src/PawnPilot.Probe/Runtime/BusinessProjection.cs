@@ -28,6 +28,7 @@ namespace PawnPilot
         public string DialogueStage = "unknown";
         public string DialogueText;
         public string RequestText;
+        public string TradePanel;
         public bool? IsTyping, WaitingForAdvance, MultiBuyDisabled;
         public object[] OptionIdentities = Array.Empty<object>();
         public string[] OptionTexts = Array.Empty<string>();
@@ -424,6 +425,7 @@ namespace PawnPilot
             details.customer.arrived = hasCustomer ? customer.Arrived : null;
             details.customer.trade_type = hasCustomer ? customer.TradeType : "unknown";
             details.customer.request_text = hasCustomer ? customer.RequestText : null;
+            details.customer.trade_panel = hasCustomer ? customer.TradePanel : null;
             details.customer.phase = customer.Presence == "absent" ?
                 (customer.Phase == "leaving" ? "leaving" : "absent") : hasCustomer ? customer.Phase : "unknown";
             details.customer.dialogue_stage = customer.Presence == "absent" ? "absent" : hasCustomer ? customer.DialogueStage : "unknown";
@@ -588,7 +590,7 @@ namespace PawnPilot
             details.eligibility.purchase_enabled = false;
             details.eligibility.missing = new List<string> { quoteComplete ? "purchase_preflight_pending" : "quote_binding" };
             foreach (string action in new[] { "start_business", "receive_next_customer", "advance_dialogue",
-                "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation", "dismiss_customer" })
+                "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation", "dismiss_customer", "open_trade_panel" })
                 details.candidates.Add(new BusinessCandidate { action = action, status = uiBlocksItems ? "blocked" : "unverified",
                     reason = uiBlocksItems ? "ui_blocked_or_unverified" : "native_scope_not_verified" });
             details.candidates.Add(new BusinessCandidate { action = "refuse_trade", status = "blocked", reason = "unsupported_native_path" });

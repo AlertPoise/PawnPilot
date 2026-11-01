@@ -213,16 +213,13 @@ namespace PawnPilot
                 bool sale = customer.TradeType == "buy";
                 foreach (var item in back.Items)
                     if (item != null && item.Owned == sale) backPurchaseItems.Add(item);
-                if (sale && (back.Items.Length != 1 || backPurchaseItems.Count != 1))
+                if (sale && backPurchaseItems.Count > 0 && (back.Items.Length != 1 || backPurchaseItems.Count != 1))
                 {
                     unavailable.Reason = "sale_requires_single_owned_counter_item";
                     return unavailable;
                 }
-                if (backPurchaseItems.Count == 0)
-                {
-                    unavailable.Reason = "purchase_set_empty";
-                    return unavailable;
-                }
+                // An empty trade panel still has a visible normal total (usually zero).
+                // Read it for panel-open verification without making an empty offer executable.
 
                 var rows = new List<BusinessQuoteRowInput>();
                 var negotiationContentRows = new List<TabletListRow>();
@@ -294,7 +291,7 @@ namespace PawnPilot
                 if (sale)
                 {
                     var client = PlayerStore.Instance.currentClientInstance?.GetClientBlueprint();
-                    if (GameSaleActions.IsSupportedOrdinaryBuyer(client) &&
+                    if (backPurchaseItems.Count == 1 && GameSaleActions.IsSupportedOrdinaryBuyer(client) &&
                         GameSaleActions.CanOfferItem(backPurchaseItems[0].Identity as GameItem, client))
                     {
                         purchaseIdentities.Add(backPurchaseItems[0].Identity);

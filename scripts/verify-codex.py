@@ -20,6 +20,7 @@ def main():
     modes.add_argument("--dismiss-customer", action="store_true", help="Dismiss exactly one currently legal ordinary customer through MCP")
     modes.add_argument("--business-stage", choices=("A", "B", "C", "FLOW"), help="Run a bounded real MCP business stage")
     modes.add_argument("--m3a", choices=("FLOW", "SALE", "SORT"), help="Authorized isolated-slot M3-A acceptance")
+    modes.add_argument("--trade-panel", action="store_true", help="Authorized ordinary panel-open acceptance; never buys or sells")
     parser.add_argument("--business", action="store_true", help="Read v3 business completeness and quote evidence; never purchases")
     parser.add_argument("--max-spend", type=int, help="Explicit maximum total for stage C; no purchase is submitted above it")
     parser.add_argument("--model", default="gpt-5.6-luna")
@@ -41,7 +42,7 @@ def main():
     if not codex or not python.is_file():
         parser.error("Codex CLI and project .venv are required")
     business_run = args.business or args.business_stage is not None or args.dismiss_customer
-    directory = ROOT / "artifacts" / ("m3a" if args.m3a else "m2cd" if business_run else "m2b") / "codex"
+    directory = ROOT / "artifacts" / ("m3a-panel" if args.trade_panel else "m3a" if args.m3a else "m2cd" if business_run else "m2b") / "codex"
     directory.mkdir(parents=True, exist_ok=True)
     output = directory / f"{args.label}.jsonl"
     if output.exists():
@@ -71,7 +72,27 @@ def main():
             "unavailable or incomplete. Unverified displayed text does not prove quote binding or legal purchase. "
             "Report the exact world/revision and missing evidence; never infer hidden names or prices. "
         )
-    if args.m3a:
+    if args.trade_panel:
+        prompt += (
+            "Verify autonomous opening of an ordinary customer's trade panel in the authorized test slot. "
+            f"Use command IDs prefixed {args.label}; at most {args.max_writes} writes and {args.max_customers} received customers. "
+            "Allowed writes ONLY start_business, receive_next_customer, open_trade_panel, advance_dialogue, "
+            "choose_dialogue_option, dismiss_customer. NO purchase, sale, item transfer, sorting, closing day or GUI. "
+            "Before EACH write observe fresh, copy EXACT current legal action arguments and world/revision/version. "
+            "After EACH act query get_action_status using its original ID, wait command_terminal if needed and query "
+            "the SAME ID again. Unknown/error/timeout: stop, never replay. Definite stale rejection permits fresh "
+            "observation and at most one new decision. Wait for automatic dialogue; advance next only when manual "
+            "waiting is actually visible; choose only necessary visible ordinary options. Never invent choices. "
+            "Use at most 12 revision waits, at most 10000ms each, stop after three unchanged waits. "
+            "When absent, start then receive within budget. If an ordinary panel is CLOSED and open_trade_panel is "
+            "legal, execute it via MCP. Verify same customer, trade_panel equals trade_type (NPC direction), phase "
+            "trading, normal displayed_total readable, and unchanged cash. Empty-counter normal total 0 is valid "
+            "visible information, NOT a purchasable offer. Verify open_trade_panel is no longer legal, do NOT toggle "
+            "or submit an illegal repeat. Report this successful opening and STOP without dismissing that customer. "
+            "If a panel already opened automatically, report it as already open, NOT MCP-open success; normally "
+            "dismiss only if currently legal and receive another within budget. Report command IDs and exact evidence. "
+        )
+    elif args.m3a:
         prompt += (
             "Perform this bounded M3-A test ONLY in the caller-authorized isolated test slot. "
             f"Mode is {args.m3a}. Prefix fresh command IDs with {args.label}. "
@@ -208,7 +229,7 @@ def main():
             "Never submit act again, even on timeout, unknown, stale or error. Then observe once. "
             "If prerequisites fail, stop and report. Include command ID and before/after evidence."
         )
-    elif args.business_stage is None and args.m3a is None:
+    elif args.business_stage is None and args.m3a is None and not args.trade_panel:
         prompt += (
             "Do not call act. Also query get_action_status for ID integration_nonexistent_readonly. "
             "Call wait_for_update with criterion=operable and max_wait_ms=500 to exercise bounded waiting."
@@ -229,7 +250,7 @@ def main():
     command += [prompt]
     with output.open("x", encoding="utf-8") as stdout, output.with_suffix(".stderr.log").open("x", encoding="utf-8") as stderr:
         result = subprocess.run(command, cwd=ROOT, stdout=stdout, stderr=stderr,
-                                timeout=900 if args.business_stage == "FLOW" or args.m3a == "FLOW" else 240)
+                                timeout=900 if args.business_stage == "FLOW" or args.m3a == "FLOW" or args.trade_panel else 240)
     print(json.dumps({"exit_code": result.returncode, "evidence": str(output)}))
     raise SystemExit(result.returncode)
 

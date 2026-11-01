@@ -42,6 +42,7 @@ V3_ACTION_ARGUMENTS = {
     "sort_inventory_default": frozenset({"container"}),
     "cancel_confirmation": frozenset(), "refuse_trade": frozenset({"customer_ref"}),
     "dismiss_customer": frozenset({"customer_ref"}),
+    "open_trade_panel": frozenset({"customer_ref"}),
     "purchase_visible_offer": frozenset({"customer_ref", "offer_ref", "item_refs",
         "collection_fingerprint", "mode", "amount", "max_spend"}),
 }
@@ -344,6 +345,8 @@ def _valid_business_v3(business):
         # Optional so schema-2 journal history written before this field remains readable.
         if type(c) is dict and "request_text" in c:
             customer_keys.add("request_text")
+        if type(c) is dict and "trade_panel" in c:
+            customer_keys.add("trade_panel")
     if not (shape(c, customer_keys)
             and c["presence"] in {"absent", "present", "unverified"}
             and (c["arrived"] is None or type(c["arrived"]) is bool)
@@ -356,6 +359,7 @@ def _valid_business_v3(business):
     if schema == 2:
         options = c["options"]
         if (("request_text" in c and not _v3_text(c["request_text"], nullable=True))
+                or ("trade_panel" in c and c["trade_panel"] not in {None, "closed", "buy", "sell", "unavailable"})
                 or not _v3_text(c["dialogue_text"], nullable=True)
                 or (c["is_typing"] is not None and type(c["is_typing"]) is not bool)
                 or (c["waiting_for_advance"] is not None and type(c["waiting_for_advance"]) is not bool)
@@ -601,7 +605,7 @@ def valid_action_binding_v3(business, action, arguments):
     details = business["details"]
     if action in {"advance_dialogue", "choose_dialogue_option", "prepare_purchase_items",
                   "prepare_sale_items", "sell_visible_offer",
-                  "refuse_trade", "dismiss_customer"}:
+                  "refuse_trade", "dismiss_customer", "open_trade_panel"}:
         if arguments.get("customer_ref") != business["customer_ref"] or business["customer_ref"] is None:
             return False
     if action in {"advance_dialogue", "choose_dialogue_option"}:
@@ -619,6 +623,14 @@ def valid_action_binding_v3(business, action, arguments):
         if arguments.get("option_ref") not in business["details"]["customer"]["option_refs"]:
             return False
     schema = details["schema_version"]
+    if action == "open_trade_panel":
+        customer = details["customer"]
+        if (schema != 2 or customer["presence"] != "present" or customer["arrived"] is not True
+                or customer["trade_type"] not in {"buy", "sell"} or customer.get("trade_panel") != "closed"
+                or customer["dialogue_ref"] is not None or customer["phase"] in {"dialogue", "leaving"}
+                or customer.get("is_typing") is True or customer.get("waiting_for_advance") is True
+                or _has_action_blocking_evidence(details["ui"]["blockers"], action)):
+            return False
     if action == "prepare_purchase_items":
         front = next((row for row in details["containers"] if row["container"] == "front"), None)
         if (schema != 2 or front is None or front["completeness"] != "complete"
@@ -781,6 +793,19 @@ def valid_success_evidence_v3(before, after):
 def valid_action_success_evidence_v3(command, before, after):
     """Validate only the observable postcondition for the command's own operation."""
     action = command["action"]
+    if action == "open_trade_panel":
+        old = before["business"]["details"]["customer"]
+        new = after["business"]["details"]["customer"]
+        quote = after["business"]["details"]["quote"]
+        return (before["cash"] == after["cash"] and before["world_epoch"] == after["world_epoch"]
+                and before["scene"] == after["scene"] and after["revision"] > before["revision"]
+                and before["business"]["customer_ref"] == command["arguments"]["customer_ref"]
+                and before["business"]["customer_ref"] == after["business"]["customer_ref"]
+                and old["presence"] == "present" and old.get("trade_panel") == "closed"
+                and old["trade_type"] in {"buy", "sell"} and new["trade_type"] == old["trade_type"]
+                and new.get("trade_panel") == old["trade_type"] and new["presence"] == "present"
+                and new["arrived"] is True and new["phase"] == "trading" and new["dialogue_ref"] is None
+                and quote["mode"] == "normal" and quote["displayed_total"] is not None)
     if action == "close_menu":
         return valid_close_menu_evidence_v3(before, after)
     if action == "start_business":

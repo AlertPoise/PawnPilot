@@ -48,6 +48,7 @@ namespace PawnPilot
             S(b.support); S(b.customer_ref); S(b.offer_ref); S(b.collection_fingerprint); L(b.item_refs);
             var d = b.details;
             S(d.status); S(d.customer.presence); S(d.customer.trade_type); S(d.customer.phase); S(d.customer.request_text);
+            S(d.customer.trade_panel);
             S(d.customer.dialogue_ref); S(d.customer.dialogue_stage); S(d.customer.dialogue_text);
             L(d.customer.option_refs);
             if (d.customer.options != null)
@@ -74,6 +75,7 @@ namespace PawnPilot
                     presence = details.customer.presence, arrived = details.customer.arrived,
                     trade_type = details.customer.trade_type, phase = details.customer.phase,
                     request_text = details.customer.request_text,
+                    trade_panel = details.customer.trade_panel,
                     dialogue_ref = details.customer.dialogue_ref, dialogue_stage = details.customer.dialogue_stage,
                     dialogue_text = details.customer.dialogue_text, is_typing = details.customer.is_typing,
                     waiting_for_advance = details.customer.waiting_for_advance,
@@ -113,7 +115,8 @@ namespace PawnPilot
         private static bool ValidateCustomer(CustomerState c, string customerRef, int schemaVersion)
         {
             if (!OneOf(c.presence, "absent", "present", "unverified") ||
-                (schemaVersion == 1 && c.request_text != null) ||
+                (schemaVersion == 1 && (c.request_text != null || c.trade_panel != null)) ||
+                (c.trade_panel != null && !OneOf(c.trade_panel, "closed", "buy", "sell", "unavailable")) ||
                 !OneOf(c.trade_type, "sell", "buy", "other", "unknown") ||
                 (schemaVersion == 1 && c.trade_type == "buy") ||
                 !OneOf(c.phase, "absent", "arriving", "dialogue", "trading", "leaving", "unknown") ||
@@ -295,7 +298,7 @@ namespace PawnPilot
             foreach (var c in candidates)
                 if (c == null || !OneOf(c.action, "close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                     "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer",
-                    "purchase_visible_offer", "prepare_sale_items", "sell_visible_offer", "sort_inventory_default") ||
+                    "purchase_visible_offer", "prepare_sale_items", "sell_visible_offer", "sort_inventory_default", "open_trade_panel") ||
                     !OneOf(c.status, "candidate", "blocked", "unverified") || !ValidText(c.reason, MaxText)) return false;
             return true;
         }

@@ -97,6 +97,30 @@ namespace PawnPilot
             evidence.AutoCallNextDisabled = EmporiumOption.Instance != null && !EmporiumOption.Instance.autoCallNext;
 
             var current = dialog == null ? null : dialog.currentDialog;
+            if (command.action == "open_trade_panel")
+            {
+                var panel = NegociationUIManager.Instance;
+                var actor = ui.clientGameObject;
+                var interactable = actor == null ? null : actor.GetComponent<Interactable>();
+                bool ordinary = IsSupportedOrdinarySeller(blueprint) || GameSaleActions.IsSupportedOrdinaryBuyer(blueprint);
+                bool dialogueDone = dialog != null && current == null && !ui.IsTyping() && !ui.isAboutToStartMainDialog;
+                bool targetReady = panel?.uiObject != null && actor != null && actor.isActiveAndEnabled &&
+                    actor.gameObject.activeInHierarchy && !actor.IsMoving() &&
+                    interactable != null && interactable.isActiveAndEnabled && interactable.isAvailable &&
+                    !Interactable.isPaused && !ui.isShootingMode && !ui.isMagnifyingMode;
+                evidence.NativeTarget = targetReady ? panel : null;
+                evidence.NativeTargetAvailable = targetReady;
+                evidence.CapabilityScopeVerified = evidence.CurrentCustomerMatches && evidence.CustomerArrived &&
+                    ordinary && blueprint != null && !blueprint.isBusinessComplete && dialogueDone && targetReady &&
+                    !panel.uiObject.activeSelf && !UnsafeVisibleModal(ui, store) && evidence.NoBlockers;
+                evidence.Reason = !ordinary ? "ordinary_trade_customer_required" :
+                    !evidence.CurrentCustomerMatches ? "customer_changed" :
+                    !evidence.CustomerArrived ? "customer_arriving" : !dialogueDone ? "dialogue_in_progress" :
+                    panel?.uiObject != null && panel.uiObject.activeSelf ? "trade_panel_already_open" :
+                    !targetReady ? "customer_interaction_unavailable" :
+                    !evidence.CapabilityScopeVerified ? "trade_panel_open_blocked" : null;
+                return evidence;
+            }
             evidence.DialogueMatches = current != null && evidence.CurrentCustomerMatches &&
                 projection.TryResolveDialogue(snapshot.world_epoch, observedCustomerRef,
                     customer?.dialogue_ref, out var dialogueIdentity) && ReferenceEquals(dialogueIdentity, current) &&
@@ -295,6 +319,7 @@ namespace PawnPilot
                     collection_fingerprint = snapshot.business.details.front_collection_fingerprint }, snapshot, result);
 
             AddScopedCandidate("dismiss_customer", new ActionArguments { customer_ref = customerRef }, snapshot, result);
+            AddScopedCandidate("open_trade_panel", new ActionArguments { customer_ref = customerRef }, snapshot, result);
         }
 
         private void AddScopedCandidate(string action, ActionArguments arguments, Snapshot snapshot, List<LegalAction> result)
@@ -334,6 +359,11 @@ namespace PawnPilot
 
             switch (command.action)
             {
+                case "open_trade_panel":
+                    // StoreClientMono.OnClick -> ToggleUI -> OpenUI; preflight proves closed.
+                    // Call its open-only branch so this semantic action can never close a panel.
+                    ((NegociationUIManager)evidence.NativeTarget).OpenUI();
+                    return;
                 case "start_business":
                     ((StoreShutterButton)evidence.NativeTarget).OnClick();
                     return;
@@ -372,6 +402,10 @@ namespace PawnPilot
             var evidence = Check(command, after);
             switch (command.action)
             {
+                case "open_trade_panel":
+                    return evidence.CurrentCustomerMatches && evidence.CustomerArrived &&
+                        BusinessCustomerReader.ReadTradePanel() == after.business.details.customer.trade_type
+                        ? decision : VerificationDecision.Pending();
                 case "start_business":
                     return evidence.StoreOpen && evidence.StoreLockReleased
                         ? decision : VerificationDecision.Pending();

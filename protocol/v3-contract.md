@@ -43,6 +43,12 @@ non-owned back items for `trade_type=sell`, and player-owned back items for `tra
 older schema-2 journal records and observations without a rendered request may omit it. `prepare_purchase_items` binds to the front list and
 `front_collection_fingerprint` instead.
 
+Optional `customer.trade_panel` reports `closed`, `buy`, `sell`, or `unavailable`. Buy/sell
+describe the actually built open panel in NPC direction, matching `customer.trade_type`;
+null/omission means unknown in older schema-2 records. Schema 1 does not accept the extension.
+An empty panel may expose a visible normal total of zero with quote status `unverified` and
+no executable offer. It does not authorize a zero-item purchase or sale.
+
 `shape_status=known` describes the current orientation-aware bounding width/height only, not the
 occupied-cell mask, grid placement, transfer rule or proven receiving capacity. Runtime capture
 uses a stricter conservative escaped-text budget than the wire maximum and degrades oversized
@@ -65,6 +71,12 @@ Registered non-economic/business-interaction policies:
 - cancel_confirmation: {}.
 - refuse_trade: customer_ref.
 - dismiss_customer: customer_ref.
+- open_trade_panel: customer_ref. Requires the current arrived ordinary BUY/SELL customer,
+  a closed panel, completed necessary dialogue, and available native interaction. Existing
+  global UI coverage placeholders do not block this local action. The native adapter calls
+  the open-only branch of the normal customer interaction; an already-open panel is not legal.
+  Success requires the same customer, correct built panel direction, trading phase and readable
+  normal displayed total, unchanged cash and a newer revision. Invocation alone is not success.
 - prepare_sale_items: customer_ref, exactly one player-owned item ref, collection_fingerprint. Requires
   an arrived BUY customer in trading, complete player and back containers, and an empty back container.
   The fingerprint is the player `BusinessCollection` fingerprint for the selected item with

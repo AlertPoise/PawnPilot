@@ -10,6 +10,24 @@ namespace PawnPilot
     // references and state needed by the pure BusinessProjection; raw game objects never serialize.
     internal static class BusinessCustomerReader
     {
+        private static readonly System.Reflection.FieldInfo PanelMode = typeof(NegociationUIManager)
+            .GetField("mode", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        // Read the built UI mode, never invoke ResolveMode or refresh from observation.
+        internal static string ReadTradePanel()
+        {
+            var panel = NegociationUIManager.Instance;
+            if (panel?.uiObject == null) return "unavailable";
+            if (!panel.uiObject.activeSelf) return "closed";
+            if (!panel.uiObject.activeInHierarchy) return "unavailable";
+            try
+            {
+                string mode = PanelMode?.GetValue(panel)?.ToString();
+                return mode == "Buying" ? "buy" : mode == "Selling" ? "sell" : "unavailable";
+            }
+            catch { return "unavailable"; }
+        }
+
         internal static BusinessInput Read()
         {
             var input = new BusinessInput();
@@ -48,6 +66,7 @@ namespace PawnPilot
 
             var dialog = DialogUIManager.Instance;
             var negotiation = NegociationUIManager.Instance;
+            customer.TradePanel = ReadTradePanel();
             if (customer.TradeType == "buy" && store.isClientArrived &&
                 negotiation?.uiObject != null && negotiation.uiObject.activeInHierarchy)
             {

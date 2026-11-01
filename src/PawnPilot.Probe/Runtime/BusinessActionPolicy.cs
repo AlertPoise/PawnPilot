@@ -32,7 +32,7 @@ namespace PawnPilot
         public static bool IsEnabled(string action) => action == "start_business" || action == "receive_next_customer" ||
             action == "advance_dialogue" || action == "choose_dialogue_option" ||
             action == "prepare_purchase_items" || action == "dismiss_customer" || action == "purchase_visible_offer" ||
-            action == "prepare_sale_items" || action == "sell_visible_offer" || action == "sort_inventory_default";
+            action == "prepare_sale_items" || action == "sell_visible_offer" || action == "sort_inventory_default" || action == "open_trade_panel";
         [Obsolete("Use IsEnabled(action); runtime actions are enabled per action scope.")]
         public static bool ProductionDispatchEnabled => IsEnabled("start_business") || IsEnabled("receive_next_customer");
 
@@ -40,7 +40,7 @@ namespace PawnPilot
         {
             "start_business", "receive_next_customer", "advance_dialogue", "choose_dialogue_option",
             "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer", "purchase_visible_offer",
-            "prepare_sale_items", "sell_visible_offer", "sort_inventory_default"
+            "prepare_sale_items", "sell_visible_offer", "sort_inventory_default", "open_trade_panel"
         };
 
         public static bool IsRegistered(string action) => action != null && Array.IndexOf(Registered, action) >= 0;
@@ -93,6 +93,7 @@ namespace PawnPilot
                         a.authorization_ref == null && !a.amount.HasValue && !a.max_spend.HasValue;
                 case "refuse_trade":
                 case "dismiss_customer":
+                case "open_trade_panel":
                     return Ref(a.customer_ref) && a.item_refs == null && a.offer_ref == null &&
                         a.collection_fingerprint == null && a.option_ref == null && a.dialogue_ref == null &&
                         a.mode == null && a.authorization_ref == null && !a.amount.HasValue && !a.max_spend.HasValue;
@@ -144,6 +145,10 @@ namespace PawnPilot
             }
             var state = snapshot.business.details.customer;
             var args = command.arguments;
+            if (command.action == "open_trade_panel")
+                return evidence.NativeTargetAvailable && evidence.NativeEntryVerified && evidence.CapabilityScopeVerified &&
+                    evidence.CurrentCustomerMatches && evidence.CustomerArrived
+                    ? null : evidence.Reason ?? "trade_panel_open_precondition";
             if (command.action == "start_business" || command.action == "receive_next_customer")
             {
                 if (!evidence.NativeTargetAvailable || !evidence.NativeEntryVerified || !evidence.NoBlockers ||
@@ -239,6 +244,12 @@ namespace PawnPilot
                 case "receive_next_customer":
                     return snapshot.phase == "OPEN" && customer.presence == "absent"
                         ? null : "customer_already_present_or_store_closed";
+                case "open_trade_panel":
+                    return CustomerMatches(snapshot.business.customer_ref, customer, args.customer_ref) &&
+                        customer.arrived == true && (customer.trade_type == "buy" || customer.trade_type == "sell") &&
+                        customer.trade_panel == "closed" && customer.dialogue_ref == null &&
+                        customer.phase != "dialogue" && customer.is_typing != true && customer.waiting_for_advance != true
+                        ? null : "trade_panel_open_precondition";
                 case "advance_dialogue":
                     return CustomerMatches(snapshot.business.customer_ref, customer, args.customer_ref) &&
                         customer.dialogue_ref == args.dialogue_ref &&
@@ -356,6 +367,13 @@ namespace PawnPilot
             var newCustomer = after.business.details.customer;
             switch (action)
             {
+                case "open_trade_panel":
+                    return SameCustomerRef(before, after) && oldCustomer.presence == "present" &&
+                        oldCustomer.trade_panel == "closed" && newCustomer.presence == "present" && newCustomer.arrived == true &&
+                        (oldCustomer.trade_type == "buy" || oldCustomer.trade_type == "sell") &&
+                        newCustomer.trade_type == oldCustomer.trade_type && newCustomer.trade_panel == oldCustomer.trade_type &&
+                        newCustomer.phase == "trading" && newCustomer.dialogue_ref == null &&
+                        after.business.details.quote?.mode == "normal" && after.business.details.quote.displayed_total.HasValue;
                 case "start_business":
                     return before.phase == "MORNING" && after.phase == "OPEN";
                 case "receive_next_customer":
@@ -405,6 +423,8 @@ namespace PawnPilot
             if (before == null || before.world_epoch != after.world_epoch || before.scene != after.scene)
                 return VerificationDecision.Uncertain("world_changed_after_action");
             if (before.cash != after.cash && command.action != "sell_visible_offer") return VerificationDecision.Uncertain("cash_changed_during_non_economic_action");
+            if (command.action == "open_trade_panel" && !SameCustomerRef(before, after))
+                return VerificationDecision.Uncertain("customer_changed_after_panel_open");
             if (Postcondition(command, before, after)) return VerificationDecision.Succeeded();
             if (command.action == "prepare_purchase_items" && StoreCollectionChanged(before, after))
                 return VerificationDecision.Uncertain("prepare_partial_or_unexpected_collection_change");
