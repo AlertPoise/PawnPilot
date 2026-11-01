@@ -1,0 +1,1187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pawnpilot:wire:3",
+  "title": "PawnPilot wire v3",
+  "description": "Wire v3 business observations and bounded registered actions. Cross-field identity, reference binding, progress and evidence checks are enforced by bridge/protocol.py.",
+  "$defs": {
+    "Arguments": {
+      "type": "object",
+      "properties": {
+        "customer_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "item_refs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          }
+        },
+        "offer_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "collection_fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "option_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "dialogue_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "mode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "amount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "max_spend": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "authorization_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "Interaction": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "consistency": {
+          "enum": [
+            "consistent",
+            "updating",
+            "unverified",
+            "blocked"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "phase",
+        "consistency",
+        "reason",
+        "operable"
+      ],
+      "additionalProperties": false
+    },
+    "LegalAction": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "const": "close_menu"
+        },
+        "arguments": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "action",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    "Snapshot": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "world_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128
+        },
+        "scene": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128
+        },
+        "loaded": {
+          "type": "boolean"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "not_ready_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cash": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "menu_open": {
+          "type": "boolean"
+        },
+        "can_close_menu": {
+          "type": "boolean"
+        },
+        "interaction": {
+          "$ref": "#/$defs/Interaction"
+        },
+        "business": {
+          "$ref": "#/$defs/BusinessV3"
+        },
+        "legal_actions": {
+          "type": "array",
+          "maxItems": 1,
+          "items": {
+            "$ref": "#/$defs/LegalAction"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "version",
+        "world_epoch",
+        "revision",
+        "phase",
+        "scene",
+        "loaded",
+        "ready",
+        "not_ready_reason",
+        "cash",
+        "menu_open",
+        "can_close_menu",
+        "interaction",
+        "business",
+        "legal_actions"
+      ],
+      "additionalProperties": false
+    },
+    "Request": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "broker_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expected_world_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "expected_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "arguments": {
+          "$ref": "#/$defs/Arguments"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "broker_epoch",
+        "action",
+        "expected_world_epoch",
+        "expected_revision",
+        "expected_version",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    "Command": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "broker_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "action": {
+          "const": "close_menu"
+        },
+        "expected_world_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "expected_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "arguments": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "start_deadline_unix_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "execution_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "broker_epoch",
+        "action",
+        "expected_world_epoch",
+        "expected_revision",
+        "expected_version",
+        "arguments",
+        "start_deadline_unix_ms",
+        "execution_timeout_ms"
+      ],
+      "additionalProperties": false
+    },
+    "Progress": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "broker_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "stage": {
+          "enum": [
+            "validated",
+            "invoking",
+            "verifying",
+            "completed",
+            "uncertain"
+          ]
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "may_have_side_effects": {
+          "type": "boolean"
+        },
+        "started_at_unix_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "execution_deadline_unix_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "broker_epoch",
+        "stage",
+        "sequence",
+        "may_have_side_effects",
+        "started_at_unix_ms",
+        "execution_deadline_unix_ms"
+      ],
+      "additionalProperties": false
+    },
+    "Result": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "broker_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "rejected",
+            "outcome_unknown"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Progress"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "broker_epoch",
+        "status",
+        "reason",
+        "before",
+        "after",
+        "execution"
+      ],
+      "additionalProperties": false
+    },
+    "Exchange": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "broker_epoch": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "has_result": {
+          "type": "boolean"
+        },
+        "result": {},
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Progress"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "session_id",
+        "broker_epoch",
+        "state",
+        "has_result",
+        "result",
+        "progress"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "has_result": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/Result"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Reply": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "broker_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "acknowledged_result_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "has_command": {
+          "type": "boolean"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Command"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "broker_epoch",
+        "acknowledged_result_id",
+        "has_command",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "BusinessDetails": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "status": {
+          "enum": [
+            "unavailable",
+            "partial",
+            "complete"
+          ]
+        },
+        "customer": {
+          "$ref": "#/$defs/CustomerState"
+        },
+        "containers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContainerState"
+          },
+          "maxItems": 3
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ItemState"
+          },
+          "maxItems": 64
+        },
+        "quote": {
+          "$ref": "#/$defs/QuoteState"
+        },
+        "ui": {
+          "$ref": "#/$defs/BusinessUiState"
+        },
+        "capacity": {
+          "$ref": "#/$defs/CapacityState"
+        },
+        "eligibility": {
+          "$ref": "#/$defs/PurchaseEligibility"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BusinessCandidate"
+          },
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "customer",
+        "containers",
+        "items",
+        "quote",
+        "ui",
+        "capacity",
+        "eligibility",
+        "candidates"
+      ],
+      "additionalProperties": false
+    },
+    "CustomerState": {
+      "type": "object",
+      "properties": {
+        "presence": {
+          "enum": [
+            "absent",
+            "present",
+            "unverified"
+          ]
+        },
+        "arrived": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trade_type": {
+          "enum": [
+            "sell",
+            "other",
+            "unknown"
+          ]
+        },
+        "phase": {
+          "enum": [
+            "absent",
+            "arriving",
+            "dialogue",
+            "trading",
+            "leaving",
+            "unknown"
+          ]
+        },
+        "dialogue_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dialogue_stage": {
+          "enum": [
+            "absent",
+            "typing",
+            "waiting",
+            "choices",
+            "updating",
+            "unknown"
+          ]
+        },
+        "option_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          },
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "presence",
+        "arrived",
+        "trade_type",
+        "phase",
+        "dialogue_ref",
+        "dialogue_stage",
+        "option_refs"
+      ],
+      "additionalProperties": false
+    },
+    "ContainerState": {
+      "type": "object",
+      "properties": {
+        "container": {
+          "enum": [
+            "front",
+            "back",
+            "player"
+          ]
+        },
+        "completeness": {
+          "enum": [
+            "complete",
+            "incomplete",
+            "unavailable",
+            "unimplemented"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          },
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "container",
+        "completeness",
+        "reason",
+        "item_refs"
+      ],
+      "additionalProperties": false
+    },
+    "ItemState": {
+      "type": "object",
+      "properties": {
+        "item_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "container": {
+          "enum": [
+            "front",
+            "back",
+            "player"
+          ]
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 256,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "units": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "owned": {
+          "type": "boolean"
+        },
+        "shape_status": {
+          "enum": [
+            "known",
+            "unverified"
+          ]
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "height": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "item_ref",
+        "container",
+        "name",
+        "units",
+        "owned",
+        "shape_status",
+        "width",
+        "height"
+      ],
+      "additionalProperties": false
+    },
+    "QuoteRowState": {
+      "type": "object",
+      "properties": {
+        "item_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 256,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "price_text": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 256,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "amount": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "item_ref",
+        "name",
+        "price_text",
+        "amount"
+      ],
+      "additionalProperties": false
+    },
+    "QuoteState": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "complete",
+            "unverified",
+            "unavailable"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "normal",
+            "wholesale",
+            "unknown"
+          ]
+        },
+        "displayed_total": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QuoteRowState"
+          },
+          "maxItems": 64
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 256,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "mode",
+        "displayed_total",
+        "rows",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "BusinessUiState": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "consistent",
+            "updating",
+            "unverified",
+            "blocked"
+          ]
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "maxItems": 64
+        },
+        "coverage": {
+          "enum": [
+            "known_roots_only",
+            "verified"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "blockers",
+        "coverage"
+      ],
+      "additionalProperties": false
+    },
+    "CapacityState": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "sufficient",
+            "insufficient",
+            "unverified"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "status",
+        "reason",
+        "scope"
+      ],
+      "additionalProperties": false
+    },
+    "PurchaseEligibility": {
+      "type": "object",
+      "properties": {
+        "purchase_enabled": {
+          "type": "boolean"
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "purchase_enabled",
+        "missing"
+      ],
+      "additionalProperties": false
+    },
+    "BusinessCandidate": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "enum": [
+            "close_menu",
+            "start_business",
+            "receive_next_customer",
+            "advance_dialogue",
+            "choose_dialogue_option",
+            "prepare_purchase_items",
+            "cancel_confirmation",
+            "refuse_trade",
+            "dismiss_customer",
+            "purchase_visible_offer"
+          ]
+        },
+        "status": {
+          "enum": [
+            "candidate",
+            "blocked",
+            "unverified"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "action",
+        "status",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "BusinessV3": {
+      "type": "object",
+      "properties": {
+        "support": {
+          "enum": [
+            "unsupported",
+            "partial",
+            "available"
+          ]
+        },
+        "customer_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          },
+          "maxItems": 64
+        },
+        "offer_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "collection_fingerprint": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "details": {
+          "$ref": "#/$defs/BusinessDetails"
+        }
+      },
+      "required": [
+        "support",
+        "customer_ref",
+        "item_refs",
+        "offer_ref",
+        "collection_fingerprint",
+        "details"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

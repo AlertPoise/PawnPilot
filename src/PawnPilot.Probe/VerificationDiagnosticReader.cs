@@ -53,7 +53,8 @@ namespace PawnPilot
                 if (name == null || price == null) throw new InvalidOperationException();
                 var nameText = name.GetComponent<TMP_Text>();
                 var priceText = price.GetComponent<TMP_Text>();
-                bool visible = TextVisible(nameText, frame.scroll.viewport) && TextVisible(priceText, frame.scroll.viewport);
+                bool visible = VisibleUiReader.TextVisible(nameText, frame.scroll.viewport) &&
+                    VisibleUiReader.TextVisible(priceText, frame.scroll.viewport);
                 // Do not read text for clipped rows. No item binding is inferred from row order.
                 rows.Add(new VerificationRowInput { FullyVisible = visible,
                     Name = visible ? DiagnosticRenderedText.Read(nameText) : "",
@@ -68,7 +69,7 @@ namespace PawnPilot
                 if (label == null || value == null) throw new InvalidOperationException();
                 var left = label.GetComponent<TMP_Text>();
                 var right = value.GetComponent<TMP_Text>();
-                if (!TextVisible(left, null) || !TextVisible(right, null)) continue;
+                if (!VisibleUiReader.TextVisible(left) || !VisibleUiReader.TextVisible(right)) continue;
                 if (footer.Count >= 8) throw new InvalidOperationException();
                 footer.Add(DiagnosticRenderedText.Read(left) + " | " + DiagnosticRenderedText.Read(right));
             }
@@ -97,13 +98,14 @@ namespace PawnPilot
         private static void ReadInventory(PixelWindow window, GameGridInventory inventory, string location,
             List<VerificationItemInput> result)
         {
-            if (window == null || inventory == null || !window.IsVisible() || !Visible(window.rectTransform)) return;
+            if (window == null || inventory == null || !window.IsVisible() || !VisibleUiReader.RectVisible(window.rectTransform)) return;
             foreach (var item in inventory.childItems)
             {
                 // No recursion into closed bags/hidden containers. Only rendered direct members.
                 var element = item as GameItemElement;
                 if (element == null || !ReferenceEquals(item.parentInventory, inventory) ||
-                    !Visible(element.rectTransform) || !Contained(element.rectTransform, inventory.rectTransform)) continue;
+                    !VisibleUiReader.RectVisible(element.rectTransform) ||
+                    !VisibleUiReader.Contained(element.rectTransform, inventory.rectTransform)) continue;
                 if (result.Count >= 64 || item.modifiedShape == null ||
                     item.modifiedShape.GetType() != typeof(GridShapeBuilder)) throw new InvalidOperationException();
                 result.Add(new VerificationItemInput { Identity = item, Container = location,
@@ -112,75 +114,6 @@ namespace PawnPilot
             }
         }
 
-        private static bool TextVisible(TMP_Text text, RectTransform viewport)
-        {
-            if (text == null || !text.isActiveAndEnabled || text.color.a <= 0 ||
-                !Visible(text.rectTransform)) return false;
-            if (DiagnosticRenderedText.Read(text) == null) return false;
-            return viewport == null || Contained(text.rectTransform, viewport);
-        }
-
-        private static bool Visible(RectTransform rect)
-        {
-            if (rect == null || !rect.gameObject.activeInHierarchy) return false;
-            foreach (var group in rect.GetComponentsInParent<CanvasGroup>(false))
-                if (group.alpha <= 0) return false;
-            foreach (var mask in rect.GetComponentsInParent<RectMask2D>(false))
-                if (mask.isActiveAndEnabled && !Contained(rect, mask.rectTransform)) return false;
-            // Arbitrary stencil masks aren't proven by a bounding rectangle.
-            foreach (var mask in rect.GetComponentsInParent<Mask>(false))
-                if (mask.isActiveAndEnabled) return false;
-            var canvas = rect.GetComponentInParent<Canvas>();
-            if (canvas == null || !canvas.isActiveAndEnabled) return false;
-            var camera = canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
-            if (canvas.renderMode != RenderMode.ScreenSpaceOverlay && camera == null) return false;
-            var corners = new Vector3[4]; rect.GetWorldCorners(corners);
-            foreach (var corner in corners)
-            {
-                var p = RectTransformUtility.WorldToScreenPoint(camera, corner);
-                if (p.x < 0 || p.y < 0 || p.x > Screen.width || p.y > Screen.height) return false;
-            }
-            return rect.rect.width > 0 && rect.rect.height > 0;
-        }
-
-        private static bool Contained(RectTransform child, RectTransform parent)
-        {
-            if (child == null || parent == null) return false;
-            var corners = new Vector3[4]; child.GetWorldCorners(corners);
-            var bounds = parent.rect;
-            foreach (var corner in corners)
-            {
-                var p = parent.InverseTransformPoint(corner);
-                if (p.x < bounds.xMin - 0.1f || p.x > bounds.xMax + 0.1f ||
-                    p.y < bounds.yMin - 0.1f || p.y > bounds.yMax + 0.1f) return false;
-            }
-            return true;
-        }
-    }
-
-    internal static class DiagnosticRenderedText
-    {
-        // TMP_Text.text can clear a lazy backing-string flag. Read only the existing
-        // rendered character buffer instead. Never invoke parsing or ForceMeshUpdate.
-        internal static string Read(TMP_Text text)
-        {
-            if (text == null || !text.isActiveAndEnabled || text.color.a <= 0) return null;
-            var info = text.textInfo;
-            if (text.havePropertiesChanged || info == null || info.characterInfo == null || info.characterCount < 0 ||
-                info.characterCount > 256 || info.characterCount > info.characterInfo.Length ||
-                info.pageCount > 1 || text.pageToDisplay != 1 || text.isTextOverflowing || text.isTextTruncated ||
-                text.maxVisibleCharacters < info.characterCount || text.maxVisibleLines < info.lineCount)
-                return null;
-            var chars = new char[info.characterCount];
-            for (int i = 0; i < chars.Length; i++)
-            {
-                var character = info.characterInfo[i];
-                if (character.pageNumber != 0 || character.lineNumber >= text.maxVisibleLines ||
-                    (!char.IsWhiteSpace(character.character) && (!character.isVisible || character.color.a == 0))) return null;
-                chars[i] = character.character;
-            }
-            return new string(chars);
-        }
     }
 }
 #endif

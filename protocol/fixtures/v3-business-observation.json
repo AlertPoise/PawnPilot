@@ -1,0 +1,404 @@
+{
+  "source": "fixture",
+  "before": {
+    "schema_version": 3,
+    "world_epoch": "fixture-world",
+    "revision": 1,
+    "version": "fixture-world:1",
+    "scene": "InventoryScene",
+    "loaded": true,
+    "ready": true,
+    "can_close_menu": true,
+    "not_ready_reason": null,
+    "cash": 550,
+    "phase": "MORNING",
+    "menu_open": true,
+    "interaction": {
+      "phase": "menu",
+      "consistency": "unverified",
+      "reason": "business_not_implemented",
+      "operable": true
+    },
+    "business": {
+      "support": "unsupported",
+      "customer_ref": null,
+      "item_refs": [],
+      "offer_ref": null,
+      "collection_fingerprint": null,
+      "details": {
+        "schema_version": 1,
+        "status": "unavailable",
+        "customer": {
+          "presence": "unverified",
+          "arrived": null,
+          "trade_type": "unknown",
+          "phase": "unknown",
+          "dialogue_ref": null,
+          "dialogue_stage": "unknown",
+          "option_refs": []
+        },
+        "containers": [],
+        "items": [],
+        "quote": {
+          "status": "unavailable",
+          "mode": "unknown",
+          "displayed_total": null,
+          "rows": [],
+          "reason": "not_observed"
+        },
+        "ui": {
+          "status": "unverified",
+          "blockers": [],
+          "coverage": "known_roots_only"
+        },
+        "capacity": {
+          "status": "unverified",
+          "reason": "native_rules_unverified",
+          "scope": "none"
+        },
+        "eligibility": {
+          "purchase_enabled": false,
+          "missing": [
+            "quote_binding",
+            "capacity",
+            "settlement",
+            "ui_coverage"
+          ]
+        },
+        "candidates": []
+      }
+    },
+    "legal_actions": [
+      {
+        "action": "close_menu",
+        "arguments": {}
+      }
+    ]
+  },
+  "after": {
+    "schema_version": 3,
+    "world_epoch": "fixture-world",
+    "revision": 2,
+    "version": "fixture-world:2",
+    "scene": "InventoryScene",
+    "loaded": true,
+    "ready": true,
+    "can_close_menu": false,
+    "not_ready_reason": null,
+    "cash": 550,
+    "phase": "MORNING",
+    "menu_open": false,
+    "interaction": {
+      "phase": "idle",
+      "consistency": "unverified",
+      "reason": "business_not_implemented",
+      "operable": true
+    },
+    "business": {
+      "support": "unsupported",
+      "customer_ref": null,
+      "item_refs": [],
+      "offer_ref": null,
+      "collection_fingerprint": null,
+      "details": {
+        "schema_version": 1,
+        "status": "unavailable",
+        "customer": {
+          "presence": "unverified",
+          "arrived": null,
+          "trade_type": "unknown",
+          "phase": "unknown",
+          "dialogue_ref": null,
+          "dialogue_stage": "unknown",
+          "option_refs": []
+        },
+        "containers": [],
+        "items": [],
+        "quote": {
+          "status": "unavailable",
+          "mode": "unknown",
+          "displayed_total": null,
+          "rows": [],
+          "reason": "not_observed"
+        },
+        "ui": {
+          "status": "unverified",
+          "blockers": [],
+          "coverage": "known_roots_only"
+        },
+        "capacity": {
+          "status": "unverified",
+          "reason": "native_rules_unverified",
+          "scope": "none"
+        },
+        "eligibility": {
+          "purchase_enabled": false,
+          "missing": [
+            "quote_binding",
+            "capacity",
+            "settlement",
+            "ui_coverage"
+          ]
+        },
+        "candidates": []
+      }
+    },
+    "legal_actions": []
+  },
+  "request": {
+    "schema_version": 3,
+    "id": "fixture-close-1",
+    "broker_epoch": "fixture-broker",
+    "action": "close_menu",
+    "expected_world_epoch": "fixture-world",
+    "expected_revision": 1,
+    "expected_version": "fixture-world:1",
+    "arguments": {}
+  },
+  "command": {
+    "schema_version": 3,
+    "id": "fixture-close-1",
+    "broker_epoch": "fixture-broker",
+    "action": "close_menu",
+    "expected_world_epoch": "fixture-world",
+    "expected_revision": 1,
+    "expected_version": "fixture-world:1",
+    "arguments": {},
+    "start_deadline_unix_ms": 105000,
+    "execution_timeout_ms": 5000
+  },
+  "progress": {
+    "id": "fixture-close-1",
+    "broker_epoch": "fixture-broker",
+    "stage": "completed",
+    "sequence": 4,
+    "may_have_side_effects": true,
+    "started_at_unix_ms": 100100,
+    "execution_deadline_unix_ms": 105100
+  },
+  "result": {
+    "schema_version": 3,
+    "id": "fixture-close-1",
+    "broker_epoch": "fixture-broker",
+    "status": "succeeded",
+    "reason": "observed",
+    "before": {
+      "schema_version": 3,
+      "world_epoch": "fixture-world",
+      "revision": 1,
+      "version": "fixture-world:1",
+      "scene": "InventoryScene",
+      "loaded": true,
+      "ready": true,
+      "can_close_menu": true,
+      "not_ready_reason": null,
+      "cash": 550,
+      "phase": "MORNING",
+      "menu_open": true,
+      "interaction": {
+        "phase": "menu",
+        "consistency": "unverified",
+        "reason": "business_not_implemented",
+        "operable": true
+      },
+      "business": {
+        "support": "unsupported",
+        "customer_ref": null,
+        "item_refs": [],
+        "offer_ref": null,
+        "collection_fingerprint": null,
+        "details": {
+          "schema_version": 1,
+          "status": "unavailable",
+          "customer": {
+            "presence": "unverified",
+            "arrived": null,
+            "trade_type": "unknown",
+            "phase": "unknown",
+            "dialogue_ref": null,
+            "dialogue_stage": "unknown",
+            "option_refs": []
+          },
+          "containers": [],
+          "items": [],
+          "quote": {
+            "status": "unavailable",
+            "mode": "unknown",
+            "displayed_total": null,
+            "rows": [],
+            "reason": "not_observed"
+          },
+          "ui": {
+            "status": "unverified",
+            "blockers": [],
+            "coverage": "known_roots_only"
+          },
+          "capacity": {
+            "status": "unverified",
+            "reason": "native_rules_unverified",
+            "scope": "none"
+          },
+          "eligibility": {
+            "purchase_enabled": false,
+            "missing": [
+              "quote_binding",
+              "capacity",
+              "settlement",
+              "ui_coverage"
+            ]
+          },
+          "candidates": []
+        }
+      },
+      "legal_actions": [
+        {
+          "action": "close_menu",
+          "arguments": {}
+        }
+      ]
+    },
+    "after": {
+      "schema_version": 3,
+      "world_epoch": "fixture-world",
+      "revision": 2,
+      "version": "fixture-world:2",
+      "scene": "InventoryScene",
+      "loaded": true,
+      "ready": true,
+      "can_close_menu": false,
+      "not_ready_reason": null,
+      "cash": 550,
+      "phase": "MORNING",
+      "menu_open": false,
+      "interaction": {
+        "phase": "idle",
+        "consistency": "unverified",
+        "reason": "business_not_implemented",
+        "operable": true
+      },
+      "business": {
+        "support": "unsupported",
+        "customer_ref": null,
+        "item_refs": [],
+        "offer_ref": null,
+        "collection_fingerprint": null,
+        "details": {
+          "schema_version": 1,
+          "status": "unavailable",
+          "customer": {
+            "presence": "unverified",
+            "arrived": null,
+            "trade_type": "unknown",
+            "phase": "unknown",
+            "dialogue_ref": null,
+            "dialogue_stage": "unknown",
+            "option_refs": []
+          },
+          "containers": [],
+          "items": [],
+          "quote": {
+            "status": "unavailable",
+            "mode": "unknown",
+            "displayed_total": null,
+            "rows": [],
+            "reason": "not_observed"
+          },
+          "ui": {
+            "status": "unverified",
+            "blockers": [],
+            "coverage": "known_roots_only"
+          },
+          "capacity": {
+            "status": "unverified",
+            "reason": "native_rules_unverified",
+            "scope": "none"
+          },
+          "eligibility": {
+            "purchase_enabled": false,
+            "missing": [
+              "quote_binding",
+              "capacity",
+              "settlement",
+              "ui_coverage"
+            ]
+          },
+          "candidates": []
+        }
+      },
+      "legal_actions": []
+    },
+    "execution": {
+      "id": "fixture-close-1",
+      "broker_epoch": "fixture-broker",
+      "stage": "completed",
+      "sequence": 4,
+      "may_have_side_effects": true,
+      "started_at_unix_ms": 100100,
+      "execution_deadline_unix_ms": 105100
+    }
+  },
+  "fingerprint_cases": [
+    {
+      "request": {
+        "schema_version": 3,
+        "id": "fixture-close-1",
+        "broker_epoch": "fixture-broker",
+        "action": "close_menu",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "expected_version": "fixture-world:1",
+        "arguments": {}
+      },
+      "canonical_json": "{\"action\":\"close_menu\",\"arguments\":{},\"broker_epoch\":\"fixture-broker\",\"expected_revision\":1,\"expected_version\":\"fixture-world:1\",\"expected_world_epoch\":\"fixture-world\",\"id\":\"fixture-close-1\",\"schema_version\":3}",
+      "sha256": "0d2313f1c569f2a4eac2855f4ce43313b0dbfa4fef48f4ba572a8424d906963b",
+      "executable": true
+    },
+    {
+      "request": {
+        "schema_version": 3,
+        "id": "fixture-purchase-fingerprint",
+        "broker_epoch": "fixture-broker",
+        "action": "purchase_visible_offer",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "expected_version": "fixture-world:1",
+        "arguments": {
+          "customer_ref": "customer-1",
+          "offer_ref": "offer-1",
+          "item_refs": [
+            "item-1",
+            "item-2"
+          ],
+          "collection_fingerprint": "collection-1",
+          "mode": "normal",
+          "amount": 120,
+          "max_spend": 200,
+          "authorization_ref": "authorization-1"
+        }
+      },
+      "executable": false,
+      "canonical_json": "{\"action\":\"purchase_visible_offer\",\"arguments\":{\"amount\":120,\"authorization_ref\":\"authorization-1\",\"collection_fingerprint\":\"collection-1\",\"customer_ref\":\"customer-1\",\"item_refs\":[\"item-1\",\"item-2\"],\"max_spend\":200,\"mode\":\"normal\",\"offer_ref\":\"offer-1\"},\"broker_epoch\":\"fixture-broker\",\"expected_revision\":1,\"expected_version\":\"fixture-world:1\",\"expected_world_epoch\":\"fixture-world\",\"id\":\"fixture-purchase-fingerprint\",\"schema_version\":3}",
+      "sha256": "cd27fc7c687e0d5fca4cb632beec45b89b5aff85a5168fa09970baa79fe71ec7"
+    },
+    {
+      "request": {
+        "schema_version": 3,
+        "id": "fixture-dialogue-fingerprint",
+        "broker_epoch": "fixture-broker",
+        "action": "advance_dialogue",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "expected_version": "fixture-world:1",
+        "arguments": {
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-1",
+          "option_ref": "option-1",
+          "mode": "continue"
+        }
+      },
+      "executable": false,
+      "canonical_json": "{\"action\":\"advance_dialogue\",\"arguments\":{\"customer_ref\":\"customer-1\",\"dialogue_ref\":\"dialogue-1\",\"mode\":\"continue\",\"option_ref\":\"option-1\"},\"broker_epoch\":\"fixture-broker\",\"expected_revision\":1,\"expected_version\":\"fixture-world:1\",\"expected_world_epoch\":\"fixture-world\",\"id\":\"fixture-dialogue-fingerprint\",\"schema_version\":3}",
+      "sha256": "a90f5a84392abf31fcc612a89b2686945f2c16045413e7432a2aa684e036ac3a"
+    }
+  ]
+}

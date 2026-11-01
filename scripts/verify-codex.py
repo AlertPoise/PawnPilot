@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--close-menu", action="store_true")
+    parser.add_argument("--business", action="store_true", help="Read v3 business completeness and quote evidence; never purchases")
     parser.add_argument("--model", default="gpt-5.6-luna")
     parser.add_argument("--label", default="read-only")
     args = parser.parse_args()
@@ -24,7 +25,7 @@ def main():
     python = ROOT / ".venv" / "Scripts" / "python.exe"
     if not codex or not python.is_file():
         parser.error("Codex CLI and project .venv are required")
-    directory = ROOT / "artifacts" / "m2b" / "codex"
+    directory = ROOT / "artifacts" / ("m2cd" if args.business else "m2b") / "codex"
     directory.mkdir(parents=True, exist_ok=True)
     output = directory / f"{args.label}.jsonl"
     if output.exists():
@@ -35,11 +36,19 @@ def main():
         "Call health_check and observe. Report their actual returned state. "
         "Do not fabricate tools or outcomes. Do not modify files, settings, saves, or use GUI. "
     )
+    if args.business:
+        prompt += (
+            "Inspect the business.details from that SAME snapshot: customer presence/arrival/phase, "
+            "all three container completeness and reasons, visible item refs/units, quote rows/total/mode/status, "
+            "UI blockers/coverage, capacity and missing eligibility. Distinguish confirmed empty from "
+            "unavailable or incomplete. Unverified displayed text does not prove quote binding or legal purchase. "
+            "Report the exact world/revision and missing evidence; never infer hidden names or prices. "
+        )
     if args.close_menu:
         prompt += (
             "The user approved this isolated live test. If observe reports connected, ready, "
             "can_act and legal close_menu, submit exactly ONE act(close_menu) with a new unique "
-            "command_id, schema_version=2, arguments={} and the exact observed "
+            "command_id, schema_version equal to the observed state.schema_version, arguments={} and the exact observed "
             "broker_epoch/world_epoch/revision/version. "
             "Then call wait_for_update with criterion=command_terminal for that ID, "
             "max_wait_ms=10000; call get_action_status for that same ID once. "

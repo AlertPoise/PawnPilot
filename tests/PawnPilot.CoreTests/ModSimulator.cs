@@ -12,12 +12,13 @@ internal static class ModSimulator
     {
         IncludeFields = true,
         PropertyNameCaseInsensitive = false,
-        Converters = { new ArgumentsConverter() }
+        Converters = { new ArgumentsConverter(), new LegacyBusinessConverter() }
     };
 
     internal static async Task<int> Run(string[] args)
     {
         int port = int.Parse(args[1]);
+        int wire = args[0] == "--simulate-mod-v3" ? 3 : 2;
         if (port < 1 || port > 65535) throw new ArgumentException("Invalid fixture port");
         using var client = new HttpClient(new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false })
         { BaseAddress = new Uri("http://127.0.0.1:" + port), Timeout = TimeSpan.FromSeconds(2) };
@@ -41,7 +42,7 @@ internal static class ModSimulator
             string signature = invoked + ":" + uiClosed + ":" + effectConfirmed;
             if (priorSignature != null && priorSignature != signature) revision++;
             priorSignature = signature;
-            Snapshot state = State(revision, !uiClosed, invoked && !effectConfirmed, effectConfirmed);
+            Snapshot state = State(revision, !uiClosed, invoked && !effectConfirmed, effectConfirmed, wire);
             gate.Advance(epoch, state, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), watch.ElapsedMilliseconds,
                 _ => { invocationFrame = frame; invocationCount++; Emit(new { source = "fixture", kind = "invoked", frame, invocationCount }); },
                 (command, before, after) => effectConfirmed && !after.menu_open
@@ -51,7 +52,7 @@ internal static class ModSimulator
             // An exchange every ~150ms while the same managed action waits across 24 frames.
             if (frame % 3 == 1)
             {
-                var exchange = new Exchange { schema_version = 2, session_id = "managed-fixture-session",
+                var exchange = new Exchange { schema_version = wire, session_id = "managed-fixture-session",
                     broker_epoch = epoch, state = state, progress = gate.CurrentProgress,
                     has_result = gate.PendingResult != null, result = gate.PendingResult };
                 using var response = await client.PostAsync("/exchange", new StringContent(
@@ -59,7 +60,7 @@ internal static class ModSimulator
                 string raw = await response.Content.ReadAsStringAsync();
                 if (!response.IsSuccessStatusCode) throw new InvalidOperationException("fixture_exchange " + (int)response.StatusCode + " " + raw);
                 var reply = JsonSerializer.Deserialize<Reply>(raw, Json);
-                if (reply == null || reply.schema_version != 2) throw new InvalidOperationException("fixture_schema");
+                if (reply == null || reply.schema_version != wire) throw new InvalidOperationException("fixture_schema");
                 if (epoch != null && epoch != reply.broker_epoch) gate.OnBrokerEpochChanged(reply.broker_epoch, state);
                 epoch = reply.broker_epoch;
                 if (reply.acknowledged_result_id != null)
@@ -80,19 +81,39 @@ internal static class ModSimulator
         return 0;
     }
 
-    private static Snapshot State(int revision, bool menuOpen, bool updating, bool confirmed) => new()
+    private static Snapshot State(int revision, bool menuOpen, bool updating, bool confirmed, int wire) => new()
     {
-        schema_version = 2, world_epoch = "managed-fixture-world", revision = revision,
+        schema_version = wire, world_epoch = "managed-fixture-world", revision = revision,
         version = "managed-fixture-world:" + revision, loaded = true, ready = true,
         not_ready_reason = null, phase = "MORNING", scene = "InventoryScene", cash = 550,
         menu_open = menuOpen, can_close_menu = menuOpen && !updating,
         interaction = new InteractionObservation { phase = confirmed ? "needs_agent" : updating ? "fixture_animation" : "menu",
             consistency = updating ? "updating" : "unverified", reason = "fixture_only", operable = !updating },
-        business = new BusinessObservation(),
+        business = wire == 2 ? new BusinessObservation() : new BusinessObservation
+        { support = "unsupported", item_refs = new List<string>(), details = new BusinessDetails() },
         legal_actions = menuOpen && !updating ? new List<LegalAction> { new() { action = "close_menu", arguments = new ActionArguments() } } : new()
     };
 
     private static void Emit(object value) => Console.WriteLine(JsonSerializer.Serialize(value));
+
+    // Preserve the frozen v2 wire shape despite the new optional managed v3 field.
+    private sealed class LegacyBusinessConverter : JsonConverter<BusinessObservation>
+    {
+        public override BusinessObservation Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
+            => throw new NotSupportedException("Fixture never reads business objects");
+        public override void Write(Utf8JsonWriter writer, BusinessObservation value, JsonSerializerOptions options)
+        {
+            if (value.details != null)
+            {
+                JsonSerializer.Serialize(writer, new { value.support, value.customer_ref, value.item_refs,
+                    value.offer_ref, value.collection_fingerprint, value.details }, options);
+                return;
+            }
+            writer.WriteStartObject(); writer.WriteString("support", "unsupported");
+            writer.WriteNull("customer_ref"); writer.WriteNull("item_refs");
+            writer.WriteNull("offer_ref"); writer.WriteNull("collection_fingerprint"); writer.WriteEndObject();
+        }
+    }
 
     private sealed class ArgumentsConverter : JsonConverter<ActionArguments>
     {

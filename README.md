@@ -1,10 +1,10 @@
-# PawnPilot — M2-B
+# PawnPilot — M2-C / M2-D 开发分支
 
-《深空当铺：可能是偷的》的本机 MCP 工具链。仅支持基础观察和通过原生 EscapeUIManager.OnResume 关闭已打开的 ESC 菜单；不提供交易、自主经营或任意方法执行。
+《深空当铺：可能是偷的》的本机 MCP 工具链。正式支持基础与部分经营观察，以及通过原生 EscapeUIManager.OnResume 关闭已打开的 ESC 菜单。M2-C / M2-D 当前为 PARTIAL；新业务动作和经济购买保持禁用，不提供任意方法执行。
 
 Codex → MCP stdio Adapter → loopback HTTP broker ← Unity 主线程主动轮询 Mod。
 
-Adapter 与 broker 独立进程；Adapter 不启动 broker，Codex 退出不销毁结果。保留 M0 目录及安装 ID pawnpilot_m0。当前 wire 协议升级为 v2，跨帧执行与恢复详见 [M2-B 报告](docs/m2b-implementation.md)及[精确契约](protocol/v2-contract.md)；历史 [M1](docs/m1-implementation.md) 和 [M2-A](docs/m2a-trade-path.md) 证据保留。
+Adapter 与 broker 独立进程；Adapter 不启动 broker，Codex 退出不销毁结果。保留安装 ID pawnpilot_m0 和既有双层目录。默认 Mod 使用 [wire v3](protocol/v3-contract.md)，broker/MCP 显式兼容 v2；历史 journal 不重标版本。见 [M2-C 观察报告](docs/m2c-implementation.md)、[M2-D 动作报告](docs/m2d-implementation.md)、[冻结的 v2 契约](protocol/v2-contract.md)及 [M2-B 报告](docs/m2b-implementation.md)。
 
 ## 环境与构建
 
@@ -48,17 +48,17 @@ pyproject.toml 固定官方 MCP SDK 2.3.0、Pydantic 2.12.5 和异步等待使�
 |---|---|
 | health_check | 无参数；连接、兼容性、loaded/ready、阻塞原因；health_check.can_act 表示当前 close_menu 可用 |
 | observe | 无参数；快照、legal_actions、等待/人工处理原因；失联快照是历史数据 |
-| act | schema_version=2、command_id、action="close_menu"、arguments={}、broker_epoch、expected_world_epoch、expected_revision、expected_version；提交后返回状态 |
+| act | schema_version 必须与当前快照一致（2 或 3）；command_id、action="close_menu"、arguments={}、broker_epoch、expected_world_epoch、expected_revision、expected_version；提交后返回状态 |
 | get_action_status | 原 command_id；规范状态、before/after、原 broker epoch、人工对齐证据；not_found 不证明执行失败 |
 | wait_for_update | 只读；等待 revision/身份改变、指定命令终态或基础可操作状态；最长 30 秒，可取消 |
 
 参数和返回结构都有 JSON Schema。业务错误结构化返回，区分 broker、protocol、connection、configuration、internal。日志不污染 MCP stdout。[Agent Skill](.agents/skills/pawnpilot-player/SKILL.md)规定一次一个动作、未知先查询、人工暂停不得自行恢复。
 
-schema_version=2 是 wire 结构版本；旧 wire 请求明确拒绝，历史 v1 journal 先备份再迁移，查询保留原证据。broker_epoch 每次 broker 启动改变；session_id 是 Mod 进程身份；world_epoch 在场景切换、载入 Hook 或存档身份改变时更新；revision 随可见快照变化递增；version 必须等于 world_epoch:revision。
+诊断 CLI 的 close_menu/reconcile 必须显式传入与核对快照一致的 --schema-version 2 或 3；不自动猜测或降级。schema_version 是 wire 结构版本，不是能力授权。v1 wire 请求明确拒绝；历史 v1 journal 先备份再迁移，v1/v2/v3 查询保留原证据。broker_epoch 每次 broker 启动改变；session_id 是 Mod 进程身份；同会话禁止混用 wire 版本。world_epoch 在场景切换、载入 Hook 或存档身份改变时更新；revision 随观察快照变化递增；version 必须等于 world_epoch:revision。
 
 loaded 表示当前游戏场景中存档已初始化；ready 额外要求必要 UI/库存组件存在并稳定两个 Unity Update 帧。动作前再次核对身份和状态。loaded=false 时现金 0 是无效占位。两个 can_act 字段作用域不同：health_check.can_act 表示当前 close_menu 可用；observe.snapshot.can_act 保留 broker 门禁可用性，具体合法动作以 legal_actions 为准。菜单已关闭且没有其他阻塞时，前者 false，后者 true，而 legal_actions 为空。
 
-初始化 ready 不证明业务/UI 同步。真实 business 明确为 unsupported，interaction.consistency 为 unverified；参数契约中的商品集合与报价引用尚未成为可执行能力。执行进度独立于游戏 revision，跨帧等待不停止心跳。动作效果已确认后可结束当前动作，让 Agent 处理后续交互。
+初始化 ready 不证明业务/UI 同步。v3 的 business.details 明确区分完整、部分、不可读取的容器，提供短期客户/物品引用、已渲染报价候选和缺失证据。quote_binding、容量及全局 UI 覆盖尚未验证；没有 offer_ref 或经济 legal_actions。候选集合指纹不授权交易，未知容器不能解释成空库存。执行进度独立于游戏 revision，跨帧等待不停止心跳。
 
 ## 命令状态与恢复
 
@@ -78,7 +78,7 @@ journal 使用独占进程锁、同目录临时文件、flush/fsync 与原子替
 若 Mod 退出使结果丢失，不能删除 journal 清零。操作者核对当前世界、正常关闭菜单、退出旧 Mod 并建立新会话，重新 observe 并记录画面证据。原命令最迟可能执行期限已过、快照新鲜就绪且版本前进后，才可执行：
 
 ~~~powershell
-python bridge/client.py reconcile --id '<原ID>' --broker-epoch '<当前broker>' --world-epoch '<当前world>' --revision '<当前revision>' --expected-version '<当前world>:<当前revision>' --operator-note '<人工核对世界、菜单及证据位置>' --confirm-no-replay
+python bridge/client.py reconcile --schema-version 3 --id '<原ID>' --broker-epoch '<当前broker>' --world-epoch '<当前world>' --revision '<当前revision>' --expected-version '<当前world>:<当前revision>' --operator-note '<人工核对世界、菜单及证据位置>' --confirm-no-replay
 ~~~
 
 将示例占位符全部替换为刚观察到的真实值，revision 必须是整数，expected-version 必须与同次观察一致。该入口不暴露给 MCP；保留 outcome_unknown，另存人工对齐证据后解除门禁，不声称原动作成功。迟到有效结果仍可归档；旧 ID 不会重放。无法核对则继续阻塞。
@@ -93,11 +93,15 @@ dotnet run --project tests/PawnPilot.CoreTests/PawnPilot.CoreTests.csproj -c Rel
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v
 # 真正 Codex CLI，默认只读，需要已登录账户：
 python scripts/verify-codex.py --label read-check
+# v3 经营观察验收（仅在本轮明确授权的独立测试槽中）：
+python scripts/verify-codex.py --business --label business-read-check
 # 仅用于已批准的独立测试槽、正常打开的 ESC 菜单：
 python scripts/verify-codex.py --label live-check --close-menu
 ~~~
 
-先构建 managed Release 测试程序，Python 端到端测试会通过它运行测试专用跨帧模拟。验证脚本使用临时 CLI 配置，只对本次已授权的 PawnPilot 调用自动批准，不改全局设置。默认模型是此前账户可用的非 Astra gpt-5.6-luna，可用 --model 指定其他可用非 Astra 模型。新证据位于 artifacts/m2b/codex，同名标签不覆盖。Windows 沙箱若拒绝 SDK stdio 管道（WinError 5），在正常终端运行，不能把沙箱失败算 PASS。
+先构建 managed Release 测试程序，Python 端到端测试会通过它运行测试专用跨帧模拟。验证脚本使用临时 CLI 配置，只对本次已授权的 PawnPilot 调用自动批准，不改全局设置。默认模型是此前账户可用的非 Astra gpt-5.6-luna，可用 --model 指定其他可用非 Astra 模型。基础证据位于 artifacts/m2b/codex，--business 证据位于 artifacts/m2cd/codex，同名标签不覆盖。Windows 沙箱若拒绝 SDK stdio 管道（WinError 5），在正常终端运行，不能把沙箱失败算 PASS。
+
+本轮 M2-C/D 回归为 276 managed + 127 Python = 403 通过、0 失败。三个真实 Codex 会话完成 v3 只读观察，实机修复库存逻辑根零面积误判，并核对前后柜搬运引用保持。报价绑定、混合归属集合、运行时容量和经济验证仍未完成；没有 MCP 购买或完整顾客流程。详见 [M2-C](docs/m2c-implementation.md) 与 [M2-D](docs/m2d-implementation.md)。
 
 结束时在游戏 UI 删除本次测试槽、禁用 Mod、正常退出，再按收据清理：
 

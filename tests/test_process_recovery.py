@@ -6,16 +6,22 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 import unittest
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 CHILD = """
 import sys
+import threading
 from bridge.server import Broker, Server
 server = Server(Broker('process-test-token', journal_path=sys.argv[1]), port=0)
 print(server.server_port, flush=True)
-server.serve_forever(poll_interval=.01)
+threading.Thread(target=lambda: (sys.stdin.readline(), server.shutdown()), daemon=True).start()
+try:
+    server.serve_forever(poll_interval=.01)
+finally:
+    server.server_close()
 """
 
 
@@ -40,27 +46,44 @@ class ProcessCrashTests(unittest.TestCase):
         self.start()
 
     def tearDown(self):
-        self.kill()
+        self.kill(graceful=True)
         for path in (self.path, self.path.with_suffix(self.path.suffix + ".lock"),
                      self.path.with_suffix(self.path.suffix + ".v1.bak")):
-            path.unlink(missing_ok=True)
+            for _ in range(20):
+                try:
+                    path.unlink(missing_ok=True)
+                    break
+                except PermissionError:
+                    time.sleep(.025)
         for path in self.path.parent.glob(self.path.name + ".*.tmp"):
             path.unlink(missing_ok=True)
 
     def start(self):
         self.proc = subprocess.Popen([sys.executable, "-u", "-c", CHILD, str(self.path)],
-                                     cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                     cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, text=True)
+        process = self.proc
         lines = queue.Queue()
-        threading.Thread(target=lambda: lines.put(self.proc.stdout.readline()), daemon=True).start()
+        threading.Thread(target=lambda: lines.put(process.stdout.readline()), daemon=True).start()
         self.port = int(lines.get(timeout=10))
         self.epoch = self.request("/state")[1]["broker_epoch"]
 
-    def kill(self):
+    def kill(self, graceful=False):
         if self.proc:
-            self.proc.kill()
-            self.proc.wait(timeout=10)
-            self.proc.stdout.close()
-            self.proc.stderr.close()
+            process = self.proc
+            if graceful and process.poll() is None:
+                try:
+                    process.stdin.write("stop\n")
+                    process.stdin.flush()
+                    process.wait(timeout=5)
+                except (BrokenPipeError, subprocess.TimeoutExpired):
+                    process.kill()
+                    process.wait(timeout=10)
+            elif process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+            for stream in (process.stdin, process.stdout, process.stderr):
+                stream.close()
             self.proc = None
 
     def request(self, path, body=None):

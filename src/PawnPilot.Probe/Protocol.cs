@@ -9,6 +9,8 @@ namespace PawnPilot
     public static class Protocol
     {
         public const int SchemaVersion = 2;
+        public const int BusinessSchemaVersion = 3;
+        public static bool Supported(int version) => version == SchemaVersion || version == BusinessSchemaVersion;
         public const int MaxCommands = 4096;
     }
 
@@ -21,6 +23,9 @@ namespace PawnPilot
         public List<string> item_refs;
         public string offer_ref;
         public string collection_fingerprint;
+        public BusinessDetails details;
+        // Newtonsoft's opt-in property predicate keeps frozen wire v2 byte shape intact.
+        public bool ShouldSerializedetails() => details != null;
     }
 
     [Serializable] public sealed class InteractionObservation
@@ -57,6 +62,8 @@ namespace PawnPilot
         public string offer_ref;
         public string collection_fingerprint;
         public string option_ref;
+        public string dialogue_ref, mode, authorization_ref;
+        public int? amount, max_spend;
     }
 
     [Serializable] public sealed class Command
@@ -159,9 +166,10 @@ namespace PawnPilot
             if (command == null || string.IsNullOrEmpty(command.id) || command.id.Length > 128)
                 return NewResult(command, "rejected", "invalid_command", before, null, null);
 
-            if (command.schema_version != Protocol.SchemaVersion)
+            if (!Protocol.Supported(command.schema_version))
                 return NewResult(command, "rejected", "schema_version_unsupported", before, null, Completed(command, false, 1));
             string shapeError = ValidateArgumentsShape(command.arguments);
+            if (command.schema_version == Protocol.SchemaVersion && HasV3Arguments(command.arguments)) shapeError = "invalid_arguments";
             if (shapeError != null) return NewResult(command, "rejected", shapeError, before, null, Completed(command, false, 1));
             string fingerprint = EnvelopeFingerprint(command);
             if (records.TryGetValue(command.id, out var existing))
@@ -254,6 +262,13 @@ namespace PawnPilot
                 FinishUnknown(active, "world_changed_after_invocation", snapshot);
                 return CurrentStep();
             }
+            if (snapshot.schema_version != active.command.schema_version || !IsSnapshotValid(snapshot))
+            {
+                // Retain the valid original evidence; never serialize an invalid post sample as
+                // evidence of success (nor let a test verifier waive the wire invariant).
+                FinishUnknown(active, "invalid_state_after_invocation", null);
+                return CurrentStep();
+            }
             if (monotonicNowMs - active.startedMonotonicMs >= active.command.execution_timeout_ms)
             {
                 FinishUnknown(active, "execution_timeout", snapshot);
@@ -281,7 +296,8 @@ namespace PawnPilot
             {
                 // The test injection can delay/drive observation but cannot weaken the production
                 // action's close-menu evidence predicate.
-                if (!CloseMenuPostcondition(active.before, snapshot))
+                if (!(active.command.action == "close_menu" ? CloseMenuPostcondition(active.before, snapshot) :
+                    BusinessActionPolicy.Postcondition(active.command, active.before, snapshot)))
                 {
                     FinishUnknown(active, "postcondition_not_observed", snapshot);
                     return CurrentStep();
@@ -362,7 +378,7 @@ namespace PawnPilot
 
         private static string ValidateForAdmission(Command c, Snapshot before, string brokerEpoch, long now)
         {
-            if (c.schema_version != Protocol.SchemaVersion) return "schema_version_unsupported";
+            if (!Protocol.Supported(c.schema_version)) return "schema_version_unsupported";
             if (!ValidText(c.id, 128) || !ValidText(c.broker_epoch, 128) || !ValidText(c.action, 128) ||
                 !ValidText(c.expected_version, 256) || !ValidText(c.expected_world_epoch, 128)) return "invalid_command";
             if (c.expected_revision < 0 || c.start_deadline_unix_ms < 1 || c.start_deadline_unix_ms > 9007199254740991L ||
@@ -370,13 +386,16 @@ namespace PawnPilot
                 return "invalid_command";
             if (string.IsNullOrEmpty(brokerEpoch) || !string.Equals(c.broker_epoch, brokerEpoch, StringComparison.Ordinal)) return "stale_broker_epoch";
             if (!IsSnapshotValid(before)) return "invalid_state";
+            if (c.schema_version != before.schema_version) return "schema_version_mismatch";
             if (c.expected_version != before.version || c.expected_world_epoch != before.world_epoch || c.expected_revision != before.revision)
                 return "stale_state";
-            if (c.action != "close_menu") return "unknown_action";
-            if (!ArgumentsEmpty(c.arguments)) return "invalid_arguments";
+            if (c.action != "close_menu" && (c.schema_version != Protocol.BusinessSchemaVersion || !BusinessActionPolicy.IsRegistered(c.action))) return "unknown_action";
+            if (c.action == "close_menu" && !ArgumentsEmpty(c.arguments)) return "invalid_arguments";
             if (!before.ready)
                 return !before.loaded ? "not_loaded" : (before.not_ready_reason ?? "not_ready");
-            if (!before.can_close_menu || !HasLegalCloseMenu(before)) return "precondition";
+            if (c.action == "close_menu")
+            { if (!before.can_close_menu || !HasLegalCloseMenu(before)) return "precondition"; }
+            else { string reason = BusinessActionPolicy.Validate(c, before); if (reason != null) return reason; }
             if (now >= c.start_deadline_unix_ms) return "start_deadline_elapsed";
             return null;
         }
@@ -390,7 +409,10 @@ namespace PawnPilot
                 return "stale_state";
             if (!snapshot.ready)
                 return !snapshot.loaded ? "not_loaded" : (snapshot.not_ready_reason ?? "not_ready");
-            if (!snapshot.can_close_menu || !HasLegalCloseMenu(snapshot)) return "precondition";
+            if (snapshot.schema_version != record.command.schema_version) return "schema_version_mismatch";
+            if (record.command.action == "close_menu")
+            { if (!snapshot.can_close_menu || !HasLegalCloseMenu(snapshot)) return "precondition"; }
+            else { string reason = BusinessActionPolicy.Validate(record.command, snapshot); if (reason != null) return reason; }
             if (now >= record.command.start_deadline_unix_ms) return "start_deadline_elapsed";
             if (now > 9007199254740991L - record.command.execution_timeout_ms) return "execution_deadline_out_of_range";
             return null;
@@ -398,7 +420,7 @@ namespace PawnPilot
 
         public static bool IsSnapshotValid(Snapshot snapshot)
         {
-            if (snapshot == null || snapshot.schema_version != Protocol.SchemaVersion || !ValidText(snapshot.world_epoch, 128) ||
+            if (snapshot == null || !Protocol.Supported(snapshot.schema_version) || !ValidText(snapshot.world_epoch, 128) ||
                 snapshot.revision < 0 || snapshot.version != snapshot.world_epoch + ":" + snapshot.revision.ToString(CultureInfo.InvariantCulture) ||
                 snapshot.scene == null || snapshot.scene.Length > 128 || snapshot.phase == null || snapshot.phase.Length > 128 ||
                 (snapshot.not_ready_reason != null && (snapshot.not_ready_reason.Length < 1 || snapshot.not_ready_reason.Length > 256)) ||
@@ -410,13 +432,29 @@ namespace PawnPilot
                 snapshot.interaction.consistency != "blocked") ||
                 (snapshot.interaction.reason != null && (snapshot.interaction.reason.Length < 1 || snapshot.interaction.reason.Length > 256)) ||
                 (snapshot.interaction.operable && (!snapshot.ready || snapshot.interaction.consistency == "blocked"))) return false;
-            if (snapshot.business.support != "unsupported" || snapshot.business.customer_ref != null || snapshot.business.item_refs != null ||
-                snapshot.business.offer_ref != null || snapshot.business.collection_fingerprint != null) return false;
-            if (snapshot.legal_actions == null || snapshot.legal_actions.Count > 1) return false;
-            if (snapshot.can_close_menu != (snapshot.legal_actions.Count == 1)) return false;
-            if (snapshot.can_close_menu && (!snapshot.ready || !snapshot.loaded || !snapshot.menu_open ||
-                snapshot.legal_actions[0] == null || snapshot.legal_actions[0].action != "close_menu" ||
-                !ArgumentsEmpty(snapshot.legal_actions[0].arguments))) return false;
+            if (snapshot.schema_version == Protocol.SchemaVersion)
+            {
+                if (snapshot.business.support != "unsupported" || snapshot.business.customer_ref != null || snapshot.business.item_refs != null ||
+                    snapshot.business.offer_ref != null || snapshot.business.collection_fingerprint != null || snapshot.business.details != null) return false;
+            }
+            else if (!BusinessWire.Validate(snapshot.business)) return false;
+            if (snapshot.legal_actions == null || snapshot.legal_actions.Count > (snapshot.schema_version == 2 ? 1 : 9)) return false;
+            bool close = false;
+            var actions = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var legal in snapshot.legal_actions)
+            {
+                if (legal == null || !actions.Add(legal.action) || !snapshot.ready) return false;
+                if (legal.action == "close_menu")
+                {
+                    if (!ArgumentsEmpty(legal.arguments) || !snapshot.loaded || !snapshot.menu_open) return false;
+                    close = true;
+                }
+                else if (snapshot.schema_version != 3 || !BusinessActionPolicy.ProductionDispatchEnabled || !BusinessActionPolicy.IsRegistered(legal.action) ||
+                    !BusinessActionPolicy.ArgumentsValid(legal.action, legal.arguments) ||
+                    snapshot.interaction.consistency != "consistent" || !snapshot.interaction.operable || snapshot.menu_open ||
+                    snapshot.business.details.ui.coverage != "verified" || snapshot.business.details.ui.status != "consistent") return false;
+            }
+            if (snapshot.can_close_menu != close) return false;
             return true;
         }
 
@@ -435,15 +473,19 @@ namespace PawnPilot
             return VerificationDecision.Pending();
         }
 
-        private static bool HasLegalCloseMenu(Snapshot snapshot) => snapshot != null && snapshot.legal_actions != null &&
-            snapshot.legal_actions.Count == 1 && snapshot.legal_actions[0] != null &&
-            snapshot.legal_actions[0].action == "close_menu" && ArgumentsEmpty(snapshot.legal_actions[0].arguments) &&
-            snapshot.can_close_menu;
+        private static bool HasLegalCloseMenu(Snapshot snapshot)
+        {
+            if (snapshot == null || snapshot.legal_actions == null || !snapshot.can_close_menu) return false;
+            foreach (var legal in snapshot.legal_actions)
+                if (legal != null && legal.action == "close_menu" && ArgumentsEmpty(legal.arguments)) return true;
+            return false;
+        }
 
         private static string ValidateArgumentsShape(ActionArguments a)
         {
             if (a == null) return "invalid_arguments";
-            if (!ValidRef(a.customer_ref) || !ValidRef(a.offer_ref) || !ValidRef(a.option_ref) || !ValidRef(a.collection_fingerprint))
+            if (!ValidRef(a.customer_ref) || !ValidRef(a.offer_ref) || !ValidRef(a.option_ref) || !ValidRef(a.collection_fingerprint) ||
+                !ValidRef(a.dialogue_ref) || !ValidRef(a.mode) || !ValidRef(a.authorization_ref) || a.amount < 0 || a.max_spend < 0)
                 return "invalid_arguments";
             if (a.item_refs != null)
             {
@@ -465,7 +507,10 @@ namespace PawnPilot
         }
 
         private static bool ArgumentsEmpty(ActionArguments a) => a != null && a.customer_ref == null && a.item_refs == null &&
-            a.offer_ref == null && a.collection_fingerprint == null && a.option_ref == null;
+            a.offer_ref == null && a.collection_fingerprint == null && a.option_ref == null && !HasV3Arguments(a);
+
+        private static bool HasV3Arguments(ActionArguments a) => a != null && (a.dialogue_ref != null || a.mode != null ||
+            a.authorization_ref != null || a.amount.HasValue || a.max_spend.HasValue);
 
         private static bool ValidText(string value, int max) => !string.IsNullOrEmpty(value) && value.Length <= max;
         private static int Next(int value) => value == int.MaxValue ? int.MaxValue : value + 1;
@@ -478,9 +523,13 @@ namespace PawnPilot
 
         private static ActionResult NewResult(Command c, string status, string reason, Snapshot before, Snapshot after, Progress progress) => new ActionResult
         {
-            schema_version = Protocol.SchemaVersion, id = c?.id, broker_epoch = c?.broker_epoch,
-            status = status, reason = reason, before = Clone(before), after = Clone(after), execution = Clone(progress)
+            schema_version = c != null && Protocol.Supported(c.schema_version) ? c.schema_version : Protocol.SchemaVersion, id = c?.id, broker_epoch = c?.broker_epoch,
+            status = status, reason = reason,
+            before = Clone(before != null && before.schema_version == ResultVersion(c) ? before : null),
+            after = Clone(after != null && after.schema_version == ResultVersion(c) ? after : null), execution = Clone(progress)
         };
+
+        private static int ResultVersion(Command c) => c != null && Protocol.Supported(c.schema_version) ? c.schema_version : Protocol.SchemaVersion;
 
         // Canonical /commands request object: sorted keys, compact JSON, ASCII escaping, ordered arrays.
         public static string Fingerprint(Command c)
@@ -515,14 +564,19 @@ namespace PawnPilot
             Property(s, ref first, "action", Quote(c.action));
             var args = new StringBuilder("{");
             bool argFirst = true;
+            if (c.arguments.amount.HasValue) Property(args, ref argFirst, "amount", c.arguments.amount.Value.ToString(CultureInfo.InvariantCulture));
+            if (c.arguments.authorization_ref != null) Property(args, ref argFirst, "authorization_ref", Quote(c.arguments.authorization_ref));
             if (c.arguments.collection_fingerprint != null) Property(args, ref argFirst, "collection_fingerprint", Quote(c.arguments.collection_fingerprint));
             if (c.arguments.customer_ref != null) Property(args, ref argFirst, "customer_ref", Quote(c.arguments.customer_ref));
+            if (c.arguments.dialogue_ref != null) Property(args, ref argFirst, "dialogue_ref", Quote(c.arguments.dialogue_ref));
             if (c.arguments.item_refs != null)
             {
                 var arr = new StringBuilder("[");
                 for (int i = 0; i < c.arguments.item_refs.Count; i++) { if (i > 0) arr.Append(','); arr.Append(Quote(c.arguments.item_refs[i])); }
                 arr.Append(']'); Property(args, ref argFirst, "item_refs", arr.ToString());
             }
+            if (c.arguments.max_spend.HasValue) Property(args, ref argFirst, "max_spend", c.arguments.max_spend.Value.ToString(CultureInfo.InvariantCulture));
+            if (c.arguments.mode != null) Property(args, ref argFirst, "mode", Quote(c.arguments.mode));
             if (c.arguments.offer_ref != null) Property(args, ref argFirst, "offer_ref", Quote(c.arguments.offer_ref));
             if (c.arguments.option_ref != null) Property(args, ref argFirst, "option_ref", Quote(c.arguments.option_ref));
             args.Append('}');
@@ -577,7 +631,7 @@ namespace PawnPilot
                 interaction = s.interaction == null ? null : new InteractionObservation
                 { phase = s.interaction.phase, consistency = s.interaction.consistency, reason = s.interaction.reason, operable = s.interaction.operable },
                 business = s.business == null ? null : new BusinessObservation
-                { support = s.business.support, customer_ref = s.business.customer_ref, item_refs = s.business.item_refs == null ? null : new List<string>(s.business.item_refs), offer_ref = s.business.offer_ref, collection_fingerprint = s.business.collection_fingerprint },
+                { support = s.business.support, customer_ref = s.business.customer_ref, item_refs = s.business.item_refs == null ? null : new List<string>(s.business.item_refs), offer_ref = s.business.offer_ref, collection_fingerprint = s.business.collection_fingerprint, details = BusinessWire.Clone(s.business.details) },
                 legal_actions = new List<LegalAction>()
             };
             if (s.legal_actions != null) foreach (var action in s.legal_actions)
@@ -588,7 +642,8 @@ namespace PawnPilot
         private static ActionArguments Clone(ActionArguments a) => a == null ? null : new ActionArguments
         {
             customer_ref = a.customer_ref, item_refs = a.item_refs == null ? null : new List<string>(a.item_refs),
-            offer_ref = a.offer_ref, collection_fingerprint = a.collection_fingerprint, option_ref = a.option_ref
+            offer_ref = a.offer_ref, collection_fingerprint = a.collection_fingerprint, option_ref = a.option_ref,
+            dialogue_ref = a.dialogue_ref, mode = a.mode, authorization_ref = a.authorization_ref, amount = a.amount, max_spend = a.max_spend
         };
 
         private static Progress Clone(Progress p) => p == null ? null : new Progress

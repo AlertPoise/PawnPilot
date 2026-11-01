@@ -1,0 +1,82 @@
+"""MCP version unions preserve v2 history and route explicit v3 parameters."""
+import copy
+import json
+from pathlib import Path
+import sys
+import unittest
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from pawnpilot_mcp import server as mcp_server
+from bridge.client import ResponseError, read_response
+
+V2 = json.loads((ROOT / "protocol/fixtures/v2-close-menu.json").read_text(encoding="utf-8"))
+V3 = json.loads((ROOT / "protocol/fixtures/v3-business-observation.json").read_text(encoding="utf-8"))
+
+
+class McpV3Tests(unittest.TestCase):
+    def test_v3_broker_response_may_exceed_legacy_limit_but_v2_cannot(self):
+        class Headers:
+            def get_content_type(self): return "application/json"
+        class Response:
+            headers = Headers()
+            def __init__(self, raw): self.raw = raw
+            def read(self, count): return self.raw[:count]
+        body = json.dumps({"schema_version": 3, "padding": "x" * 70_000}, separators=(",", ":")).encode()
+        self.assertGreater(len(body), 64 * 1024)
+        self.assertEqual(read_response(Response(body))["schema_version"], 3)
+        legacy = json.dumps({"schema_version": 2, "padding": "x" * 70_000}, separators=(",", ":")).encode()
+        with self.assertRaises(ResponseError) as caught:
+            read_response(Response(legacy))
+        self.assertEqual(str(caught.exception), "response_too_large")
+
+    def test_explicit_snapshot_and_result_unions(self):
+        v3_snapshot = {"schema_version": 3, "broker_epoch": "broker", "session_id": "mod",
+            "connected": True, "state": V3["before"], "blocking_reason": None,
+            "blocked_command_id": None, "can_act": True, "execution": None}
+        parsed = mcp_server._parse_snapshot(v3_snapshot)
+        self.assertIsInstance(parsed, mcp_server.SnapshotV3)
+        self.assertEqual(parsed.state.business["details"]["schema_version"], 1)
+        self.assertEqual(mcp_server.GameState.model_validate(V2["before"]).schema_version, 2)
+        self.assertEqual(mcp_server.ActionEvidenceV3.model_validate(V3["result"]).status, "succeeded")
+        self.assertEqual(mcp_server.ActionEvidenceV2.model_validate(V2["result"]).schema_version, 2)
+
+    def test_command_history_keeps_the_record_schema_version(self):
+        v3 = {"schema_version": 3, "id": V3["result"]["id"], "command_status": "succeeded",
+              "status": "succeeded", "result": V3["result"], "resolved": False, "resolution": None,
+              "execution": V3["progress"], "record_schema_version": 3}
+        self.assertEqual(mcp_server.CommandReply.model_validate(v3).record_schema_version, 3)
+        v2 = {"schema_version": 2, "id": V2["result"]["id"], "command_status": "succeeded",
+              "status": "succeeded", "result": V2["result"], "resolved": False, "resolution": None,
+              "execution": V2["progress"], "record_schema_version": 2}
+        self.assertEqual(mcp_server.CommandReply.model_validate(v2).record_schema_version, 2)
+        relabeled = dict(v2, schema_version=3)
+        with self.assertRaises(Exception):
+            mcp_server.CommandReply.model_validate(relabeled)
+
+    def test_act_sends_exact_v3_version_and_omits_unset_null_arguments(self):
+        captured = {}
+        pending_reply = {"schema_version": 3, "id": "v3-act", "command_status": "pending",
+                         "status": "pending", "result": None, "resolved": False, "resolution": None,
+                         "execution": None, "record_schema_version": 3}
+        def fake_call(path, body=None):
+            captured["path"], captured["body"] = path, copy.deepcopy(body)
+            return 200, pending_reply
+        with patch.object(mcp_server, "_call", fake_call):
+            response = mcp_server.act(3, "v3-act", "close_menu", mcp_server.CloseMenuArguments(),
+                                      "broker", "world", 1, "world:1")
+        self.assertTrue(response.ok)
+        self.assertEqual(captured["path"], "/commands")
+        self.assertEqual(captured["body"]["schema_version"], 3)
+        self.assertEqual(captured["body"]["arguments"], {})
+
+    def test_v2_act_cannot_silently_upgrade_into_v3_action_space(self):
+        response = mcp_server.act(2, "v2-start", "start_business", mcp_server.ActionArgumentsV3(),
+                                  "broker", "world", 1, "world:1")
+        self.assertFalse(response.ok)
+        self.assertEqual(response.error_source, "protocol")
+        self.assertEqual(response.reason, "action_not_allowed")
+
+
+if __name__ == "__main__": unittest.main()

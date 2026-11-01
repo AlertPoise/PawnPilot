@@ -8,7 +8,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from urllib.error import URLError
 
 import httpx2
@@ -18,12 +18,15 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationEr
 
 import bridge.client as broker_client
 from bridge.client import ResponseError, request
-from bridge.protocol import (strict_json_loads, valid_close_menu_evidence, valid_progress,
-                              valid_result_structure, valid_snapshot)
+from bridge.protocol import (WIRE_VERSION_V3, MAX_V3_MESSAGE_BYTES,
+                              response_size_valid, strict_json_loads, valid_close_menu_evidence,
+                              valid_close_menu_evidence_v3, valid_progress,
+                              valid_result_structure, valid_result_structure_v3,
+                              valid_snapshot, valid_snapshot_v3)
 
 SCHEMA_VERSION = 2
 DEFAULT_CONFIG = Path("artifacts/session.json")
-MAX_RESPONSE_BYTES = 65536
+MAX_RESPONSE_BYTES = MAX_V3_MESSAGE_BYTES
 MAX_WAIT_MS = 30000
 POLL_INTERVAL_SECONDS = 0.25
 _COMMAND_ID = r"^[A-Za-z0-9_-]+$"
@@ -35,6 +38,26 @@ class StrictModel(BaseModel):
 
 class CloseMenuArguments(StrictModel):
     """The only production action currently supported; it accepts no parameters."""
+
+
+class ActionArgumentsV3(StrictModel):
+    customer_ref: str | None = None
+    item_refs: list[str] | None = None
+    offer_ref: str | None = None
+    collection_fingerprint: str | None = None
+    option_ref: str | None = None
+    dialogue_ref: str | None = None
+    mode: str | None = None
+    amount: int | None = Field(default=None, strict=True, ge=0, le=2147483647)
+    max_spend: int | None = Field(default=None, strict=True, ge=0, le=2147483647)
+    authorization_ref: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_present_values(cls, value):
+        if type(value) is dict and any(v is None for v in value.values()):
+            raise ValueError("explicit_null_arguments_rejected")
+        return value
 
 
 class Interaction(StrictModel):
@@ -55,6 +78,13 @@ class BusinessState(StrictModel):
 class LegalAction(StrictModel):
     action: Literal["close_menu"]
     arguments: CloseMenuArguments
+
+
+class LegalActionV3(StrictModel):
+    action: Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
+                    "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
+                    "refuse_trade", "dismiss_customer"]
+    arguments: dict[str, Any]
 
 
 class GameState(StrictModel):
@@ -96,6 +126,37 @@ class GameState(StrictModel):
         actions = [entry.action for entry in self.legal_actions]
         if self.can_close_menu != (actions == ["close_menu"]):
             raise ValueError("legal_actions_must_match_supported_game_actions")
+        return self
+
+
+class GameStateV3(StrictModel):
+    schema_version: Literal[3]
+    version: str = Field(min_length=1, max_length=256)
+    loaded: bool
+    ready: bool
+    world_epoch: str = Field(min_length=1, max_length=128)
+    revision: int = Field(ge=0, le=2147483647)
+    phase: str = Field(max_length=128)
+    scene: str = Field(max_length=128)
+    menu_open: bool
+    can_close_menu: bool
+    cash: int = Field(ge=-2147483648, le=2147483647)
+    not_ready_reason: str | None = Field(max_length=256)
+    interaction: Interaction
+    business: dict[str, Any]
+    legal_actions: list[LegalActionV3] = Field(max_length=9)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_wire_shape(cls, value):
+        if not valid_snapshot_v3(value):
+            raise ValueError("invalid_v3_game_state")
+        return value
+
+    @model_validator(mode="after")
+    def validate_state(self):
+        if self.version != f"{self.world_epoch}:{self.revision}":
+            raise ValueError("version_must_match_world_epoch_and_revision")
         return self
 
 
@@ -205,6 +266,31 @@ class Snapshot(StrictModel):
         return self
 
 
+class SnapshotV3(StrictModel):
+    schema_version: Literal[3]
+    broker_epoch: str = Field(min_length=1, max_length=128)
+    session_id: str | None = Field(max_length=128)
+    connected: bool
+    state: GameStateV3 | None
+    blocking_reason: str | None = Field(max_length=512)
+    blocked_command_id: str | None = Field(max_length=128)
+    can_act: bool
+    execution: ExecutionProgress | None
+
+    @model_validator(mode="after")
+    def validate_operability(self):
+        if self.can_act and (not self.connected or self.state is None or not self.state.ready):
+            raise ValueError("broker_can_act_requires_connected_ready_snapshot")
+        if self.can_act and (self.blocked_command_id is not None or self.execution is not None):
+            raise ValueError("broker_can_act_conflicts_with_blocked_command_or_execution")
+        if self.execution is not None and self.blocked_command_id != self.execution.id:
+            raise ValueError("execution_must_match_blocked_command")
+        return self
+
+
+SnapshotUnion = Snapshot | SnapshotV3
+
+
 class SnapshotV1(StrictModel):
     """Strict v1 state envelope for historical result evidence only."""
 
@@ -244,8 +330,10 @@ class HealthReply(ToolReply):
 class ObserveReply(ToolReply):
     broker_connected: bool
     bridge_connected: bool
-    snapshot: Snapshot | None = None
-    legal_actions: list[Literal["close_menu"]] = Field(default_factory=list, max_length=1)
+    snapshot: SnapshotUnion | None = None
+    legal_actions: list[Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
+                                 "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
+                                 "refuse_trade", "dismiss_customer"]] = Field(default_factory=list, max_length=9)
     wait_reason: str | None = None
     manual_action_required: bool = False
 
@@ -304,7 +392,41 @@ class ActionEvidenceV2(StrictModel):
         return self
 
 
-ActionEvidence = ActionEvidenceV2 | ActionEvidenceV1
+class ActionEvidenceV3(StrictModel):
+    schema_version: Literal[3]
+    id: str = Field(min_length=1, max_length=128)
+    broker_epoch: str = Field(min_length=1, max_length=128)
+    status: Literal["succeeded", "rejected", "outcome_unknown"]
+    reason: str = Field(max_length=512)
+    before: GameStateV3 | None
+    after: GameStateV3 | None
+    execution: ExecutionProgress | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_wire_shape(cls, value):
+        if not valid_result_structure_v3(value, require_execution=False):
+            raise ValueError("invalid_v3_result")
+        if (type(value) is dict and value.get("status") == "succeeded"
+                and not valid_close_menu_evidence_v3(value.get("before"), value.get("after"))):
+            raise ValueError("invalid_v3_success_evidence")
+        return value
+
+    @model_validator(mode="after")
+    def validate_evidence(self):
+        if self.execution is not None and self.execution.id != self.id:
+            raise ValueError("execution_id_mismatch")
+        if self.status == "succeeded" and (self.execution is None or self.execution.stage != "completed"
+                or not self.execution.may_have_side_effects or self.before is None or self.after is None):
+            raise ValueError("success_requires_completed_effect_evidence")
+        if self.status == "rejected" and self.execution is not None and self.execution.may_have_side_effects:
+            raise ValueError("rejection_cannot_claim_possible_side_effects")
+        if self.status == "outcome_unknown" and self.execution is not None and not self.execution.may_have_side_effects:
+            raise ValueError("unknown_result_requires_possible_side_effects")
+        return self
+
+
+ActionEvidence = ActionEvidenceV3 | ActionEvidenceV2 | ActionEvidenceV1
 
 
 class ResolutionEvidenceV1(StrictModel):
@@ -371,11 +493,35 @@ class ResolutionEvidenceV2(StrictModel):
         return self
 
 
-ResolutionEvidence = ResolutionEvidenceV2 | ResolutionEvidenceV1
+class ResolutionEvidenceV3(StrictModel):
+    schema_version: Literal[3]
+    method: Literal["manual_state_alignment"]
+    command_id: str = Field(min_length=1, max_length=128)
+    broker_epoch: str = Field(min_length=1, max_length=128)
+    command_expires_at_unix_ms: int = Field(ge=0)
+    session_id: str = Field(min_length=1, max_length=128)
+    world_epoch: str = Field(min_length=1, max_length=128)
+    revision: int = Field(ge=0, le=2147483647)
+    version: str = Field(min_length=1, max_length=256)
+    snapshot: GameStateV3
+    operator_note: str = Field(min_length=8, max_length=512)
+    confirm_no_replay: Literal[True]
+    recorded_at_unix_ms: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_snapshot_identity(self):
+        if (self.version != f"{self.world_epoch}:{self.revision}"
+                or self.snapshot.world_epoch != self.world_epoch
+                or self.snapshot.revision != self.revision or self.snapshot.version != self.version):
+            raise ValueError("resolution_snapshot_identity_mismatch")
+        return self
+
+
+ResolutionEvidence = ResolutionEvidenceV3 | ResolutionEvidenceV2 | ResolutionEvidenceV1
 
 
 class CommandReply(StrictModel):
-    schema_version: Literal[2]
+    schema_version: Literal[2, 3]
     id: str = Field(min_length=1, max_length=128)
     command_status: Literal["pending", "running", "succeeded", "rejected", "failed", "outcome_unknown"]
     status: Literal["pending", "running", "succeeded", "rejected", "failed", "outcome_unknown"]
@@ -383,18 +529,20 @@ class CommandReply(StrictModel):
     resolved: bool
     resolution: ResolutionEvidence | None
     execution: ExecutionProgress | None
-    record_schema_version: Literal[1, 2]
+    record_schema_version: Literal[1, 2, 3]
 
     @model_validator(mode="before")
     @classmethod
     def validate_raw_envelope(cls, value):
         if (type(value) is not dict or type(value.get("schema_version")) is not int
-                or value.get("schema_version") != 2):
+                or value.get("schema_version") not in (2, 3)):
             raise ValueError("command_envelope_must_be_object")
         record_version = value.get("record_schema_version")
         result = value.get("result")
-        if type(record_version) is not int or record_version not in (1, 2):
+        if type(record_version) is not int or record_version not in (1, 2, 3):
             raise ValueError("invalid_record_schema_version")
+        if value.get("schema_version") != (3 if record_version == 3 else 2):
+            raise ValueError("record_and_envelope_schema_mismatch")
         if result is not None:
             result_version = result.get("schema_version") if type(result) is dict else None
             if type(result_version) is not int:
@@ -403,7 +551,9 @@ class CommandReply(StrictModel):
                 raise ValueError("record_and_result_schema_mismatch")
             if result_version == 2 and not valid_result_structure(result, require_execution=False):
                 raise ValueError("invalid_v2_result")
-        elif record_version not in (1, 2):
+            if result_version == 3 and not valid_result_structure_v3(result, require_execution=False):
+                raise ValueError("invalid_v3_result")
+        elif record_version not in (1, 2, 3):
             raise ValueError("invalid_record_schema_version")
         if value.get("resolved") is not (value.get("resolution") is not None):
             raise ValueError("resolution_flag_mismatch")
@@ -432,11 +582,16 @@ class CommandReply(StrictModel):
             raise ValueError("result_id_mismatch")
         if self.resolution is not None and self.resolution.command_id != self.id:
             raise ValueError("resolution_id_mismatch")
+        expected_resolutions = {1, 2} if self.record_schema_version == 1 else {self.record_schema_version}
+        if self.resolution is not None and self.resolution.schema_version not in expected_resolutions:
+            raise ValueError("resolution_record_schema_mismatch")
         if self.execution is not None and self.execution.id != self.id:
             raise ValueError("progress_id_mismatch")
-        if self.record_schema_version == 2 and isinstance(self.result, ActionEvidenceV1):
+        if self.record_schema_version == 2 and not isinstance(self.result, (ActionEvidenceV2, type(None))):
             raise ValueError("v2_record_has_v1_result")
-        if self.record_schema_version == 1 and (isinstance(self.result, ActionEvidenceV2) or self.execution is not None):
+        if self.record_schema_version == 3 and self.result is not None and not isinstance(self.result, ActionEvidenceV3):
+            raise ValueError("v3_record_has_non_v3_result")
+        if self.record_schema_version == 1 and (isinstance(self.result, (ActionEvidenceV2, ActionEvidenceV3)) or self.execution is not None):
             raise ValueError("v1_record_has_v2_evidence")
         if self.resolved != (self.resolution is not None):
             raise ValueError("resolution_flag_mismatch")
@@ -457,7 +612,7 @@ class ActReply(ToolReply):
     reason: str | None = None
     result: ActionEvidence | None = None
     execution: ExecutionProgress | None = None
-    record_schema_version: Literal[1, 2] | None = None
+    record_schema_version: Literal[1, 2, 3] | None = None
 
 
 class ActionStatusReply(ToolReply):
@@ -470,7 +625,7 @@ class ActionStatusReply(ToolReply):
     resolved: bool = False
     resolution: ResolutionEvidence | None = None
     execution: ExecutionProgress | None = None
-    record_schema_version: Literal[1, 2] | None = None
+    record_schema_version: Literal[1, 2, 3] | None = None
 
 
 class WaitRequest(StrictModel):
@@ -500,7 +655,7 @@ class WaitRequest(StrictModel):
 
 class WaitReply(ToolReply):
     outcome: Literal["updated", "terminal", "operable", "timed_out"] | None = None
-    snapshot: Snapshot | None = None
+    snapshot: SnapshotUnion | None = None
     command_id: str | None = None
     command_status: Literal["pending", "running", "succeeded", "rejected", "failed", "outcome_unknown", "not_found"] | None = None
     command: CommandReply | None = None
@@ -514,8 +669,8 @@ class AdapterError(Exception):
 
 
 def _exact_schema_2(value):
-    if type(value) is not int or value != 2:
-        raise ValueError("schema_version_must_be_exact_integer_2")
+    if type(value) is not int or value not in (2, 3):
+        raise ValueError("schema_version_must_be_exact_integer_2_or_3")
     return value
 
 
@@ -553,19 +708,26 @@ def _call(path: str, body: dict | None = None) -> tuple[int, dict]:
     return status, payload
 
 
-def _snapshot() -> Snapshot:
-    status, payload = _call("/state")
-    if status != 200:
-        error = str(payload.get("error", f"http_{status}"))
-        source = "protocol" if error == "schema_version_unsupported" or status == 400 else "broker"
-        raise AdapterError(source, error)
+def _parse_snapshot(payload: dict) -> SnapshotUnion:
     try:
+        version = payload.get("schema_version")
+        if type(version) is int and version == 3:
+            return SnapshotV3.model_validate(payload)
         return Snapshot.model_validate(payload)
     except ValidationError as exc:
         raise AdapterError("protocol", "broker_state_schema_invalid") from exc
 
 
-def _state_can_act(snap: Snapshot) -> bool:
+def _snapshot() -> SnapshotUnion:
+    status, payload = _call("/state")
+    if status != 200:
+        error = str(payload.get("error", f"http_{status}"))
+        source = "protocol" if error == "schema_version_unsupported" or status == 400 else "broker"
+        raise AdapterError(source, error)
+    return _parse_snapshot(payload)
+
+
+def _state_can_act(snap: SnapshotUnion) -> bool:
     return bool(snap.connected and snap.can_act and snap.state and snap.state.ready and snap.state.legal_actions)
 
 
@@ -619,19 +781,18 @@ async def _async_get(client: httpx2.AsyncClient, config: dict, path: str,
         raise AdapterError("protocol", "response_invalid_json") from exc
     if not isinstance(payload, dict):
         raise AdapterError("protocol", "broker_response_must_be_object")
+    if not response_size_valid(payload, len(raw)):
+        raise AdapterError("protocol", "response_too_large")
     return response.status_code, payload
 
 
-async def _snapshot_async(client: httpx2.AsyncClient, config: dict, timeout: float) -> Snapshot:
+async def _snapshot_async(client: httpx2.AsyncClient, config: dict, timeout: float) -> SnapshotUnion:
     status, payload = await _async_get(client, config, "/state", timeout)
     if status != 200:
         error = str(payload.get("error", f"http_{status}"))
         source = "protocol" if error == "schema_version_unsupported" or status == 400 else "broker"
         raise AdapterError(source, error)
-    try:
-        return Snapshot.model_validate(payload)
-    except ValidationError as exc:
-        raise AdapterError("protocol", "broker_state_schema_invalid") from exc
+    return _parse_snapshot(payload)
 
 
 async def _command_async(client: httpx2.AsyncClient, config: dict, command_id: str,
@@ -701,16 +862,25 @@ def observe() -> ObserveReply:
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False))
-def act(schema_version: Annotated[Literal[2], BeforeValidator(_exact_schema_2)],
+def act(schema_version: Annotated[Literal[2, 3], BeforeValidator(_exact_schema_2)],
         command_id: Annotated[str, Field(min_length=1, max_length=128, pattern=_COMMAND_ID)],
-        action: Literal["close_menu"], arguments: CloseMenuArguments,
+        action: Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
+                        "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
+                        "refuse_trade", "dismiss_customer"],
+        arguments: CloseMenuArguments | ActionArgumentsV3,
         broker_epoch: Annotated[str, Field(min_length=1, max_length=128)],
         expected_world_epoch: Annotated[str, Field(min_length=1, max_length=128)],
         expected_revision: Annotated[int, Field(strict=True, ge=0, le=2147483647)],
         expected_version: Annotated[str, Field(min_length=1, max_length=256)]) -> ActReply:
     """Submit one version-guarded action; query the same ID after ambiguous outcomes."""
+    if schema_version == 2 and (action != "close_menu" or arguments.model_dump(mode="json") != {}):
+        reason = "action_not_allowed"
+        return ActReply(ok=False, error_source="protocol", error=reason,
+                        command_id=command_id, command_status="rejected", status="rejected",
+                        broker_epoch=broker_epoch, world_epoch=expected_world_epoch,
+                        revision=expected_revision, version=expected_version, reason=reason)
     body = {"schema_version": schema_version, "id": command_id, "action": action,
-            "arguments": arguments.model_dump(mode="json"), "broker_epoch": broker_epoch,
+            "arguments": arguments.model_dump(mode="json", exclude_unset=True, exclude_none=True), "broker_epoch": broker_epoch,
             "expected_world_epoch": expected_world_epoch, "expected_revision": expected_revision,
             "expected_version": expected_version}
     try:

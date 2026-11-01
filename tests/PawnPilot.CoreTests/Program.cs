@@ -3,7 +3,7 @@ using System.Text.Json;
 
 try
 {
-if (args.Length >= 2 && args[0] == "--simulate-mod")
+if (args.Length >= 2 && (args[0] == "--simulate-mod" || args[0] == "--simulate-mod-v3"))
 {
     Environment.ExitCode = await ModSimulator.Run(args);
     return;
@@ -335,7 +335,14 @@ using (var fixtureDoc = JsonDocument.Parse(File.ReadAllText(fixturePath)))
 }
 TradeDiagnosticTests.Run(Check);
 VerificationDiagnosticTests.Run(Check);
-Console.WriteLine($"TOTAL {count} passed, 0 failed (managed lifecycle, protocol v2 executor and diagnostic fixtures; no Unity runtime)");
+BusinessWireTests.Run(Check);
+BusinessUiTests.Run(Check);
+BusinessGateTests.Run(Check);
+BusinessObservationTests.Run(Check);
+BusinessActionTests.Run(Check);
+PurchaseVerifierTests.Run(Check);
+CapacityProofTests.Run(Check);
+Console.WriteLine($"TOTAL {count} passed, 0 failed (managed lifecycle, wire v2/v3, business and verifier fixtures; no Unity runtime)");
 }
 catch (Exception ex)
 {

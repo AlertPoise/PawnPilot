@@ -9,14 +9,16 @@ import time
 
 try:
     from .legacy_journal import Journal as LegacyJournal, JournalError
-    from .protocol import (progress_matches_command, request_fingerprint, strict_json_loads,
+    from .protocol import (WIRE_VERSION_V3, progress_matches_command, request_fingerprint, strict_json_loads,
                            valid_command, valid_request, valid_result_structure, valid_snapshot,
-                           valid_success_result)
+                           valid_success_result, valid_command_v3, valid_request_v3,
+                           valid_result_structure_v3, valid_snapshot_v3, valid_success_result_v3)
 except ImportError:  # Support the existing `python bridge/server.py` launch path.
     from legacy_journal import Journal as LegacyJournal, JournalError
-    from protocol import (progress_matches_command, request_fingerprint, strict_json_loads,
+    from protocol import (WIRE_VERSION_V3, progress_matches_command, request_fingerprint, strict_json_loads,
                          valid_command, valid_request, valid_result_structure, valid_snapshot,
-                         valid_success_result)
+                         valid_success_result, valid_command_v3, valid_request_v3,
+                         valid_result_structure_v3, valid_snapshot_v3, valid_success_result_v3)
 
 MAX_JOURNAL_BYTES = 16 * 1024 * 1024
 MAX_RECORDS = 4096
@@ -319,6 +321,11 @@ class Journal:
                     return False
                 status = record["command_status"]
                 resolution = record.get("resolution")
+            elif version == WIRE_VERSION_V3:
+                if not cls._valid_v3_record(record):
+                    return False
+                status = record["command_status"]
+                resolution = record.get("resolution")
             else:
                 return False
             command_id = record["command_id"]
@@ -331,6 +338,14 @@ class Journal:
 
     @classmethod
     def _valid_v2_record(cls, record):
+        return cls._valid_wire_record(record, 2)
+
+    @classmethod
+    def _valid_v3_record(cls, record):
+        return cls._valid_wire_record(record, WIRE_VERSION_V3)
+
+    @classmethod
+    def _valid_wire_record(cls, record, version):
         keys = set(record)
         if (keys != _V2_RECORD_KEYS and keys != (_V2_RECORD_KEYS | {"resolution"})):
             return False
@@ -349,7 +364,12 @@ class Journal:
                 or record["updated_at_unix_ms"] < record["created_at_unix_ms"]):
             return False
         command, request, status = record["command"], record["request"], record["command_status"]
-        if (not valid_command(command) or not valid_request(request)
+        request_valid = valid_request_v3 if version == WIRE_VERSION_V3 else valid_request
+        command_valid = valid_command_v3 if version == WIRE_VERSION_V3 else valid_command
+        result_valid = valid_result_structure_v3 if version == WIRE_VERSION_V3 else valid_result_structure
+        snapshot_valid = valid_snapshot_v3 if version == WIRE_VERSION_V3 else valid_snapshot
+        success_valid = valid_success_result_v3 if version == WIRE_VERSION_V3 else valid_success_result
+        if (not command_valid(command) or not request_valid(request)
                 or command["id"] != record["command_id"]
                 or command["broker_epoch"] != request.get("broker_epoch")
                 or set(request) != {"schema_version", "id", "broker_epoch", "action", "expected_world_epoch",
@@ -377,18 +397,18 @@ class Journal:
         else:
             if result is None:
                 return False
-            if (not valid_result_structure(result, require_execution=False)
+            if (not result_valid(result, require_execution=False)
                     or result["id"] != record["command_id"]
                     or result["broker_epoch"] != command["broker_epoch"]
                     or RESULT_TO_COMMAND.get(result["status"]) != status):
                 return False
-            if result["schema_version"] == 2:
+            if result["schema_version"] == version:
                 if result["execution"] is not None:
                     if result["execution"] != execution:
                         return False
                 elif status == "rejected" and execution is not None and execution["may_have_side_effects"]:
                     return False
-                if result["status"] == "succeeded" and not valid_success_result(command, result):
+                if result["status"] == "succeeded" and not success_valid(command, result):
                     return False
             elif result["schema_version"] == 1:
                 # A v2 command cannot be retroactively backed by a v1 result.
@@ -396,18 +416,22 @@ class Journal:
             else:
                 return False
         resolution = record.get("resolution")
-        if resolution is not None and not cls._valid_v2_resolution(record, resolution):
+        if resolution is not None and not cls._valid_resolution(record, resolution, version):
             return False
         return True
 
     @classmethod
     def _valid_v2_resolution(cls, record, resolution):
+        return cls._valid_resolution(record, resolution, 2)
+
+    @classmethod
+    def _valid_resolution(cls, record, resolution, version):
         command = record["command"]
         deadline = (command["expires_at_unix_ms"] if command["schema_version"] == 1 else
                     command["start_deadline_unix_ms"] + command["execution_timeout_ms"])
         return (record["command_status"] in {"outcome_unknown", "succeeded", "rejected", "failed"}
                 and type(resolution) is dict and set(resolution) == _RESOLUTION_KEYS
-                and type(resolution.get("schema_version")) is int and resolution["schema_version"] == 2
+                and type(resolution.get("schema_version")) is int and resolution["schema_version"] == version
                 and resolution.get("method") == "manual_state_alignment"
                 and command.get("action") == "close_menu"
                 and resolution.get("command_id") == record["command_id"]
@@ -418,7 +442,8 @@ class Journal:
                 and isinstance(resolution.get("world_epoch"), str) and 1 <= len(resolution["world_epoch"]) <= 128
                 and type(resolution.get("revision")) is int and 0 <= resolution["revision"] <= 2_147_483_647
                 and resolution.get("version") == f"{resolution.get('world_epoch')}:{resolution.get('revision')}"
-                and valid_snapshot(resolution.get("snapshot"))
+                and (valid_snapshot_v3(resolution.get("snapshot")) if version == WIRE_VERSION_V3
+                     else valid_snapshot(resolution.get("snapshot")))
                 and resolution["snapshot"].get("world_epoch") == resolution.get("world_epoch")
                 and resolution["snapshot"].get("revision") == resolution.get("revision")
                 and resolution["snapshot"].get("version") == resolution.get("version")

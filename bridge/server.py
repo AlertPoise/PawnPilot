@@ -14,19 +14,29 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 try:
     from .journal import Journal, JournalError
-    from .protocol import (WIRE_VERSION, progress_matches_command, request_fingerprint,
+    from .protocol import (WIRE_VERSION, WIRE_VERSION_V3, MAX_V2_MESSAGE_BYTES,
+                           MAX_V3_MESSAGE_BYTES, compact_json_size, response_size_valid,
+                           progress_matches_command, request_fingerprint,
                            valid_command, valid_progress, valid_progress_transition,
                            valid_request, valid_result_structure, valid_snapshot,
-                           valid_success_result, strict_json_loads)
+                           valid_success_result, valid_command_v3, valid_request_v3,
+                           valid_result_structure_v3, valid_snapshot_v3, valid_success_result_v3,
+                           valid_action_binding_v3,
+                           strict_json_loads)
 except ImportError:  # Support the existing `python bridge/server.py` launch path.
     from journal import Journal, JournalError
-    from protocol import (WIRE_VERSION, progress_matches_command, request_fingerprint,
+    from protocol import (WIRE_VERSION, WIRE_VERSION_V3, MAX_V2_MESSAGE_BYTES,
+                          MAX_V3_MESSAGE_BYTES, compact_json_size, response_size_valid,
+                          progress_matches_command, request_fingerprint,
                           valid_command, valid_progress, valid_progress_transition,
                           valid_request, valid_result_structure, valid_snapshot,
-                          valid_success_result, strict_json_loads)
+                          valid_success_result, valid_command_v3, valid_request_v3,
+                          valid_result_structure_v3, valid_snapshot_v3, valid_success_result_v3,
+                          valid_action_binding_v3,
+                          strict_json_loads)
 
 PORT = 18765
-MAX_BODY = 65536
+MAX_BODY = MAX_V3_MESSAGE_BYTES
 ACTION = "close_menu"
 LEGACY_STATUS = {"pending": "queued", "running": "delivered", "succeeded": "success",
                  "rejected": "rejected", "failed": "error", "outcome_unknown": "uncertain"}
@@ -59,6 +69,7 @@ class Broker:
         self.poisoned = False
         self.session_id = None
         self.state = None
+        self.session_wire_version = None
         self.last_seen = 0.0
         self.start_monotonic_deadlines = {}
         self.execution_monotonic_deadlines = {}
@@ -102,6 +113,23 @@ class Broker:
         return record["command"].get("schema_version", 1)
 
     @staticmethod
+    def _snapshot_valid(value, version):
+        return valid_snapshot_v3(value) if version == WIRE_VERSION_V3 else valid_snapshot(value)
+
+    @staticmethod
+    def _request_valid(value, version):
+        return valid_request_v3(value) if version == WIRE_VERSION_V3 else valid_request(value)
+
+    @staticmethod
+    def _command_valid(value, version):
+        return valid_command_v3(value) if version == WIRE_VERSION_V3 else valid_command(value)
+
+    @staticmethod
+    def _result_valid(value, version, require_execution=True):
+        return (valid_result_structure_v3(value, require_execution) if version == WIRE_VERSION_V3
+                else valid_result_structure(value, require_execution))
+
+    @staticmethod
     def _command_deadline(command):
         if command.get("schema_version") == 1:
             return command["expires_at_unix_ms"]
@@ -124,7 +152,9 @@ class Broker:
             return {"schema_version": 1, "id": record["command_id"],
                     "broker_epoch": command["broker_epoch"], "status": LEGACY_STATUS[status],
                     "reason": reason, "before": None, "after": None}
-        return {"schema_version": WIRE_VERSION, "id": record["command_id"],
+        version = self._record_schema_version(record)
+        return {"schema_version": version if version in {WIRE_VERSION, WIRE_VERSION_V3} else WIRE_VERSION,
+                "id": record["command_id"],
                 "broker_epoch": command["broker_epoch"], "status": status,
                 "reason": reason, "before": None, "after": None, "execution": None}
 
@@ -170,7 +200,8 @@ class Broker:
 
     @staticmethod
     def _valid_state(state):
-        return valid_snapshot(state)
+        version = state.get("schema_version") if type(state) is dict else None
+        return valid_snapshot_v3(state) if version == WIRE_VERSION_V3 else valid_snapshot(state)
 
     @staticmethod
     def _validate_exchange_shape(body):
@@ -178,16 +209,20 @@ class Broker:
                     "has_result", "result", "progress"}
         if type(body) is not dict:
             raise ProtocolError(400, "invalid_exchange")
-        if type(body.get("schema_version")) is not int or body.get("schema_version") != WIRE_VERSION:
+        if type(body.get("schema_version")) is not int or body.get("schema_version") not in {WIRE_VERSION, WIRE_VERSION_V3}:
             raise ProtocolError(400, "schema_version_unsupported")
         if type(body.get("has_result")) is not bool:
             raise ProtocolError(400, "has_result_boolean_required")
         if set(body) != expected:
             raise ProtocolError(400, "invalid_exchange")
+        limit = MAX_V3_MESSAGE_BYTES if body["schema_version"] == WIRE_VERSION_V3 else MAX_V2_MESSAGE_BYTES
+        size = compact_json_size(body)
+        if size is None or size > limit:
+            raise ProtocolError(413, "exchange_too_large")
 
-    def _progress_record(self, progress, sid):
+    def _progress_record(self, progress, sid, version):
         record = self.records.get(progress["id"])
-        if (record is None or self._record_schema_version(record) != WIRE_VERSION
+        if (record is None or self._record_schema_version(record) != version
                 or record.get("delivery_session_id") != sid
                 or record["command"]["broker_epoch"] != progress["broker_epoch"]
                 or not progress_matches_command(progress, record["command"])
@@ -196,12 +231,14 @@ class Broker:
         return record
 
     def _validate_result(self, record, result):
-        if (self._record_schema_version(record) != WIRE_VERSION
+        version = self._record_schema_version(record)
+        if (version not in {WIRE_VERSION, WIRE_VERSION_V3}
                 or result["id"] != record["command_id"]
                 or result["broker_epoch"] != record["command"]["broker_epoch"]
                 or not progress_matches_command(result["execution"], record["command"])
                 or not valid_progress_transition(record.get("execution"), result["execution"])
-                or not valid_success_result(record["command"], result)):
+                or not (valid_success_result_v3(record["command"], result) if version == WIRE_VERSION_V3
+                        else valid_success_result(record["command"], result))):
             raise ProtocolError(409, "invalid_result_evidence")
 
     def exchange(self, body):
@@ -212,14 +249,22 @@ class Broker:
                 or (seen_epoch is not None
                     and (type(seen_epoch) is not str or not 1 <= len(seen_epoch) <= 128))):
             raise ProtocolError(400, "invalid_exchange_identity")
+        wire_version = body["schema_version"]
         state = body["state"]
-        if not valid_snapshot(state):
+        if not self._snapshot_valid(state, wire_version):
             raise ProtocolError(400, "invalid_snapshot")
+        active_before_lock = self._active()
+        if ((self.session_id == body["session_id"] and self.session_wire_version is not None
+             and self.session_wire_version != wire_version)
+                or (active_before_lock is not None
+                    and self._record_schema_version(active_before_lock) in {WIRE_VERSION, WIRE_VERSION_V3}
+                    and self._record_schema_version(active_before_lock) != wire_version)):
+            raise ProtocolError(409, "session_wire_version_mismatch")
         progress = body["progress"]
         if progress is not None and not valid_progress(progress):
             raise ProtocolError(400, "invalid_progress")
         result = body["result"] if body["has_result"] else None
-        if body["has_result"] and not valid_result_structure(result):
+        if body["has_result"] and not self._result_valid(result, wire_version):
             raise ProtocolError(400, "invalid_result")
         if result is not None and progress is not None and progress != result["execution"]:
             raise ProtocolError(400, "conflicting_progress_and_result")
@@ -230,6 +275,9 @@ class Broker:
             if self.closed or self.poisoned:
                 raise ProtocolError(503, "server_closed")
             self._expire()
+            if (self.session_id == sid and self.session_wire_version is not None
+                    and self.session_wire_version != wire_version):
+                raise ProtocolError(409, "session_wire_version_mismatch")
             session_changed = self.session_id is not None and self.session_id != sid
             if session_changed:
                 active = self._active()
@@ -241,7 +289,7 @@ class Broker:
             acknowledged_id = None
             progress_record = None
             if progress is not None:
-                progress_record = self._progress_record(progress, sid)
+                progress_record = self._progress_record(progress, sid, wire_version)
                 if (result is None and progress_record["result"] is not None
                         and progress_record["result"].get("execution") is not None):
                     raise ProtocolError(409, "progress_after_terminal_result")
@@ -256,7 +304,8 @@ class Broker:
                         now_monotonic + remaining_ms / 1000)
             if result is not None:
                 record = self.records.get(result["id"])
-                if (record is None or record.get("delivery_session_id") != sid
+                if (record is None or self._record_schema_version(record) != wire_version
+                        or record.get("delivery_session_id") != sid
                         or record["command"]["broker_epoch"] != result["broker_epoch"]):
                     raise ProtocolError(409, "unknown_or_conflicting_result")
                 acknowledged_id = result["id"]
@@ -278,6 +327,7 @@ class Broker:
                                       and (result is not None or progress is not None))
             if not prior_session_evidence:
                 self.session_id, self.state, self.last_seen = sid, copy.deepcopy(state), self.monotonic()
+                self.session_wire_version = wire_version
 
             command = None
             active = self._active()
@@ -287,7 +337,8 @@ class Broker:
                         or expected["expected_revision"] != state["revision"]
                         or expected["expected_version"] != state["version"]):
                     self._terminal(active, "rejected", "stale_state")
-                elif not state["can_close_menu"]:
+                elif not any(a["action"] == expected["action"] and a["arguments"] == expected["arguments"]
+                             for a in state["legal_actions"]):
                     self._terminal(active, "rejected", "precondition")
                 else:
                     active["command_status"] = "running"
@@ -295,16 +346,17 @@ class Broker:
                     active["updated_at_unix_ms"] = int(self.clock() * 1000)
                     self._persist()
                     command = dict(expected)
-            return {"schema_version": WIRE_VERSION, "broker_epoch": self.broker_epoch,
+            return {"schema_version": wire_version, "broker_epoch": self.broker_epoch,
                     "acknowledged_result_id": acknowledged_id,
                     "has_command": command is not None, "command": command}
 
     def enqueue(self, body):
         if type(body) is not dict:
             raise ProtocolError(400, "invalid_command")
-        if type(body.get("schema_version")) is not int or body.get("schema_version") != WIRE_VERSION:
+        if type(body.get("schema_version")) is not int or body.get("schema_version") not in {WIRE_VERSION, WIRE_VERSION_V3}:
             raise ProtocolError(400, "schema_version_unsupported")
-        if not valid_request(body):
+        version = body["schema_version"]
+        if not self._request_valid(body, version):
             raise ProtocolError(400, "invalid_command")
         try:
             fingerprint = request_fingerprint(body)
@@ -319,7 +371,9 @@ class Broker:
                 if old["request_fingerprint"] != fingerprint:
                     raise ProtocolError(409, "command_id_conflict")
                 return self._command_reply(old)
-            if body["action"] != ACTION or body["arguments"] != {}:
+            if version == WIRE_VERSION and (body["action"] != ACTION or body["arguments"] != {}):
+                raise ProtocolError(400, "action_not_allowed")
+            if version == WIRE_VERSION_V3 and (body["action"] != ACTION or body["arguments"] != {}):
                 raise ProtocolError(400, "action_not_allowed")
             if self.closed or not self._connected():
                 raise ProtocolError(503, "game_disconnected")
@@ -335,14 +389,22 @@ class Broker:
                 raise ProtocolError(409, "stale_state")
             if not self.state["ready"]:
                 raise ProtocolError(409, self.state.get("not_ready_reason") or "game_not_ready")
-            if not self.state["can_close_menu"]:
+            if body["action"] == "close_menu" and not self.state["can_close_menu"]:
                 raise ProtocolError(409, "precondition")
+            if self.session_wire_version != version:
+                raise ProtocolError(409, "session_wire_version_mismatch")
+            if not any(a["action"] == body["action"] and a["arguments"] == body["arguments"]
+                       for a in self.state["legal_actions"]):
+                raise ProtocolError(409, "precondition")
+            if version == WIRE_VERSION_V3 and not valid_action_binding_v3(
+                    self.state["business"], body["action"], body["arguments"]):
+                raise ProtocolError(409, "stale_business_reference")
             now_wall = self.clock()
             now_monotonic = self.monotonic()
             request = copy.deepcopy(body)
             command = dict(request, start_deadline_unix_ms=int((now_wall + self.ttl) * 1000),
                            execution_timeout_ms=self.execution_timeout_ms)
-            if not valid_command(command):
+            if not self._command_valid(command, version):
                 raise ProtocolError(500, "invalid_broker_command")
             now_ms = int(now_wall * 1000)
             record = {"command_id": body["id"], "request_fingerprint": fingerprint,
@@ -360,7 +422,7 @@ class Broker:
                 or set(body) != {"schema_version", "id", "broker_epoch", "world_epoch", "revision",
                                 "expected_version", "operator_note", "confirm_no_replay"}
                 or type(body.get("schema_version")) is not int
-                or body.get("schema_version") != WIRE_VERSION or not isinstance(body.get("id"), str)
+                or body.get("schema_version") not in {WIRE_VERSION, WIRE_VERSION_V3} or not isinstance(body.get("id"), str)
                 or not isinstance(body.get("broker_epoch"), str)
                 or not isinstance(body.get("world_epoch"), str) or not 1 <= len(body["world_epoch"]) <= 128
                 or type(body.get("revision")) is not int or body["revision"] < 0
@@ -380,6 +442,11 @@ class Broker:
             if (record is None or record["command_status"] != "outcome_unknown"
                     or record.get("resolution") is not None or record["command"].get("action") != "close_menu"):
                 raise ProtocolError(409, "command_not_reconcilable")
+            record_version = self._record_schema_version(record)
+            evidence_version = WIRE_VERSION if record_version == 1 else record_version
+            if (evidence_version != body["schema_version"]
+                    or self.session_wire_version != evidence_version):
+                raise ProtocolError(409, "session_wire_version_mismatch")
             if self.session_id == record.get("delivery_session_id"):
                 raise ProtocolError(409, "fresh_mod_session_required")
             deadline = self._command_deadline(record["command"])
@@ -392,7 +459,7 @@ class Broker:
                 # After restart the map is intentionally empty; the durable Unix deadline
                 # above plus the required new Mod session are the available evidence.
                 command = record["command"]
-                if self._record_schema_version(record) == WIRE_VERSION:
+                if self._record_schema_version(record) in {WIRE_VERSION, WIRE_VERSION_V3}:
                     mono_deadline += command["execution_timeout_ms"] / 1000
                 reported_deadline = self.execution_monotonic_deadlines.get(record["command_id"])
                 if reported_deadline is not None:
@@ -408,7 +475,7 @@ class Broker:
             if (body["world_epoch"] == original["expected_world_epoch"]
                     and body["revision"] <= original["expected_revision"]):
                 raise ProtocolError(409, "snapshot_not_advanced")
-            resolution = {"schema_version": WIRE_VERSION, "method": "manual_state_alignment",
+            resolution = {"schema_version": evidence_version, "method": "manual_state_alignment",
                           "command_id": record["command_id"], "broker_epoch": self.broker_epoch,
                           "command_expires_at_unix_ms": deadline,
                           "session_id": self.session_id, "world_epoch": self.state["world_epoch"],
@@ -423,10 +490,12 @@ class Broker:
 
     @staticmethod
     def _command_reply(record):
+        record_version = Broker._record_schema_version(record)
+        envelope_version = record_version if record_version in {WIRE_VERSION, WIRE_VERSION_V3} else WIRE_VERSION
         return {"id": record["command_id"], "command_status": record["command_status"],
                 "status": record["command_status"],
                 "result": copy.deepcopy(record["result"]), "resolved": bool(record.get("resolution")),
-                "resolution": copy.deepcopy(record.get("resolution")), "schema_version": WIRE_VERSION,
+                "resolution": copy.deepcopy(record.get("resolution")), "schema_version": envelope_version,
                 "execution": copy.deepcopy(record.get("execution")),
                 "record_schema_version": Broker._record_schema_version(record)}
 
@@ -446,7 +515,8 @@ class Broker:
                 reason = self.state.get("not_ready_reason") or "game_not_ready"
             else:
                 reason = None
-            return {"schema_version": WIRE_VERSION, "broker_epoch": self.broker_epoch,
+            state_version = self.session_wire_version or WIRE_VERSION
+            return {"schema_version": state_version, "broker_epoch": self.broker_epoch,
                     "session_id": self.session_id, "state": copy.deepcopy(self.state),
                     "connected": self._connected() and not self.closed,
                     "can_act": (self._connected() and self.state is not None and self.state["ready"]
@@ -511,6 +581,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _reply(self, status, body):
         raw = json.dumps(body, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+        if not response_size_valid(body, len(raw)):
+            status = 500
+            raw = json.dumps({"error": "response_too_large"}, separators=(",", ":")).encode("utf-8")
         try:
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -548,6 +621,11 @@ class Handler(BaseHTTPRequestHandler):
                 if len(lengths) != 1 or not lengths[0].isdigit():
                     raise ProtocolError(400, "invalid_content_length")
                 length = int(lengths[0])
+                wire_header = self.headers.get("X-PawnPilot-Wire-Version")
+                if wire_header is not None and wire_header not in {"2", "3"}:
+                    raise ProtocolError(400, "wire_version_header_invalid")
+                if length > MAX_V2_MESSAGE_BYTES and wire_header != str(WIRE_VERSION_V3):
+                    raise ProtocolError(413, "body_too_large_or_empty")
                 if not 0 < length <= MAX_BODY:
                     raise ProtocolError(413, "body_too_large_or_empty")
                 if self.headers.get_content_type() != "application/json":
@@ -564,6 +642,10 @@ class Handler(BaseHTTPRequestHandler):
                     raise ProtocolError(400, reason) from None
                 if not isinstance(body, dict):
                     raise ProtocolError(400, "object_required")
+                body_version = body.get("schema_version")
+                if (wire_header is not None and type(body_version) is int
+                        and wire_header != str(body_version)):
+                    raise ProtocolError(400, "wire_version_header_mismatch")
                 if self.path == "/exchange":
                     answer = self.server.broker.exchange(body)
                 elif self.path == "/commands":

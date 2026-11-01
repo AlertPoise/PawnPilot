@@ -3,11 +3,13 @@ name: pawnpilot-player
 description: 使用 PawnPilot MCP 观察《深空当铺：可能是偷的》并执行已支持的原生关闭菜单动作。适用于已启动且已获授权的本机游戏桥接；不提供自主经营或交易策略。
 ---
 
-# PawnPilot M2-B
+# PawnPilot M2-C / M2-D（PARTIAL）
 
-仅使用 `health_check`、`observe`、`act`、`get_action_status`、`wait_for_update`。当前唯一写动作是原生 `close_menu`，不支持买卖、现金修改或自主经营。`wait_for_update` 是有界只读等待，不会提交动作。MCP 要求 `act.schema_version=2`。
+仅使用 `health_check`、`observe`、`act`、`get_action_status`、`wait_for_update`。当前唯一正式写动作是原生 `close_menu`，新业务动作与购买仍被生产门禁关闭。`wait_for_update` 是有界只读等待。`act.schema_version` 必须等于同次观察的 `state.schema_version`（2 或 3），不能自行升版或混用会话。
 
-开始时先 `health_check`，再 `observe`。只有 broker/bridge 已连接、协议兼容、世界 `ready=true`、`can_act=true` 且 `legal_actions` 包含该动作时才可提交。`legal_actions` 是当前支持动作的投影；`interaction.operable` 只描述 UI/生命周期可操作性，不代表交易合法性。业务字段目前标为 unsupported。失联快照属于历史数据；`loaded=false` 的现金占位值无效。
+开始时先 `health_check`，再 `observe`。只有 broker/bridge 已连接、协议兼容、世界 `ready=true`、`can_act=true` 且 `legal_actions` 包含该动作时才可提交。`close_menu` 仅用于明确授权的诊断，不能作为自主经营遇到人工暂停的恢复策略。失联快照属于历史数据；`loaded=false` 的现金占位值无效。
+
+v3 `business.details` 必须结合 completeness/status/reason 解释。容器 incomplete/unavailable/unimplemented 的空 item_refs 不能解释成库存为空；未知名称、形状或报价金额不能推测补全。quote 行是已渲染候选，未绑定时 item_ref 为 null、offer_ref 为 null。collection_fingerprint 只是当前完整集合候选身份，不代表报价/容量/经济执行已合法。`candidates` 与 `legal_actions` 不同，purchase_enabled=false 或任一 Q/C/V/UI 未验证时不得购买。不要拼接多个查询的不同帧，冒充同一决策快照。
 
 每个动作生成唯一 `command_id` 并保留，原样传入刚观察到的 `broker_epoch`、`world_epoch`、`revision`、`version`（对应 `expected_*` 参数）。每次只提交一个动作，然后查询同一 ID 的状态及 `before/after`。菜单必须通过正常游戏入口打开；MCP 不提供打开菜单操作。
 

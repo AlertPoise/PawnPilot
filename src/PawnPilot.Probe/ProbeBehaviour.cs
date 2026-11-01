@@ -21,6 +21,8 @@ namespace PawnPilot
         private readonly WorldVersion worldVersion = new WorldVersion();
         private readonly WorldIdentityTracker worldIdentity = new WorldIdentityTracker();
         private readonly ReadyFrameTracker readyFrames = new ReadyFrameTracker();
+        private readonly BusinessProjection businessProjection = new BusinessProjection();
+        private GameBusinessActions businessActions;
         private UnityWebRequest current;
         private bool stopped, subscribed;
         private int activeSceneHandle = -1;
@@ -61,7 +63,11 @@ namespace PawnPilot
                     item_refs = value["item_refs"]?.ToObject<List<string>>(serializer),
                     offer_ref = value["offer_ref"]?.Value<string>(),
                     collection_fingerprint = value["collection_fingerprint"]?.Value<string>(),
-                    option_ref = value["option_ref"]?.Value<string>()
+                    option_ref = value["option_ref"]?.Value<string>(),
+                    dialogue_ref = value["dialogue_ref"]?.Value<string>(),
+                    mode = value["mode"]?.Value<string>(),
+                    authorization_ref = value["authorization_ref"]?.Value<string>(),
+                    amount = value["amount"]?.Value<int>(), max_spend = value["max_spend"]?.Value<int>()
                 };
             }
 
@@ -78,6 +84,11 @@ namespace PawnPilot
                     WriteString(writer, "offer_ref", value.offer_ref);
                     WriteString(writer, "collection_fingerprint", value.collection_fingerprint);
                     WriteString(writer, "option_ref", value.option_ref);
+                    WriteString(writer, "dialogue_ref", value.dialogue_ref);
+                    WriteString(writer, "mode", value.mode);
+                    WriteString(writer, "authorization_ref", value.authorization_ref);
+                    if (value.amount.HasValue) { writer.WritePropertyName("amount"); writer.WriteValue(value.amount.Value); }
+                    if (value.max_spend.HasValue) { writer.WritePropertyName("max_spend"); writer.WriteValue(value.max_spend.Value); }
                 }
                 writer.WriteEndObject();
             }
@@ -95,6 +106,7 @@ namespace PawnPilot
         {
             log = logger;
             actionDriver = new ActionDriver(gate);
+            businessActions = new GameBusinessActions(businessProjection);
             ModHook.OnGameLoadedLate += OnGameLoaded;
             SceneManager.activeSceneChanged += SceneChanged;
             activeSceneHandle = SceneManager.GetActiveScene().handle;
@@ -107,7 +119,7 @@ namespace PawnPilot
             if (stopped || actionDriver == null) return;
             var driverStep = actionDriver.Tick(RefreshReadinessFrame, Capture, brokerEpoch,
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), MonotonicMilliseconds(),
-                _ => ResumeMenu(), ActionGate.VerifyCloseMenu);
+                InvokeNativeAction, VerifyAction);
             if (driverStep.newlyFailed && !driverFailureLogged)
             {
                 driverFailureLogged = true;
@@ -281,7 +293,7 @@ namespace PawnPilot
             bool open = menu != null && menu.menuPanel != null && menu.menuPanel.activeInHierarchy;
             var state = new Snapshot
             {
-                schema_version = Protocol.SchemaVersion,
+                schema_version = Protocol.BusinessSchemaVersion,
                 world_epoch = worldVersion.Epoch,
                 revision = worldVersion.Revision,
                 scene = scene.name, loaded = loaded, ready = ready,
@@ -297,14 +309,26 @@ namespace PawnPilot
                     reason = ready ? "business_consistency_unverified" : latestReadiness.reason,
                     operable = ready
                 },
-                business = new BusinessObservation { support = "unsupported" },
+                business = businessProjection.Capture(worldVersion.Epoch, ready, BusinessReader.Read),
                 legal_actions = new List<LegalAction>()
             };
+            state.interaction.consistency = state.business.details.ui.status;
+            state.interaction.reason = state.business.details.ui.blockers.Count > 0
+                ? state.business.details.ui.blockers[0] : ready ? "business_consistency_unverified" : latestReadiness.reason;
+            state.interaction.operable = ready && state.interaction.consistency == "consistent";
             if (state.can_close_menu)
                 state.legal_actions.Add(new LegalAction { action = "close_menu", arguments = new ActionArguments() });
             state.revision = 0;
             state.version = null;
             string signature = ToJson(state);
+            if (Encoding.UTF8.GetByteCount(signature) > 65000)
+            {
+                state.business = businessProjection.Invalidate(worldVersion.Epoch, "snapshot_size_limit");
+                state.interaction.consistency = "unverified";
+                state.interaction.reason = "snapshot_size_limit";
+                state.interaction.operable = false;
+                signature = ToJson(state);
+            }
             state.version = worldVersion.Observe(signature);
             state.revision = worldVersion.Revision;
             return state;
@@ -319,6 +343,17 @@ namespace PawnPilot
             StoreUIManager.Instance.escapeUIManager.OnResume();
         }
 
+        private void InvokeNativeAction(Command command)
+        {
+            if (command.action == "close_menu") { ResumeMenu(); return; }
+            // The adapter rechecks local native evidence. A wire candidate never enables it.
+            businessActions.Invoke(command, Capture());
+        }
+
+        private VerificationDecision VerifyAction(Command command, Snapshot before, Snapshot after) =>
+            command.action == "close_menu" ? ActionGate.VerifyCloseMenu(command, before, after) :
+            businessActions.Verify(command, before, after);
+
         private static long MonotonicMilliseconds() =>
             (long)((Stopwatch.GetTimestamp() - MonotonicOrigin) * 1000.0 / Stopwatch.Frequency);
 
@@ -332,7 +367,7 @@ namespace PawnPilot
                 {
                     var exchange = new Exchange
                     {
-                        schema_version = Protocol.SchemaVersion, session_id = session, broker_epoch = brokerEpoch,
+                        schema_version = Protocol.BusinessSchemaVersion, session_id = session, broker_epoch = brokerEpoch,
                         state = Capture(), has_result = pendingResult != null, result = pendingResult,
                         progress = gate.CurrentProgress
                     };
@@ -340,6 +375,7 @@ namespace PawnPilot
                     current.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(ToJson(exchange)));
                     current.downloadHandler = new DownloadHandlerBuffer();
                     current.SetRequestHeader("Content-Type", "application/json");
+                    current.SetRequestHeader("X-PawnPilot-Wire-Version", "3");
                     current.SetRequestHeader("Authorization", "Bearer " + config.token);
                     current.timeout = 2;
                     current.redirectLimit = 0; // 即使本机端点恶意，也不能把凭据带到外网。
@@ -438,7 +474,7 @@ namespace PawnPilot
                 var root = JObject.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
                 if (reader.Read()) throw new InvalidOperationException("Trailing JSON content");
                 RequireKeys(root, "schema_version", "broker_epoch", "acknowledged_result_id", "has_command", "command");
-                RequireInteger(root, "schema_version", 2, 2);
+                RequireInteger(root, "schema_version", Protocol.BusinessSchemaVersion, Protocol.BusinessSchemaVersion);
                 RequireBoundedString(root, "broker_epoch", 128, false);
                 RequireString(root, "acknowledged_result_id", true);
                 if (root["acknowledged_result_id"].Type == JTokenType.String)
@@ -453,7 +489,7 @@ namespace PawnPilot
                     if (!(root["command"] is JObject command)) throw new InvalidOperationException("command must be object");
                     RequireKeys(command, "schema_version", "id", "broker_epoch", "action", "expected_world_epoch",
                         "expected_revision", "expected_version", "arguments", "start_deadline_unix_ms", "execution_timeout_ms");
-                    RequireInteger(command, "schema_version", 2, 2);
+                    RequireInteger(command, "schema_version", Protocol.BusinessSchemaVersion, Protocol.BusinessSchemaVersion);
                     RequireBoundedString(command, "id", 128, false);
                     RequireBoundedString(command, "broker_epoch", 128, false);
                     RequireBoundedString(command, "action", 128, false);
@@ -463,9 +499,11 @@ namespace PawnPilot
                     RequireInteger(command, "start_deadline_unix_ms", 1, long.MaxValue);
                     RequireInteger(command, "execution_timeout_ms", 1, 30000);
                     if (!(command["arguments"] is JObject arguments)) throw new InvalidOperationException("arguments must be object");
-                    RequireAllowedOptionalKeys(arguments, "customer_ref", "item_refs", "offer_ref", "collection_fingerprint", "option_ref");
-                    foreach (var key in new[] { "customer_ref", "offer_ref", "collection_fingerprint", "option_ref" })
+                    RequireAllowedOptionalKeys(arguments, "customer_ref", "item_refs", "offer_ref", "collection_fingerprint", "option_ref", "dialogue_ref", "mode", "amount", "max_spend", "authorization_ref");
+                    foreach (var key in new[] { "customer_ref", "offer_ref", "collection_fingerprint", "option_ref", "dialogue_ref", "mode", "authorization_ref" })
                         if (arguments.Property(key) != null) RequireString(arguments, key, false);
+                    foreach (var key in new[] { "amount", "max_spend" })
+                        if (arguments.Property(key) != null) RequireInteger(arguments, key, 0, int.MaxValue);
                     if (arguments.Property("item_refs") != null)
                     {
                         if (!(arguments["item_refs"] is JArray items)) throw new InvalidOperationException("item_refs must be array");
@@ -474,7 +512,7 @@ namespace PawnPilot
                 }
                 else if (root["command"].Type != JTokenType.Null) throw new InvalidOperationException("command must be null without has_command");
                 var reply = root.ToObject<Reply>(JsonSerializer.Create(JsonSettings));
-                if (reply == null || reply.schema_version != Protocol.SchemaVersion || string.IsNullOrEmpty(reply.broker_epoch))
+                if (reply == null || reply.schema_version != Protocol.BusinessSchemaVersion || string.IsNullOrEmpty(reply.broker_epoch))
                     throw new InvalidOperationException("Invalid reply envelope");
                 return reply;
             }
