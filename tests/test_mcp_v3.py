@@ -18,6 +18,43 @@ V3_DIALOGUE = json.loads((ROOT / "protocol/fixtures/v3-dialogue-snapshot.json").
 
 
 class McpV3Tests(unittest.TestCase):
+    def test_observed_action_version_routes_v2_and_v3_without_using_reply_version(self):
+        for version, state in ((2, V2["before"]), (3, V3["before"])):
+            with self.subTest(version=version):
+                snapshot = mcp_server._parse_snapshot({"schema_version": version,
+                    "broker_epoch": "broker", "session_id": "mod", "connected": True,
+                    "state": state, "blocking_reason": None, "blocked_command_id": None,
+                    "can_act": True, "execution": None})
+                with patch.object(mcp_server, "_snapshot", return_value=snapshot):
+                    observed = mcp_server.observe().model_dump(mode="json")
+                    health = mcp_server.health_check().model_dump(mode="json")
+                self.assertEqual(observed["schema_version"], 2)  # Unchanged MCP envelope.
+                self.assertEqual(observed["action_schema_version"], version)
+                self.assertEqual(health["action_schema_version"], version)
+                self.assertEqual(observed["action_schema_version"], observed["snapshot"]["state"]["schema_version"])
+                pending = {"schema_version": version, "id": "version-copy", "command_status": "pending",
+                    "status": "pending", "result": None, "resolved": False, "resolution": None,
+                    "execution": None, "record_schema_version": version}
+                with patch.object(mcp_server, "_call", return_value=(200, pending)) as call:
+                    reply = mcp_server.act(observed["action_schema_version"], "version-copy", "close_menu",
+                        mcp_server.CloseMenuArguments(), "broker", state["world_epoch"], state["revision"], state["version"])
+                self.assertTrue(reply.ok)
+                self.assertEqual(call.call_count, 1)
+                self.assertEqual(call.call_args.args[1]["schema_version"], version)
+
+    def test_action_version_is_unknown_without_connected_state(self):
+        for connected, state in ((False, V3["before"]), (True, None)):
+            snapshot = mcp_server._parse_snapshot({"schema_version": 3,
+                "broker_epoch": "broker", "session_id": "mod", "connected": connected,
+                "state": state, "blocking_reason": None, "blocked_command_id": None,
+                "can_act": False, "execution": None})
+            with patch.object(mcp_server, "_snapshot", return_value=snapshot):
+                self.assertIsNone(mcp_server.observe().action_schema_version)
+                self.assertIsNone(mcp_server.health_check().action_schema_version)
+        with patch.object(mcp_server, "_snapshot", side_effect=mcp_server.AdapterError("connection", "offline")):
+            self.assertIsNone(mcp_server.observe().action_schema_version)
+            self.assertIsNone(mcp_server.health_check().action_schema_version)
+
     def test_observe_reply_accepts_all_production_action_names(self):
         # The nested snapshot already accepted purchase, but its top-level projection
         # used to throw validation errors exactly when a real purchase became legal.
@@ -110,8 +147,10 @@ class McpV3Tests(unittest.TestCase):
         self.assertNotIn("authorization_ref", mcp_server.ActionArgumentsV3.model_fields)
 
     def test_v2_act_cannot_silently_upgrade_into_v3_action_space(self):
-        response = mcp_server.act(2, "v2-start", "start_business", mcp_server.ActionArgumentsV3(),
-                                  "broker", "world", 1, "world:1")
+        with patch.object(mcp_server, "_call") as call:
+            response = mcp_server.act(2, "v2-start", "start_business", mcp_server.ActionArgumentsV3(),
+                                      "broker", "world", 1, "world:1")
+        call.assert_not_called()
         self.assertFalse(response.ok)
         self.assertEqual(response.error_source, "protocol")
         self.assertEqual(response.reason, "action_not_allowed")

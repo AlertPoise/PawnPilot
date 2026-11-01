@@ -112,3 +112,9 @@ Agent先说明265的普通报价和550现金，认为降价10%能降低收购成
 本轮在feature/m3b-bargain开发，未合并main、未force push、未发布Release。提交范围仅源码、契约、测试、README、Skill和本报告，不包含游戏DLL、存档、密钥或原始日志。
 
 实现及验收提交：`023a91af0f836a3085ceac728d7895e4d84c4898`（`feat:实现普通自主议价并完成真实MCP验收`），已推送至origin/feature/m3b-bargain。本段提交记录由后续文档提交补录；交付HEAD以Git日志为准。
+
+## 后续修正：MCP动作版本歧义
+
+重复误用外层版本的原因是MCP回复格式、业务数据格式和动作wire版本都叫schema_version，前两者可以是2而当前wire是3；原act工具参数没有描述取值来源，前轮仅补CLI提示未消除接口歧义。现保留兼容外层字段，在health_check/observe新增顶层action_schema_version，直接取已连接state的wire版本（无连接或快照时null）；act参数的工具JSON Schema明确要求从最新observe复制此值。同步Skill、README及CLI指引，不自动升级/重试错误请求，不改变broker、Mod或历史结果。
+
+本次纯Adapter修正的Python全量回归168项通过，包括wire2/3观察→动作版本传递、断线/无快照、错误wire2业务请求不发送，以及真实SDK工具元数据说明。日志为`artifacts/m3b/research/python-action-version.log`；Skill校验通过。本次没有启动游戏、安装Mod或操作存档，因此不把自动化验证表述成新的LLM实机样本。

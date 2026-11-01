@@ -307,13 +307,17 @@ class SnapshotV1(StrictModel):
 
 
 class ToolReply(StrictModel):
-    schema_version: Literal[2] = 2
+    schema_version: Literal[2] = Field(default=2, description=
+        "MCP reply-envelope format only; NOT the wire version for act. Use observe.action_schema_version.")
     ok: bool
     error_source: Literal["none", "broker", "protocol", "connection", "configuration", "internal"]
     error: str | None = None
 
 
 class HealthReply(ToolReply):
+    action_schema_version: Literal[2, 3] | None = Field(default=None, description=
+        "Wire version from the connected game state; null without a connected snapshot. "
+        "Before act, obtain a fresh observe and copy its action_schema_version.")
     protocol_compatible: bool | None
     broker_connected: bool
     bridge_connected: bool
@@ -330,6 +334,9 @@ class HealthReply(ToolReply):
 
 
 class ObserveReply(ToolReply):
+    action_schema_version: Literal[2, 3] | None = Field(default=None, description=
+        "Copy this value into act.schema_version. Equals snapshot.state.schema_version when connected; "
+        "null without a connected game state. This does not authorize an action: check current legal_actions.")
     broker_connected: bool
     bridge_connected: bool
     snapshot: SnapshotUnion | None = None
@@ -833,6 +840,7 @@ def health_check() -> HealthReply:
         or ("menu_not_open" if state and state.schema_version == 2 and state.ready
             and not state.can_close_menu else None))
     return HealthReply(ok=True, error_source="none", protocol_compatible=True,
+                       action_schema_version=state.schema_version if snap.connected and state else None,
                        broker_connected=True, bridge_connected=snap.connected,
                        loaded=bool(state and state.loaded), ready=bool(state and state.ready),
                        can_act=can_act, broker_epoch=snap.broker_epoch,
@@ -846,7 +854,9 @@ def health_check() -> HealthReply:
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False))
 def observe() -> ObserveReply:
-    """Read the current versioned snapshot and project its currently legal supported actions."""
+    """Read current state and legal actions. Copy action_schema_version into act.schema_version,
+    NOT the reply-envelope schema_version or business.details.schema_version.
+    """
     try:
         snap = _snapshot()
     except AdapterError as exc:
@@ -864,12 +874,16 @@ def observe() -> ObserveReply:
     elif snap.connected and not legal and reason is None:
         reason = "no_legal_actions"
     return ObserveReply(ok=True, error_source="none", broker_connected=True,
+                        action_schema_version=state.schema_version if snap.connected and state else None,
                         bridge_connected=snap.connected, snapshot=snap, legal_actions=legal,
                         wait_reason=reason, manual_action_required=bool(snap.blocked_command_id))
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False))
-def act(schema_version: Annotated[Literal[2, 3], BeforeValidator(_exact_schema_2)],
+def act(schema_version: Annotated[Literal[2, 3], BeforeValidator(_exact_schema_2), Field(description=
+            "Copy action_schema_version from the immediately preceding observe response "
+            "(equals snapshot.state.schema_version). Do NOT use the outer reply schema_version=2 "
+            "or business.details.schema_version. Never guess or silently upgrade the wire version.")],
         command_id: Annotated[str, Field(min_length=1, max_length=128, pattern=_COMMAND_ID)],
         action: Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                         "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
@@ -881,7 +895,9 @@ def act(schema_version: Annotated[Literal[2, 3], BeforeValidator(_exact_schema_2
         expected_world_epoch: Annotated[str, Field(min_length=1, max_length=128)],
         expected_revision: Annotated[int, Field(strict=True, ge=0, le=2147483647)],
         expected_version: Annotated[str, Field(min_length=1, max_length=256)]) -> ActReply:
-    """Submit one version-guarded action; query the same ID after ambiguous outcomes."""
+    """Submit one version-guarded action using observe.action_schema_version as schema_version.
+    Query the same ID after ambiguous outcomes; never replay automatically.
+    """
     if schema_version == 2 and (action != "close_menu" or arguments.model_dump(mode="json") != {}):
         reason = "action_not_allowed"
         return ActReply(ok=False, error_source="protocol", error=reason,

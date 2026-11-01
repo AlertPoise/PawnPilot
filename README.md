@@ -56,11 +56,13 @@ pyproject.toml 固定官方 MCP SDK 2.3.0、Pydantic 2.12.5 和异步等待使�
 |---|---|
 | health_check | 无参数；连接、兼容性、loaded/ready、阻塞原因；health_check.can_act 表示已连接、就绪、broker允许写入且存在当前合法动作 |
 | observe | 无参数；快照、legal_actions、等待/人工处理原因；失联快照是历史数据 |
-| act | schema_version 必须与当前快照一致（2 或 3）；command_id、action 必须逐字匹配当前快照 legal_actions，arguments 遵循该动作形状，并携带 broker_epoch、expected_world_epoch、expected_revision、expected_version；提交后返回状态 |
+| act | schema_version 复制最新 observe.action_schema_version（2 或 3）；command_id、action 必须逐字匹配当前快照 legal_actions，arguments 遵循该动作形状，并携带 broker_epoch、expected_world_epoch、expected_revision、expected_version；提交后返回状态 |
 | get_action_status | 原 command_id；规范状态、before/after、原 broker epoch、人工对齐证据；not_found 不证明执行失败 |
 | wait_for_update | 只读；等待 revision/身份改变、指定命令终态或基础可操作状态；最长 30 秒，可取消 |
 
 参数和返回结构都有 JSON Schema。业务错误结构化返回，区分 broker、protocol、connection、configuration、internal。日志不污染 MCP stdout。[Agent Skill](.agents/skills/pawnpilot-player/SKILL.md)规定一次一个动作、未知先查询、人工暂停不得自行恢复。
+
+版本字段不要混用：MCP响应外层 `schema_version: 2` 是响应格式，`business.details.schema_version` 是业务数据格式。`health_check` 和 `observe` 的顶层 `action_schema_version` 才是动作wire版本，等于已连接快照的 `snapshot.state.schema_version`；没有连接/快照时为null。提交前复制最新 `observe.action_schema_version` 到 `act.schema_version`，并继续使用同次快照的身份、版本和合法动作。旧字段及wire2/3校验保持兼容，不自动升级错误请求。
 
 诊断 CLI 的 close_menu/reconcile 必须显式传入与核对快照一致的 --schema-version 2 或 3；不自动猜测或降级。schema_version 是 wire 结构版本，不是能力授权。v1 wire 请求明确拒绝；历史 v1 journal 先备份再迁移，v1/v2/v3 查询保留原证据。broker_epoch 每次 broker 启动改变；session_id 是 Mod 进程身份；同会话禁止混用 wire 版本。world_epoch 在场景切换、载入 Hook 或存档身份改变时更新；revision 随观察快照变化递增；version 必须等于 world_epoch:revision。
 

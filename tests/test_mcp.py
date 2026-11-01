@@ -95,16 +95,20 @@ class McpSubprocessCase(unittest.TestCase):
         listed = self.call_sync("", list_tools=True)
         self.assertEqual({tool.name for tool in listed.tools},
                          {"health_check", "observe", "act", "get_action_status", "wait_for_update"})
+        act_tool = next(tool for tool in listed.tools if tool.name == "act")
+        self.assertIn("action_schema_version", act_tool.input_schema["properties"]["schema_version"]["description"])
 
         health = self.call_sync("health_check")
         self.assertTrue(health["protocol_compatible"])
         self.assertTrue(health["broker_connected"])
         self.assertTrue(health["bridge_connected"])
         self.assertEqual(health["revision"], 7)
+        self.assertEqual(health["action_schema_version"], 2)
 
         observed = self.call_sync("observe")
         self.assertEqual(observed["legal_actions"], ["close_menu"])
         self.assertEqual(observed["snapshot"]["state"]["cash"], 125)
+        self.assertEqual(observed["action_schema_version"], 2)
 
         acted = self.call_sync("act", {
             "schema_version": 2, "command_id": "cmd-001", "action": "close_menu", "arguments": {}, "broker_epoch": self.broker.broker_epoch,

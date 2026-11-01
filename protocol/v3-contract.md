@@ -163,6 +163,14 @@ economic actions remain ineligible; no command is replayed.
 
 ## Transport size budgets
 
+MCP tool replies retain their independent outer `schema_version: 2` envelope format.
+`health_check` and `observe` additionally expose `action_schema_version: 2|3|null`:
+it copies the connected `snapshot.state.schema_version`, or is null without a connected
+game state. Clients copy the latest **observe.action_schema_version** into **act.schema_version**,
+alongside identity/version and legal arguments from that same observation. The outer reply format
+and `business.details.schema_version` are not action wire versions. This additive hint does not
+grant permission, change v2/v3 validation, infer/upgrade a submitted version, or replay a command.
+
 The existing v2 HTTP request and response limit remains 64 KiB. A v3 game snapshot is limited to
 64 KiB measured as deterministic compact JSON encoded as UTF-8 (sorted keys, no insignificant
 whitespace). This makes the limit independent of source key order and spacing. V3 exchange bodies,
