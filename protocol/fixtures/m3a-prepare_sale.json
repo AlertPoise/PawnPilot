@@ -1,0 +1,111 @@
+{
+  "schema_version": 3,
+  "world_epoch": "fixture-world",
+  "revision": 1,
+  "version": "fixture-world:1",
+  "scene": "InventoryScene",
+  "loaded": true,
+  "ready": true,
+  "can_close_menu": false,
+  "not_ready_reason": null,
+  "cash": 550,
+  "phase": "OPEN",
+  "menu_open": false,
+  "interaction": {
+    "phase": "business",
+    "consistency": "consistent",
+    "reason": null,
+    "operable": true
+  },
+  "business": {
+    "support": "partial",
+    "customer_ref": "customer-m3a",
+    "item_refs": [],
+    "offer_ref": null,
+    "collection_fingerprint": null,
+    "details": {
+      "schema_version": 2,
+      "status": "partial",
+      "customer": {
+        "presence": "present",
+        "arrived": true,
+        "trade_type": "buy",
+        "phase": "trading",
+        "dialogue_ref": null,
+        "dialogue_stage": "unknown",
+        "option_refs": [],
+        "dialogue_text": null,
+        "is_typing": null,
+        "waiting_for_advance": null,
+        "options": [],
+        "request_text": "I am buying this item"
+      },
+      "containers": [
+        {
+          "container": "back",
+          "completeness": "complete",
+          "reason": null,
+          "item_refs": []
+        },
+        {
+          "container": "player",
+          "completeness": "complete",
+          "reason": null,
+          "item_refs": [
+            "owned-sale-item"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "item_ref": "owned-sale-item",
+          "container": "player",
+          "name": "Owned item",
+          "units": 2,
+          "owned": true,
+          "shape_status": "unverified",
+          "width": null,
+          "height": null
+        }
+      ],
+      "quote": {
+        "status": "unverified",
+        "mode": "unknown",
+        "displayed_total": null,
+        "wholesale_total": null,
+        "rows": [],
+        "reason": "quote_not_ready"
+      },
+      "ui": {
+        "status": "consistent",
+        "blockers": [],
+        "coverage": "verified"
+      },
+      "capacity": {
+        "status": "unverified",
+        "reason": "not_required_for_sale",
+        "scope": "none"
+      },
+      "eligibility": {
+        "purchase_enabled": false,
+        "missing": [
+          "purchase_specific_eligibility"
+        ]
+      },
+      "candidates": [],
+      "front_collection_fingerprint": null
+    }
+  },
+  "legal_actions": [
+    {
+      "action": "prepare_sale_items",
+      "arguments": {
+        "customer_ref": "customer-m3a",
+        "item_refs": [
+          "owned-sale-item"
+        ],
+        "collection_fingerprint": "player-fingerprint"
+      }
+    }
+  ]
+}

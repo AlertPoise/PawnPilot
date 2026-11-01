@@ -145,7 +145,11 @@ namespace PawnPilot
                             height = observedHeight;
                         }
                     }
-                    visible.Add(new BusinessItemInput { Identity = item, Name = null, Units = units,
+                    // Same basic title used by the native inventory tooltip and trade row.
+                    // false avoids the custom-name path; no inspection or valuation is invoked.
+                    string displayName = item.GetDisplayName(false);
+                    if (string.IsNullOrWhiteSpace(displayName) || displayName.Length > 256) displayName = null;
+                    visible.Add(new BusinessItemInput { Identity = item, Name = displayName, Units = units,
                         Owned = GeneralHelper.IsItemOwned(item), ShapeStatus = shapeStatus, Width = width, Height = height });
                     totalItems++;
                 }
@@ -192,7 +196,7 @@ namespace PawnPilot
                 }
 
                 if (customer == null || customer.Presence != "present" || customer.Arrived != true ||
-                    customer.TradeType != "sell" || customer.Phase != "trading")
+                    (customer.TradeType != "sell" && customer.TradeType != "buy") || customer.Phase != "trading")
                 {
                     unavailable.Reason = "normal_sell_context_unverified";
                     return unavailable;
@@ -206,7 +210,14 @@ namespace PawnPilot
                     return unavailable;
                 }
                 var backPurchaseItems = new List<BusinessItemInput>();
-                foreach (var item in back.Items) if (item != null && !item.Owned) backPurchaseItems.Add(item);
+                bool sale = customer.TradeType == "buy";
+                foreach (var item in back.Items)
+                    if (item != null && item.Owned == sale) backPurchaseItems.Add(item);
+                if (sale && (back.Items.Length != 1 || backPurchaseItems.Count != 1))
+                {
+                    unavailable.Reason = "sale_requires_single_owned_counter_item";
+                    return unavailable;
+                }
                 if (backPurchaseItems.Count == 0)
                 {
                     unavailable.Reason = "purchase_set_empty";
@@ -280,7 +291,18 @@ namespace PawnPilot
                 }
                 bool supportedSelection = false;
                 var purchaseIdentities = new List<object>();
-                if (customer.MultiBuyDisabled.HasValue)
+                if (sale)
+                {
+                    var client = PlayerStore.Instance.currentClientInstance?.GetClientBlueprint();
+                    if (GameSaleActions.IsSupportedOrdinaryBuyer(client) &&
+                        GameSaleActions.CanOfferItem(backPurchaseItems[0].Identity as GameItem, client))
+                    {
+                        purchaseIdentities.Add(backPurchaseItems[0].Identity);
+                        supportedSelection = true;
+                    }
+                    unavailable.WholesaleTotal = null;
+                }
+                else if (customer.MultiBuyDisabled.HasValue)
                 {
                     if (!customer.MultiBuyDisabled.Value || backPurchaseItems.Count == 1)
                     {

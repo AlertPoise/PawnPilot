@@ -31,14 +31,16 @@ namespace PawnPilot
         // evidence and are not advertised by the runtime until those scopes pass.
         public static bool IsEnabled(string action) => action == "start_business" || action == "receive_next_customer" ||
             action == "advance_dialogue" || action == "choose_dialogue_option" ||
-            action == "prepare_purchase_items" || action == "dismiss_customer" || action == "purchase_visible_offer";
+            action == "prepare_purchase_items" || action == "dismiss_customer" || action == "purchase_visible_offer" ||
+            action == "prepare_sale_items" || action == "sell_visible_offer" || action == "sort_inventory_default";
         [Obsolete("Use IsEnabled(action); runtime actions are enabled per action scope.")]
         public static bool ProductionDispatchEnabled => IsEnabled("start_business") || IsEnabled("receive_next_customer");
 
         private static readonly string[] Registered =
         {
             "start_business", "receive_next_customer", "advance_dialogue", "choose_dialogue_option",
-            "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer", "purchase_visible_offer"
+            "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer", "purchase_visible_offer",
+            "prepare_sale_items", "sell_visible_offer", "sort_inventory_default"
         };
 
         public static bool IsRegistered(string action) => action != null && Array.IndexOf(Registered, action) >= 0;
@@ -46,6 +48,7 @@ namespace PawnPilot
         public static bool ArgumentsValid(string action, ActionArguments a)
         {
             if (!IsRegistered(action) || a == null) return false;
+            if (action != "sort_inventory_default" && a.container != null) return false;
             switch (action)
             {
                 case "start_business":
@@ -74,6 +77,20 @@ namespace PawnPilot
                         a.mode == "normal" && a.amount.HasValue && a.amount.Value >= 0 &&
                         a.max_spend.HasValue && a.max_spend.Value >= a.amount.Value &&
                         a.dialogue_ref == null && a.option_ref == null && a.authorization_ref == null;
+                case "prepare_sale_items":
+                    return Ref(a.customer_ref) && a.item_refs != null && a.item_refs.Count == 1 && Ref(a.item_refs[0]) &&
+                        Ref(a.collection_fingerprint) && a.offer_ref == null && a.option_ref == null && a.dialogue_ref == null &&
+                        a.mode == null && a.authorization_ref == null && a.container == null && !a.amount.HasValue && !a.max_spend.HasValue;
+                case "sell_visible_offer":
+                    return Ref(a.customer_ref) && Ref(a.offer_ref) && Ref(a.collection_fingerprint) &&
+                        a.item_refs != null && a.item_refs.Count == 1 &&
+                        a.item_refs.All(Ref) && a.item_refs.Distinct(StringComparer.Ordinal).Count() == a.item_refs.Count &&
+                        a.mode == "normal" && a.amount.HasValue && a.amount.Value >= 0 &&
+                        a.container == null && a.dialogue_ref == null && a.option_ref == null && a.authorization_ref == null && !a.max_spend.HasValue;
+                case "sort_inventory_default":
+                    return a.container == "player" && a.customer_ref == null && a.item_refs == null && a.offer_ref == null &&
+                        a.collection_fingerprint == null && a.option_ref == null && a.dialogue_ref == null && a.mode == null &&
+                        a.authorization_ref == null && !a.amount.HasValue && !a.max_spend.HasValue;
                 case "refuse_trade":
                 case "dismiss_customer":
                     return Ref(a.customer_ref) && a.item_refs == null && a.offer_ref == null &&
@@ -91,7 +108,7 @@ namespace PawnPilot
             if (ReferenceEquals(a, b)) return true;
             if (a == null || b == null || a.customer_ref != b.customer_ref || a.offer_ref != b.offer_ref ||
                 a.collection_fingerprint != b.collection_fingerprint || a.option_ref != b.option_ref ||
-                a.dialogue_ref != b.dialogue_ref || a.mode != b.mode || a.authorization_ref != b.authorization_ref ||
+                a.dialogue_ref != b.dialogue_ref || a.mode != b.mode || a.authorization_ref != b.authorization_ref || a.container != b.container ||
                 a.amount != b.amount || a.max_spend != b.max_spend) return false;
             if (a.item_refs == null || b.item_refs == null) return a.item_refs == null && b.item_refs == null;
             return a.item_refs.SequenceEqual(b.item_refs, StringComparer.Ordinal);
@@ -110,6 +127,9 @@ namespace PawnPilot
         {
             string reason = ValidateDto(command, snapshot, requireLegalCandidate: true);
             if (reason != null) return reason;
+            // These adapters have dedicated native preflight/verification paths. Their contract
+            // remains the DTO boundary here; do not require generic NativeActionEvidence routing.
+            if (command.action == "prepare_sale_items" || command.action == "sell_visible_offer" || command.action == "sort_inventory_default") return null;
             if (evidence == null || !evidence.Captured || evidence.Action != command.action) return "native_action_evidence_missing";
             if (!evidence.SceneReady) return evidence.Reason ?? "scene_not_ready";
             if (command.action == "cancel_confirmation")
@@ -248,6 +268,22 @@ namespace PawnPilot
                         snapshot.business.details.capacity.status == "sufficient" &&
                         snapshot.business.details.eligibility.purchase_enabled && args.max_spend <= snapshot.cash
                         ? null : "purchase_state_changed";
+                case "prepare_sale_items":
+                    return CustomerMatches(snapshot.business.customer_ref, customer, args.customer_ref) &&
+                        customer.trade_type == "buy" && customer.phase == "trading" && customer.arrived == true &&
+                        ExactPlayerSaleSelection(snapshot, args) ? null : "sale_preparation_state_changed";
+                case "sell_visible_offer":
+                    return CustomerMatches(snapshot.business.customer_ref, customer, args.customer_ref) &&
+                        customer.trade_type == "buy" && customer.phase == "trading" && customer.arrived == true &&
+                        snapshot.business.offer_ref == args.offer_ref &&
+                        snapshot.business.collection_fingerprint == args.collection_fingerprint &&
+                        snapshot.business.item_refs.SequenceEqual(args.item_refs, StringComparer.Ordinal) &&
+                        snapshot.business.details.quote.status == "complete" && snapshot.business.details.quote.mode == "normal" &&
+                        snapshot.business.details.quote.displayed_total == args.amount && ExactOwnedBackSubset(snapshot, args.item_refs)
+                        ? null : "sale_offer_state_changed";
+                case "sort_inventory_default":
+                    return ExactPlayerInventory(snapshot) && customer.dialogue_ref == null
+                        ? null : "inventory_sort_state_changed";
                 case "cancel_confirmation":
                     return HasExactlyOneConfirmationBlocker(snapshot.business.details.ui.blockers)
                         ? null : "confirmation_kind_unverified";
@@ -263,6 +299,33 @@ namespace PawnPilot
             return refs.Count == front.item_refs.Count && refs.ToHashSet(StringComparer.Ordinal)
                 .SetEquals(front.item_refs);
         }
+
+        private static bool ExactPlayerSaleSelection(Snapshot snapshot, ActionArguments args)
+        {
+            if (args?.item_refs == null || args.item_refs.Count != 1 ||
+                !TryGetCompleteContainer(snapshot, "player", out var player) ||
+                !TryGetCompleteContainer(snapshot, "back", out _)) return false;
+            var item = FindItem(snapshot.business.details.items, args.item_refs[0]);
+            if (item == null || item.container != "player" || !item.owned || !player.item_refs.Contains(item.item_ref)) return false;
+            var member = new BusinessCollectionMember { item_ref = item.item_ref, container = "player", units = item.units, owned = true };
+            string expected = BusinessCollection.Fingerprint(snapshot.world_epoch, args.customer_ref, "buy",
+                new[] { member }, "unknown", "unverified", null);
+            return expected != null && expected == args.collection_fingerprint;
+        }
+
+        private static bool ExactOwnedBackSubset(Snapshot snapshot, List<string> refs)
+        {
+            if (refs == null || !TryGetCompleteContainer(snapshot, "back", out var back)) return false;
+            foreach (var reference in refs)
+            {
+                var item = FindItem(snapshot.business.details.items, reference);
+                if (item == null || item.container != "back" || !item.owned || !back.item_refs.Contains(reference)) return false;
+            }
+            return true;
+        }
+
+        private static bool ExactPlayerInventory(Snapshot snapshot) =>
+            TryGetCompleteContainer(snapshot, "player", out _);
 
         private static bool BaseSnapshotReady(Snapshot s) => s != null && s.schema_version == Protocol.BusinessSchemaVersion &&
             s.loaded && s.ready && s.business != null && s.business.details != null &&
@@ -282,6 +345,7 @@ namespace PawnPilot
 
         public static bool Postcondition(string action, Snapshot before, Snapshot after)
         {
+            if (action == "sort_inventory_default") return SortInventoryPostcondition(before, after);
             if (before == null || after == null || !before.ready || !after.ready ||
                 before.schema_version != Protocol.BusinessSchemaVersion || after.schema_version != Protocol.BusinessSchemaVersion ||
                 before.world_epoch != after.world_epoch || before.scene != after.scene || after.revision <= before.revision ||
@@ -312,6 +376,9 @@ namespace PawnPilot
                          oldCustomer.dialogue_stage != newCustomer.dialogue_stage || newCustomer.phase == "trading");
                 case "prepare_purchase_items":
                     return false; // requested refs are required; only the Command overload can prove the delta.
+                case "prepare_sale_items":
+                case "sell_visible_offer":
+                    return false; // these deltas are proved by their command-specific overload below.
                 case "cancel_confirmation":
                     return ConfirmationRemoved(before, after);
                 case "refuse_trade":
@@ -323,6 +390,8 @@ namespace PawnPilot
                          after.business.customer_ref != before.business.customer_ref);
                 case "close_menu":
                     return before.menu_open && !after.menu_open;
+                case "sort_inventory_default":
+                    return SortInventoryPostcondition(before, after);
                 default:
                     return false;
             }
@@ -335,16 +404,18 @@ namespace PawnPilot
             if (after == null || !after.ready) return VerificationDecision.Pending();
             if (before == null || before.world_epoch != after.world_epoch || before.scene != after.scene)
                 return VerificationDecision.Uncertain("world_changed_after_action");
-            if (before.cash != after.cash) return VerificationDecision.Uncertain("cash_changed_during_non_economic_action");
+            if (before.cash != after.cash && command.action != "sell_visible_offer") return VerificationDecision.Uncertain("cash_changed_during_non_economic_action");
             if (Postcondition(command, before, after)) return VerificationDecision.Succeeded();
             if (command.action == "prepare_purchase_items" && StoreCollectionChanged(before, after))
                 return VerificationDecision.Uncertain("prepare_partial_or_unexpected_collection_change");
+            if (command.action == "prepare_sale_items" && StoreCollectionChanged(before, after, includePlayer: true))
+                return VerificationDecision.Uncertain("sale_prepare_partial_or_unexpected_collection_change");
             return VerificationDecision.Pending();
         }
 
-        private static bool StoreCollectionChanged(Snapshot before, Snapshot after)
+        private static bool StoreCollectionChanged(Snapshot before, Snapshot after, bool includePlayer = false)
         {
-            foreach (string name in new[] { "front", "back" })
+            foreach (string name in includePlayer ? new[] { "front", "back", "player" } : new[] { "front", "back" })
             {
                 if (!TryGetCompleteContainer(before, name, out var left) ||
                     !TryGetCompleteContainer(after, name, out var right)) continue;
@@ -363,8 +434,58 @@ namespace PawnPilot
                     before.world_epoch == after.world_epoch && before.scene == after.scene &&
                     after.revision > before.revision && command.arguments?.amount.HasValue == true &&
                     before.cash - (long)after.cash == command.arguments.amount.Value;
+            if (command.action == "sell_visible_offer")
+                return before != null && after != null && before.ready && after.ready &&
+                    before.world_epoch == after.world_epoch && before.scene == after.scene &&
+                    after.revision > before.revision && command.arguments?.amount.HasValue == true &&
+                    (long)after.cash - before.cash == command.arguments.amount.Value;
+            if (command.action == "prepare_sale_items") return BaselinePostcondition(before, after) && ExactPlayerToBackMove(command.arguments, before, after);
+            if (command.action == "sort_inventory_default") return SortInventoryPostcondition(before, after);
             if (command.action != "prepare_purchase_items") return Postcondition(command.action, before, after);
             return BaselinePostcondition(before, after) && ExactFrontToBackMove(command.arguments, before, after);
+        }
+
+        private static bool SortInventoryPostcondition(Snapshot before, Snapshot after)
+        {
+            if (before == null || after == null || !before.ready || !after.ready ||
+                before.schema_version != Protocol.BusinessSchemaVersion || after.schema_version != Protocol.BusinessSchemaVersion ||
+                before.world_epoch != after.world_epoch || before.scene != after.scene || after.revision < before.revision ||
+                before.cash != after.cash || !ExactPlayerInventory(before) || !ExactPlayerInventory(after)) return false;
+            var oldItems = before.business.details.items;
+            var newItems = after.business.details.items;
+            if (oldItems == null || newItems == null || oldItems.Count != newItems.Count) return false;
+            foreach (var item in oldItems)
+            {
+                var next = FindItem(newItems, item.item_ref);
+                if (next == null || item.units != next.units || item.owned != next.owned || item.container != next.container) return false;
+            }
+            return true;
+        }
+
+        private static bool ExactPlayerToBackMove(ActionArguments args, Snapshot before, Snapshot after)
+        {
+            if (args?.item_refs == null || args.item_refs.Count != 1 ||
+                !SameCustomerRef(before, after) || !TryGetCompleteContainer(before, "player", out var oldPlayer) ||
+                !TryGetCompleteContainer(before, "back", out var oldBack) ||
+                !TryGetCompleteContainer(after, "player", out var newPlayer) ||
+                !TryGetCompleteContainer(after, "back", out var newBack)) return false;
+            string moved = args.item_refs[0];
+            var selected = FindItem(before.business.details.items, moved);
+            if (selected == null || selected.container != "player" || !selected.owned || !oldPlayer.item_refs.Contains(moved)) return false;
+            var expectedPlayer = new HashSet<string>(oldPlayer.item_refs, StringComparer.Ordinal);
+            if (!expectedPlayer.Remove(moved)) return false;
+            var expectedBack = new HashSet<string>(oldBack.item_refs, StringComparer.Ordinal) { moved };
+            if (!expectedPlayer.SetEquals(newPlayer.item_refs) || !expectedBack.SetEquals(newBack.item_refs)) return false;
+            var oldItems = before.business.details.items;
+            var newItems = after.business.details.items;
+            if (oldItems == null || newItems == null || oldItems.Count != newItems.Count) return false;
+            foreach (var item in oldItems)
+            {
+                var next = FindItem(newItems, item.item_ref);
+                if (next == null || item.units != next.units || item.owned != next.owned ||
+                    next.container != (item.item_ref == moved ? "back" : item.container)) return false;
+            }
+            return true;
         }
 
         private static bool BaselinePostcondition(Snapshot before, Snapshot after) =>
@@ -482,7 +603,7 @@ namespace PawnPilot
 
         private static bool Empty(ActionArguments a) => a.customer_ref == null && a.item_refs == null &&
             a.offer_ref == null && a.collection_fingerprint == null && a.option_ref == null &&
-            a.dialogue_ref == null && a.mode == null && a.authorization_ref == null &&
+            a.dialogue_ref == null && a.mode == null && a.authorization_ref == null && a.container == null &&
             !a.amount.HasValue && !a.max_spend.HasValue;
 
         private static bool Ref(string value)

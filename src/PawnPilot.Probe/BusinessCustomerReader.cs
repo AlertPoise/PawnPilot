@@ -41,12 +41,34 @@ namespace PawnPilot
             var blueprint = instance.GetClientBlueprint();
             if (blueprint != null)
             {
-                customer.TradeType = blueprint.clientIntent == StoreClient.ClientIntent.SELL ? "sell" : "other";
+                customer.TradeType = blueprint.clientIntent == StoreClient.ClientIntent.SELL ? "sell" :
+                    blueprint.clientIntent == StoreClient.ClientIntent.BUY ? "buy" : "other";
                 if (customer.TradeType == "sell") customer.MultiBuyDisabled = blueprint.isMultiBuyDisabled;
             }
 
             var dialog = DialogUIManager.Instance;
             var negotiation = NegociationUIManager.Instance;
+            if (customer.TradeType == "buy" && store.isClientArrived &&
+                negotiation?.uiObject != null && negotiation.uiObject.activeInHierarchy)
+            {
+                var frame = negotiation.uiObject.GetComponent<NegotiationTabletFrame>();
+                if (frame?.infoHost != null)
+                {
+                    var visibleInterests = new List<string>();
+                    int visited = 0;
+                    foreach (Transform child in frame.infoHost)
+                    {
+                        if (++visited > 32) { visibleInterests.Clear(); break; }
+                        if (!child.gameObject.activeInHierarchy || child.name != "Tag") continue;
+                        var label = child.Find("Text")?.GetComponent<TMPro.TMP_Text>();
+                        if (!VisibleUiReader.TextVisible(label)) continue;
+                        string text = VisibleUiReader.RenderedText(label);
+                        if (!string.IsNullOrWhiteSpace(text)) visibleInterests.Add(text);
+                    }
+                    string request = string.Join(", ", visibleInterests);
+                    if (request.Length > 0 && request.Length <= 256) customer.RequestText = request;
+                }
+            }
             if (dialog == null) return input;
             var current = dialog.currentDialog;
             if (current == null)

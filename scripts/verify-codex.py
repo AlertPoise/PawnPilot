@@ -19,11 +19,17 @@ def main():
     modes.add_argument("--close-menu", action="store_true")
     modes.add_argument("--dismiss-customer", action="store_true", help="Dismiss exactly one currently legal ordinary customer through MCP")
     modes.add_argument("--business-stage", choices=("A", "B", "C", "FLOW"), help="Run a bounded real MCP business stage")
+    modes.add_argument("--m3a", choices=("FLOW", "SALE", "SORT"), help="Authorized isolated-slot M3-A acceptance")
     parser.add_argument("--business", action="store_true", help="Read v3 business completeness and quote evidence; never purchases")
     parser.add_argument("--max-spend", type=int, help="Explicit maximum total for stage C; no purchase is submitted above it")
     parser.add_argument("--model", default="gpt-5.6-luna")
+    parser.add_argument("--max-customers", type=int, default=6, help="Remaining M3-A customer budget, including resumed runs")
+    parser.add_argument("--max-writes", type=int, default=24, help="Remaining M3-A write-attempt budget, including resumed runs")
+    parser.add_argument("--skip-sort", action="store_true", help="M3-A resumed flow: sorting already completed in this slot")
     parser.add_argument("--label", default="read-only")
     args = parser.parse_args()
+    if not 0 <= args.max_customers <= 6 or not 1 <= args.max_writes <= 24:
+        parser.error("M3-A budgets must be 0..6 customers and 1..24 writes")
     if args.max_spend is not None and (args.business_stage not in ("C", "FLOW") or not 0 <= args.max_spend <= 2_147_483_647):
         parser.error("--max-spend is an in-range nonnegative integer used only with --business-stage C/FLOW")
     if args.business_stage in ("C", "FLOW") and args.max_spend is None:
@@ -35,7 +41,7 @@ def main():
     if not codex or not python.is_file():
         parser.error("Codex CLI and project .venv are required")
     business_run = args.business or args.business_stage is not None or args.dismiss_customer
-    directory = ROOT / "artifacts" / ("m2cd" if business_run else "m2b") / "codex"
+    directory = ROOT / "artifacts" / ("m3a" if args.m3a else "m2cd" if business_run else "m2b") / "codex"
     directory.mkdir(parents=True, exist_ok=True)
     output = directory / f"{args.label}.jsonl"
     if output.exists():
@@ -65,7 +71,45 @@ def main():
             "unavailable or incomplete. Unverified displayed text does not prove quote binding or legal purchase. "
             "Report the exact world/revision and missing evidence; never infer hidden names or prices. "
         )
-    if args.business_stage == "A":
+    if args.m3a:
+        prompt += (
+            "Perform this bounded M3-A test ONLY in the caller-authorized isolated test slot. "
+            f"Mode is {args.m3a}. Prefix fresh command IDs with {args.label}. "
+            "Before EVERY write, observe immediately and copy one exact legal_actions entry with its "
+            "arguments and identity/version. Write one action at a time. After EVERY act, call "
+            "get_action_status with the original ID, use wait_for_update(command_terminal) if needed, "
+            "then query the same ID again. Unknown, failed, timeout or connection loss: stop and query "
+            "the original ID; never replay. A definite rejected/stale permits a fresh observe and new "
+            "decision, at most two such retries. Never bypass legal_actions or alter amounts. "
+            "Read current dialogue text and actual visible option text before deciding. Wait for automatic "
+            "typing; use advance_dialogue next only for manual waits. Select only ordinary necessary "
+            "options. No bargaining, wholesale, appraisal, special deals, closing day or save operations. "
+            f"No purchases in this M3-A run. FLOW may start_business and receive at most {args.max_customers} customers, "
+            "normally dismiss unsupported customers without trade, and wait for departure. SALE works "
+            "only with the current customer, without starting or receiving. SORT performs only sorting. "
+            "In FLOW/SALE, for a BUY customer (NPC wants to buy), read request_text, current visible "
+            "dialogue and item names/units. Choose ONE appropriate item from current prepare_sale_items "
+            "legal entries using that visible information. Explain the selection briefly, prepare it, "
+            "then observe the exact normal quote. Submit at most ONE sell_visible_offer, only if legal "
+            "and its current quote/selected item match. Verify actual cash increase equals amount, "
+            "chosen goods leave the player counter, other goods remain. Finish that customer's normal "
+            "dialogue or legal dismiss, wait for departure; never receive another customer after sale. "
+            "In FLOW/SORT execute sort_inventory_default for player exactly ONCE when legal, preferably "
+            "before receiving. Check original goods/units/ownership remain and report the actual status. "
+            f"Maximum {args.max_writes} write attempts and 12 bounded revision waits of up to 10000 ms each. Stop "
+            "when targets achieved or limits reached. Report command IDs, actual outcomes, selected item, "
+            "quote, cash and inventory changes, refusal/dialogue coverage, sorting and departure. "
+            "Unencountered dialogue/choice samples are NOT tested; never fabricate success. "
+        )
+        prompt += (
+            "When the customer is absent and receive_next_customer is legal, receive the next customer "
+            "until your remaining customer budget is used or the sale is complete; do not wait repeatedly "
+            "for a revision that needs your next legal receive action. After three unchanged revision "
+            "waits stop and report. "
+        )
+        if args.skip_sort:
+            prompt += "Sorting already succeeded in this slot. Do NOT sort again; the instruction to sort once is already satisfied. "
+    elif args.business_stage == "A":
         prompt += (
             "Run bounded stage A: open the store, receive the first customer, and handle only ordinary visible "
             "dialogue until normal trading is ready. Before each write, call observe and use only an exact "
@@ -164,7 +208,7 @@ def main():
             "Never submit act again, even on timeout, unknown, stale or error. Then observe once. "
             "If prerequisites fail, stop and report. Include command ID and before/after evidence."
         )
-    elif args.business_stage is None:
+    elif args.business_stage is None and args.m3a is None:
         prompt += (
             "Do not call act. Also query get_action_status for ID integration_nonexistent_readonly. "
             "Call wait_for_update with criterion=operable and max_wait_ms=500 to exercise bounded waiting."
@@ -184,7 +228,8 @@ def main():
         command += ["-c", key + "=" + json.dumps(value)]
     command += [prompt]
     with output.open("x", encoding="utf-8") as stdout, output.with_suffix(".stderr.log").open("x", encoding="utf-8") as stderr:
-        result = subprocess.run(command, cwd=ROOT, stdout=stdout, stderr=stderr, timeout=900 if args.business_stage == "FLOW" else 240)
+        result = subprocess.run(command, cwd=ROOT, stdout=stdout, stderr=stderr,
+                                timeout=900 if args.business_stage == "FLOW" or args.m3a == "FLOW" else 240)
     print(json.dumps({"exit_code": result.returncode, "evidence": str(output)}))
     raise SystemExit(result.returncode)
 

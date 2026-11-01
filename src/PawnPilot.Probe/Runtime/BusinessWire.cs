@@ -33,7 +33,7 @@ namespace PawnPilot
                 !ValidateEligibility(d.eligibility) || !ValidateCandidates(d.candidates)) return false;
             if (d.eligibility.purchase_enabled && (d.schema_version != 2 || d.quote.status != "complete" ||
                 d.quote.mode != "normal" || d.capacity.status != "sufficient" ||
-                business.offer_ref == null || business.customer_ref == null || business.item_refs.Count == 0)) return false;
+                d.customer.trade_type != "sell" || business.offer_ref == null || business.customer_ref == null || business.item_refs.Count == 0)) return false;
             return WithinProductionTextBudget(business);
         }
 
@@ -47,7 +47,7 @@ namespace PawnPilot
             void L(List<string> values) { foreach (var value in values) S(value); }
             S(b.support); S(b.customer_ref); S(b.offer_ref); S(b.collection_fingerprint); L(b.item_refs);
             var d = b.details;
-            S(d.status); S(d.customer.presence); S(d.customer.trade_type); S(d.customer.phase);
+            S(d.status); S(d.customer.presence); S(d.customer.trade_type); S(d.customer.phase); S(d.customer.request_text);
             S(d.customer.dialogue_ref); S(d.customer.dialogue_stage); S(d.customer.dialogue_text);
             L(d.customer.option_refs);
             if (d.customer.options != null)
@@ -73,6 +73,7 @@ namespace PawnPilot
                 {
                     presence = details.customer.presence, arrived = details.customer.arrived,
                     trade_type = details.customer.trade_type, phase = details.customer.phase,
+                    request_text = details.customer.request_text,
                     dialogue_ref = details.customer.dialogue_ref, dialogue_stage = details.customer.dialogue_stage,
                     dialogue_text = details.customer.dialogue_text, is_typing = details.customer.is_typing,
                     waiting_for_advance = details.customer.waiting_for_advance,
@@ -112,7 +113,9 @@ namespace PawnPilot
         private static bool ValidateCustomer(CustomerState c, string customerRef, int schemaVersion)
         {
             if (!OneOf(c.presence, "absent", "present", "unverified") ||
-                !OneOf(c.trade_type, "sell", "other", "unknown") ||
+                (schemaVersion == 1 && c.request_text != null) ||
+                !OneOf(c.trade_type, "sell", "buy", "other", "unknown") ||
+                (schemaVersion == 1 && c.trade_type == "buy") ||
                 !OneOf(c.phase, "absent", "arriving", "dialogue", "trading", "leaving", "unknown") ||
                 !OneOf(c.dialogue_stage, "absent", "typing", "waiting", "choices", "updating", "unknown") ||
                 !OptionalRef(c.dialogue_ref) || !ValidList(c.option_refs, MaxRefs, false) || !AllRefs(c.option_refs) || !Unique(c.option_refs)) return false;
@@ -123,7 +126,7 @@ namespace PawnPilot
             if (c.dialogue_ref == null && c.option_refs.Count != 0) return false;
             if (schemaVersion == 2)
             {
-                if (!OptionalText(c.dialogue_text) || c.options == null || c.options.Count > 16) return false;
+                if (!OptionalText(c.dialogue_text) || !OptionalText(c.request_text) || c.options == null || c.options.Count > 16) return false;
                 if (c.dialogue_ref == null && (c.dialogue_text != null || c.is_typing.HasValue ||
                     c.waiting_for_advance.HasValue || c.options.Count != 0)) return false;
                 if (c.presence == "absent" && (c.dialogue_text != null || c.is_typing.HasValue ||
@@ -187,12 +190,12 @@ namespace PawnPilot
                 var backRefs = new List<string>();
                 ContainerState back = null;
                 foreach (var container in containers) if (container.container == "back") back = container;
-                if (details.customer.presence == "present" && details.customer.trade_type == "sell" &&
+                if (details.customer.presence == "present" && (details.customer.trade_type == "sell" || details.customer.trade_type == "buy") &&
                     back != null && back.completeness == "complete")
                 {
                     foreach (string reference in back.item_refs)
                         foreach (var item in items)
-                            if (item.item_ref == reference && !item.owned) { backRefs.Add(reference); break; }
+                            if (item.item_ref == reference && item.owned == (details.customer.trade_type == "buy")) { backRefs.Add(reference); break; }
                 }
                 if (!IsSubsequence(topRefs, backRefs)) return false;
                 if (details.quote.status == "complete" && topRefs.Count == 0) return false;
@@ -250,7 +253,7 @@ namespace PawnPilot
             {
                 ContainerState back = null;
                 foreach (var container in d.containers) if (container.container == "back") back = container;
-                if (d.customer.presence != "present" || d.customer.trade_type != "sell" ||
+                if (d.customer.presence != "present" || (d.customer.trade_type != "sell" && d.customer.trade_type != "buy") ||
                     d.customer.phase != "trading" || business.customer_ref == null ||
                     business.offer_ref == null || !ValidRef(business.collection_fingerprint) ||
                     q.mode != "normal" || !q.displayed_total.HasValue || business.item_refs.Count == 0 ||
@@ -260,7 +263,7 @@ namespace PawnPilot
                 {
                     bool found = false;
                     foreach (var item in d.items)
-                        if (item.item_ref == reference && item.container == "back" && !item.owned) { found = true; break; }
+                        if (item.item_ref == reference && item.container == "back" && item.owned == (d.customer.trade_type == "buy")) { found = true; break; }
                     if (!found) return false;
                 }
                 if (q.reason != null) return false;
@@ -292,7 +295,8 @@ namespace PawnPilot
             foreach (var c in candidates)
                 if (c == null || !OneOf(c.action, "close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                     "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation", "refuse_trade", "dismiss_customer",
-                    "purchase_visible_offer") || !OneOf(c.status, "candidate", "blocked", "unverified") || !ValidText(c.reason, MaxText)) return false;
+                    "purchase_visible_offer", "prepare_sale_items", "sell_visible_offer", "sort_inventory_default") ||
+                    !OneOf(c.status, "candidate", "blocked", "unverified") || !ValidText(c.reason, MaxText)) return false;
             return true;
         }
 

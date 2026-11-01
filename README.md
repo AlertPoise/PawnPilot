@@ -1,6 +1,8 @@
-# PawnPilot — M2-C / M2-D 开发分支
+# PawnPilot — M3-A 基础卖出开发分支
 
-《深空当铺：可能是偷的》的本机 MCP 工具链。M2-C/D 本轮基础普通买入闭环 **PASS**：真实 Codex CLI 已经 PawnPilot MCP 完成开门、接待、商品准备、读取普通报价、购买和结果核验，顾客正常离场后可继续接待。成交普通价444，现金550→106，13件商品进入玩家库存并变为自有。各动作仍按当前 legal_actions 和原生条件独立开放，不提供任意方法执行。
+M3-A **PASS（已验证的基础范围）**：真实 Codex MCP 选择并卖出一件“泥炭”合成肉，正常报价29，现金550→579，玩家主库存8→7；正常拒绝、成交后遣走及固定原生整理均通过。新增 `prepare_sale_items`、`sell_visible_offer`、`sort_inventory_default` 沿用五个 MCP 工具和现有执行器。自动化 **358 managed + 145 Python = 503通过、0失败**。手动对话/选项未遇到样本，实机包含打开交易面板等 GUI 准备；范围、原始证据索引与清理结果见 [M3-A 报告](docs/m3a-implementation.md)。
+
+《深空当铺：可能是偷的》的本机 MCP 工具链。历史 M2-C/D 基础普通买入闭环 **PASS**：真实 Codex CLI 已经 PawnPilot MCP 完成开门、接待、商品准备、读取普通报价、购买和结果核验，顾客正常离场后可继续接待。成交普通价444，现金550→106，13件商品进入玩家库存并变为自有。各动作仍按当前 legal_actions 和原生条件独立开放，不提供任意方法执行。
 
 Codex → MCP stdio Adapter → loopback HTTP broker ← Unity 主线程主动轮询 Mod。
 
@@ -62,7 +64,7 @@ loaded 表示当前游戏场景中存档已初始化；ready 额外要求必要 
 
 `GamePurchaseActions` 已接通 legal-action 生成、即时原生复核、单次 OnBuyAllClick 和 settlement verifier。容量模型采用真实 occupied grid mask，既有物品不受类型白名单限制；待购物品限已支持的简单接收 profile，允许已核实的默认 onSlotAdd、现有 features 和无 childElement 的空窗口，非空复杂子窗口等仍不支持。购买前后用进程内对象身份核验13件转移及ownership变化，不因公开引用重发或正常顾客离场误判。跨帧等待不停止心跳。
 
-普通 SELL 支持范围为 scavGeneral 与 shadyPharma；本轮只实机成交验证了 scavGeneral。advance_dialogue / choose_dialogue_option 已接入，但手动推进的三次尝试因 stale_state 在执行前拒绝，选项选择未遇到样本；最终成功流程读取可见对话并等待其自动播放，不能算作这两个动作的成功验收。批发、议价、卖出、特殊顾客、日结，以及独立 cancel_confirmation / refuse_trade 仍不支持；结束交互使用受支持的 dismiss_customer 或正常离场。
+普通 SELL 支持 scavGeneral、shadyPharma 和 food_scav_story；买入实机成交证据仍为 M2 的 scavGeneral，本轮验证了食品卖家的正常拒绝。普通 BUY 支持 spacerFood / spacerFoodStory 的单件卖出，本轮成交样本为后者的第一位食品买家。advance_dialogue / choose_dialogue_option 已接入；M2 三次手动推进在执行前因 stale_state 拒绝，本轮自动播放场景没有必要手动推进/选项，不能计作这两个动作的成功验收。批发、议价、特殊交易、日结，以及独立 cancel_confirmation / refuse_trade 仍不支持；结束交互使用当前合法的 dismiss_customer 或正常离场。
 
 ## 命令状态与恢复
 
@@ -101,14 +103,16 @@ python scripts/verify-codex.py --label read-check
 python scripts/verify-codex.py --business --label business-read-check
 # 已批准测试槽内的有界经营验收（最多六位顾客、只买一次，金额不超过明确上限）：
 python scripts/verify-codex.py --business-stage FLOW --max-spend 550 --label business-flow
+# M3-A 已授权测试槽；跨多次运行由调用者累计预算，续跑用 --skip-sort：
+python scripts/verify-codex.py --m3a FLOW --max-customers 6 --max-writes 24 --label m3a-flow
 # 也可使用 --business-stage A/B/C 分阶段，C 必须提供 --max-spend。
 # 仅用于已批准的独立测试槽、正常打开的 ESC 菜单：
 python scripts/verify-codex.py --label live-check --close-menu
 ~~~
 
-先构建 managed Release 测试程序，Python 端到端测试会通过它运行测试专用跨帧模拟。验证脚本使用临时 CLI 配置，只对本次已授权的 PawnPilot 调用自动批准，不改全局设置。默认模型是此前账户可用的非 Astra gpt-5.6-luna，可用 --model 指定其他可用非 Astra 模型。基础证据位于 artifacts/m2b/codex，--business 证据位于 artifacts/m2cd/codex，同名标签不覆盖。Windows 沙箱若拒绝 SDK stdio 管道（WinError 5），在正常终端运行，不能把沙箱失败算 PASS。
+先构建 managed Release 测试程序，Python 端到端测试会通过它运行测试专用跨帧模拟。验证脚本使用临时 CLI 配置，只对本次已授权的 PawnPilot 调用自动批准，不改全局设置。默认模型是此前账户可用的非 Astra gpt-5.6-luna，可用 --model 指定其他可用非 Astra 模型。基础证据位于 artifacts/m2b/codex，--business 证据位于 artifacts/m2cd/codex，--m3a 证据位于 artifacts/m3a/codex，同名标签不覆盖。Windows 沙箱若拒绝 SDK stdio 管道（WinError 5），在正常终端运行，不能把沙箱失败算 PASS。
 
-当前 M2-C/D 自动化为 **317 managed + 135 Python = 452通过、0失败**。真实 MCP 已执行 start/receive/prepare/dismiss/purchase；最终正常报价444（另示批发338），cash550→106、back14→1、player14→27，顾客离场后 receive_next_customer 可用。两个测试槽save_8/save_9已通过UI删除，Mod停用并按收据移除，游戏和broker已退出；原save_0、两份历史备份及游戏程序集哈希不变。故障/去重/未知不重放验证来自自动化，没有实机经济故障注入。详见 [M2-C](docs/m2c-implementation.md) 与 [M2-D](docs/m2d-implementation.md)。
+历史 M2-C/D 自动化为 **317 managed + 135 Python = 452通过、0失败**。真实 MCP 已执行 start/receive/prepare/dismiss/purchase；最终正常报价444（另示批发338），cash550→106、back14→1、player14→27，顾客离场后 receive_next_customer 可用。两个测试槽save_8/save_9已通过UI删除，Mod停用并按收据移除，游戏和broker已退出；原save_0、两份历史备份及游戏程序集哈希不变。故障/去重/未知不重放验证来自自动化，没有实机经济故障注入。详见 [M2-C](docs/m2c-implementation.md) 与 [M2-D](docs/m2d-implementation.md)。
 
 结束时在游戏 UI 删除本次测试槽、禁用 Mod、正常退出，再按收据清理：
 

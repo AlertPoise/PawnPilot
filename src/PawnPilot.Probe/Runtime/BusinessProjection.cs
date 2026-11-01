@@ -27,6 +27,7 @@ namespace PawnPilot
         public object DialogueIdentity;
         public string DialogueStage = "unknown";
         public string DialogueText;
+        public string RequestText;
         public bool? IsTyping, WaitingForAdvance, MultiBuyDisabled;
         public object[] OptionIdentities = Array.Empty<object>();
         public string[] OptionTexts = Array.Empty<string>();
@@ -43,7 +44,7 @@ namespace PawnPilot
     public sealed class BusinessItemInput
     {
         public object Identity;
-        public string Name; // Set only when read from rendered, visible UI text.
+        public string Name; // Visible item title, from the reviewed native display-name path.
         public int Units;
         public bool Owned;
         public string ShapeStatus = "unverified";
@@ -94,7 +95,7 @@ namespace PawnPilot
         {
             if (string.IsNullOrEmpty(worldEpoch) || worldEpoch.Length > 128 || string.IsNullOrEmpty(customerRef) ||
                 customerRef.Length > 128 || orderedMembers == null ||
-                !OneOf(tradeType, "sell", "other", "unknown") || !OneOf(quoteMode, "normal", "wholesale", "unknown") ||
+                !OneOf(tradeType, "sell", "buy", "other", "unknown") || !OneOf(quoteMode, "normal", "wholesale", "unknown") ||
                 !OneOf(quoteStatus, "complete", "unverified", "unavailable") || (displayedTotal.HasValue && displayedTotal.Value < 0)) return null;
             var members = new List<BusinessCollectionMember>();
             foreach (var member in orderedMembers)
@@ -422,6 +423,7 @@ namespace PawnPilot
             details.customer.presence = customer.Presence;
             details.customer.arrived = hasCustomer ? customer.Arrived : null;
             details.customer.trade_type = hasCustomer ? customer.TradeType : "unknown";
+            details.customer.request_text = hasCustomer ? customer.RequestText : null;
             details.customer.phase = customer.Presence == "absent" ?
                 (customer.Phase == "leaving" ? "leaving" : "absent") : hasCustomer ? customer.Phase : "unknown";
             details.customer.dialogue_stage = customer.Presence == "absent" ? "absent" : hasCustomer ? customer.DialogueStage : "unknown";
@@ -512,7 +514,7 @@ namespace PawnPilot
             bool purchaseSetKnown = TryBuildPurchaseSet(customer, input.Quote, containersByName,
                 itemReferenceByIdentity, purchaseIdentities, purchaseRefs);
             bool quoteComplete = !uiBlocksItems && purchaseSetKnown && hasCustomer && customer.Arrived == true &&
-                string.Equals(customer.TradeType, "sell", StringComparison.Ordinal) &&
+                (customer.TradeType == "sell" || customer.TradeType == "buy") &&
                 string.Equals(customer.Phase, "trading", StringComparison.Ordinal) &&
                 input.Quote.Status == "complete" && input.Quote.Mode == "normal" &&
                 input.Quote.BindingVerified && input.Quote.DisplayedTotal.HasValue && purchaseRefs.Count > 0;
@@ -609,8 +611,21 @@ namespace PawnPilot
         {
             identities.Clear(); references.Clear();
             if (customer == null || quote == null || customer.Presence != "present" || customer.Identity == null ||
-                customer.TradeType != "sell" || !customer.MultiBuyDisabled.HasValue || quote.PurchaseIdentities == null ||
+                (customer.TradeType != "sell" && customer.TradeType != "buy") ||
+                (customer.TradeType == "sell" && !customer.MultiBuyDisabled.HasValue) || quote.PurchaseIdentities == null ||
                 !containers.TryGetValue("back", out var back) || back.Completeness != "complete") return false;
+
+            // M3-A deliberately prepares one owned item into an empty counter. The native
+            // reader binds that exact accepted item to BuildBuying's ordinary sale total.
+            if (customer.TradeType == "buy")
+            {
+                if (back.Items.Length != 1 || !back.Items[0].Owned || quote.PurchaseIdentities.Length != 1 ||
+                    !ReferenceEquals(back.Items[0].Identity, quote.PurchaseIdentities[0]) ||
+                    !itemReferenceByIdentity.TryGetValue(back.Items[0].Identity, out var saleRef)) return false;
+                identities.Add(back.Items[0].Identity);
+                references.Add(saleRef);
+                return true;
+            }
 
             var expected = new List<BusinessItemInput>();
             foreach (var item in back.Items) if (!item.Owned) expected.Add(item);
@@ -766,7 +781,7 @@ namespace PawnPilot
                 input.Customer.OptionTexts.Length > 16 || input.Customer.OptionTexts.Length != input.Customer.OptionIdentities.Length ||
                 input.Quote.PurchaseIdentities == null || input.Quote.PurchaseIdentities.Length > 64) return "sample_limit_exceeded";
             if (!Allowed(input.Customer.Presence, "absent", "present", "unverified") ||
-                !Allowed(input.Customer.TradeType, "sell", "other", "unknown") ||
+                !Allowed(input.Customer.TradeType, "sell", "buy", "other", "unknown") ||
                 !Allowed(input.Customer.Phase, "absent", "arriving", "dialogue", "trading", "leaving", "unknown") ||
                 !Allowed(input.Customer.DialogueStage, "absent", "typing", "waiting", "choices", "updating", "unknown") ||
                 !Allowed(input.Ui.Status, "consistent", "updating", "unverified", "blocked") ||
@@ -774,6 +789,7 @@ namespace PawnPilot
                 !Allowed(input.Quote.Status, "complete", "unverified", "unavailable") ||
                 !Allowed(input.Quote.Mode, "normal", "wholesale", "unknown") ||
                 !ValidText(input.Customer.Phase, 64) || !ValidText(input.Customer.DialogueText, 256) ||
+                !ValidText(input.Customer.RequestText, 256) ||
                 !ValidText(input.Quote.Reason, 128) ||
                 (input.Quote.DisplayedTotal.HasValue && input.Quote.DisplayedTotal.Value < 0) ||
                 (input.Quote.WholesaleTotal.HasValue && input.Quote.WholesaleTotal.Value < 0)) return "invalid_sample";
@@ -790,6 +806,7 @@ namespace PawnPilot
             AddText(ref stringBudget, input.Customer.Phase);
             AddText(ref stringBudget, input.Customer.DialogueStage);
             AddText(ref stringBudget, input.Customer.DialogueText);
+            AddText(ref stringBudget, input.Customer.RequestText);
             AddText(ref stringBudget, input.Quote.Status);
             AddText(ref stringBudget, input.Quote.Mode);
             AddText(ref stringBudget, input.Quote.Reason);

@@ -24,6 +24,9 @@ namespace PawnPilot
         public string presence = "unverified";
         public bool? arrived;
         public string trade_type = "unknown", phase = "unknown";
+        public string request_text;
+        // Null keeps historical business schema 1 serialization byte shape unchanged.
+        public bool ShouldSerializerequest_text() => request_text != null;
         public string dialogue_ref;
         public string dialogue_stage = "unknown";
         public string dialogue_text;

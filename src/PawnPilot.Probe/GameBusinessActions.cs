@@ -15,11 +15,12 @@ namespace PawnPilot
             projection = businessProjection ?? throw new ArgumentNullException(nameof(businessProjection));
         }
 
-        // Both suppliers use the ordinary SELL / OnBuyAllClick route. This is an explicit
-        // initial scope, not a blanket permission for special SELL customer mechanisms.
+        // These suppliers use the ordinary SELL / OnBuyAllClick route. The tutorial seller's
+        // stock is populated by its normal dialogue end action; no barter route is enabled.
         internal static bool IsSupportedOrdinarySeller(StoreClient client) => client != null &&
             client.clientIntent == StoreClient.ClientIntent.SELL &&
-            (client.identifier == "scavGeneral" || client.identifier == "shadyPharma");
+            (client.identifier == "scavGeneral" || client.identifier == "shadyPharma" ||
+             client.identifier == "food_scav_story");
 
         internal NativeActionEvidence Check(Command command, Snapshot snapshot)
         {
@@ -81,14 +82,18 @@ namespace PawnPilot
                 observedCustomerRef == command.arguments?.customer_ref;
             evidence.CustomerArrived = store.isClientArrived;
             var blueprint = currentInstance == null ? null : currentInstance.GetClientBlueprint();
-            evidence.OrdinarySeller = IsSupportedOrdinarySeller(blueprint);
+            bool dialogueAction = command.action == "advance_dialogue" || command.action == "choose_dialogue_option";
+            bool dismissAction = command.action == "dismiss_customer";
+            evidence.OrdinarySeller = IsSupportedOrdinarySeller(blueprint) ||
+                (dialogueAction && (GameSaleActions.IsSupportedOrdinaryBuyer(blueprint) ||
+                    IsSupportedTutorialMentorDialogue(blueprint))) ||
+                (dismissAction && IsTutorialFoodBuyerDismissal(blueprint));
             // The reader never invokes or exposes customer callbacks. Enabled dialogue, prepare,
             // and dismissal actions are narrowly scoped to this ordinary arrived customer and the
             // currently visible native control; their normal game callbacks run as part of the call.
             evidence.CallbackScopeVerified = false;
             evidence.Dismissable = currentInstance != null && store.IsClientDimissable();
-            evidence.DismissInterceptClear = blueprint != null && blueprint.tryInterceptDismiss == null &&
-                blueprint.OnDismiss == null; // special dismissal callbacks are outside this generic end-interaction path
+            evidence.DismissInterceptClear = IsPermittedDismissCallback(blueprint);
             evidence.AutoCallNextDisabled = EmporiumOption.Instance != null && !EmporiumOption.Instance.autoCallNext;
 
             var current = dialog == null ? null : dialog.currentDialog;
@@ -182,9 +187,7 @@ namespace PawnPilot
             }
             evidence.NativeTargetAvailable = evidence.NativeTarget != null;
             bool scopedAction = command.action == "start_business" || command.action == "receive_next_customer";
-            bool dialogueAction = command.action == "advance_dialogue" || command.action == "choose_dialogue_option";
             bool transferAction = command.action == "prepare_purchase_items";
-            bool dismissAction = command.action == "dismiss_customer";
             evidence.CapabilityScopeVerified =
                 (scopedAction && evidence.NativeTargetAvailable && evidence.NativeEntryVerified && evidence.NoBlockers && evidence.NoLocks &&
                     (command.action == "start_business"
@@ -192,8 +195,8 @@ namespace PawnPilot
                         : evidence.StoreOpen && evidence.NoCurrentCustomer && evidence.NoCallNextPending && evidence.CanNextClient)) ||
                 (dialogueAction && evidence.NativeTargetAvailable && evidence.NativeEntryVerified &&
                     !UnsafeVisibleModal(ui, store) && !HasActionBlockingEvidence(snapshot.business.details.ui?.blockers, command.action) &&
-                    evidence.CurrentCustomerMatches &&
-                    evidence.CustomerArrived && evidence.OrdinarySeller && evidence.DialogueMatches &&
+                    evidence.CurrentCustomerMatches && evidence.CustomerArrived &&
+                    evidence.OrdinarySeller && evidence.DialogueMatches &&
                     (command.action == "advance_dialogue"
                         ? !evidence.DialogueChoice && (command.arguments?.mode == "skip" ? evidence.DialogueTyping :
                             command.arguments?.mode == "next" && !evidence.DialogueTyping && evidence.WaitingForAdvance)
@@ -453,6 +456,31 @@ namespace PawnPilot
         private static bool KnownUnobservableFinding(string blocker) => blocker == "global_ui_stack_unobservable" ||
             blocker == "global_raycast_order_unobservable" || blocker == "quote_rebuild_completion_unobservable" ||
             blocker == "tutorial_group_active_unverified" || blocker == "control_hints_active_unverified";
+
+        private static bool IsSupportedTutorialMentorDialogue(StoreClient client) => client != null &&
+            client.identifier == "mentor" && client.clientIntent == StoreClient.ClientIntent.DIALOGUE;
+
+        // Tutorial-specific callbacks below only advance/close the tutorial UI. Keep dismissal
+        // permission tied to the exact current factory delegates; arbitrary customer callbacks
+        // remain blocked, as do every tryInterceptDismiss hook.
+        private static bool IsPermittedDismissCallback(StoreClient client)
+        {
+            if (client == null || client.tryInterceptDismiss != null) return false;
+            if (client.OnDismiss == null) return true;
+            var method = client.OnDismiss.Method;
+            if (client.OnDismiss.GetInvocationList().Length != 1 || method == null || method.DeclaringType == null ||
+                method.DeclaringType.FullName != "StoreClientListStory+<>c")
+                return false;
+            return (client.identifier == "food_scav_story" && method.Name == "<CreateFoodSellerStory>b__17_2") ||
+                (client.identifier == "spacerFoodStory" && method.Name == "<CreateFoodBuyerStory>b__33_1");
+        }
+
+        private static bool IsTutorialFoodBuyerDismissal(StoreClient client) => client != null &&
+            client.identifier == "spacerFoodStory" && client.clientIntent == StoreClient.ClientIntent.BUY &&
+            client.tryInterceptDismiss == null && client.OnDismiss != null &&
+            client.OnDismiss.GetInvocationList().Length == 1 &&
+            client.OnDismiss.Method?.DeclaringType?.FullName == "StoreClientListStory+<>c" &&
+            client.OnDismiss.Method.Name == "<CreateFoodBuyerStory>b__33_1";
 
         private static bool UnsafeVisibleModal(StoreUIManager ui, PlayerStore store)
         {

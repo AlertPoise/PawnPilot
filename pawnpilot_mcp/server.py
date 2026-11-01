@@ -50,6 +50,7 @@ class ActionArgumentsV3(StrictModel):
     mode: str | None = None
     amount: int | None = Field(default=None, strict=True, ge=0, le=2147483647)
     max_spend: int | None = Field(default=None, strict=True, ge=0, le=2147483647)
+    container: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -82,7 +83,8 @@ class LegalAction(StrictModel):
 class LegalActionV3(StrictModel):
     action: Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                     "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
-                    "dismiss_customer", "purchase_visible_offer"]
+                    "dismiss_customer", "purchase_visible_offer", "prepare_sale_items",
+                    "sell_visible_offer", "sort_inventory_default"]
     arguments: dict[str, Any]
 
 
@@ -143,7 +145,7 @@ class GameStateV3(StrictModel):
     not_ready_reason: str | None = Field(max_length=256)
     interaction: Interaction
     business: dict[str, Any]
-    legal_actions: list[LegalActionV3] = Field(max_length=9)
+    legal_actions: list[LegalActionV3] = Field(max_length=64)
 
     @model_validator(mode="before")
     @classmethod
@@ -332,7 +334,8 @@ class ObserveReply(ToolReply):
     snapshot: SnapshotUnion | None = None
     legal_actions: list[Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                                  "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
-                                 "refuse_trade", "dismiss_customer", "purchase_visible_offer"]] = Field(default_factory=list, max_length=9)
+                                 "refuse_trade", "dismiss_customer", "purchase_visible_offer", "prepare_sale_items",
+                                 "sell_visible_offer", "sort_inventory_default"]] = Field(default_factory=list, max_length=64)
     wait_reason: str | None = None
     manual_action_required: bool = False
 
@@ -868,7 +871,8 @@ def act(schema_version: Annotated[Literal[2, 3], BeforeValidator(_exact_schema_2
         command_id: Annotated[str, Field(min_length=1, max_length=128, pattern=_COMMAND_ID)],
         action: Literal["close_menu", "start_business", "receive_next_customer", "advance_dialogue",
                         "choose_dialogue_option", "prepare_purchase_items", "cancel_confirmation",
-                        "refuse_trade", "dismiss_customer", "purchase_visible_offer"],
+                        "refuse_trade", "dismiss_customer", "purchase_visible_offer", "prepare_sale_items",
+                        "sell_visible_offer", "sort_inventory_default"],
         arguments: CloseMenuArguments | ActionArgumentsV3,
         broker_epoch: Annotated[str, Field(min_length=1, max_length=128)],
         expected_world_epoch: Annotated[str, Field(min_length=1, max_length=128)],

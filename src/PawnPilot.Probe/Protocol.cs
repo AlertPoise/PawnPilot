@@ -67,6 +67,7 @@ namespace PawnPilot
         public List<string> item_refs;
         public string offer_ref;
         public string collection_fingerprint;
+        public string container;
         public string option_ref;
         public string dialogue_ref, mode, authorization_ref;
         public int? amount, max_spend;
@@ -451,12 +452,15 @@ namespace PawnPilot
                     snapshot.business.offer_ref != null || snapshot.business.collection_fingerprint != null || snapshot.business.details != null) return false;
             }
             else if (!BusinessWire.Validate(snapshot.business)) return false;
-            if (snapshot.legal_actions == null || snapshot.legal_actions.Count > (snapshot.schema_version == 2 ? 1 : 9)) return false;
+            if (snapshot.legal_actions == null || snapshot.legal_actions.Count > (snapshot.schema_version == 2 ? 1 : 64)) return false;
             bool close = false;
-            var actions = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var legal in snapshot.legal_actions)
+            for (int i = 0; i < snapshot.legal_actions.Count; i++)
             {
-                if (legal == null || !actions.Add(legal.action) || !snapshot.ready) return false;
+                var legal = snapshot.legal_actions[i];
+                if (legal == null || !snapshot.ready) return false;
+                for (int j = 0; j < i; j++)
+                    if (snapshot.legal_actions[j] != null && snapshot.legal_actions[j].action == legal.action &&
+                        BusinessActionPolicy.SameArguments(snapshot.legal_actions[j].arguments, legal.arguments)) return false;
                 if (legal.action == "close_menu")
                 {
                     if (!ArgumentsEmpty(legal.arguments) || !snapshot.loaded || !snapshot.menu_open) return false;
@@ -499,6 +503,7 @@ namespace PawnPilot
             if (!ValidRef(a.customer_ref) || !ValidRef(a.offer_ref) || !ValidRef(a.option_ref) || !ValidRef(a.collection_fingerprint) ||
                 !ValidRef(a.dialogue_ref) || !ValidRef(a.mode) || !ValidRef(a.authorization_ref) || a.amount < 0 || a.max_spend < 0)
                 return "invalid_arguments";
+            if (a.container != null && (a.container.Length < 1 || a.container.Length > 32)) return "invalid_arguments";
             if (a.item_refs != null)
             {
                 if (a.item_refs.Count < 1 || a.item_refs.Count > 64) return "invalid_arguments";
@@ -519,9 +524,9 @@ namespace PawnPilot
         }
 
         private static bool ArgumentsEmpty(ActionArguments a) => a != null && a.customer_ref == null && a.item_refs == null &&
-            a.offer_ref == null && a.collection_fingerprint == null && a.option_ref == null && !HasV3Arguments(a);
+            a.offer_ref == null && a.collection_fingerprint == null && a.container == null && a.option_ref == null && !HasV3Arguments(a);
 
-        private static bool HasV3Arguments(ActionArguments a) => a != null && (a.dialogue_ref != null || a.mode != null ||
+        private static bool HasV3Arguments(ActionArguments a) => a != null && (a.container != null || a.dialogue_ref != null || a.mode != null ||
             a.authorization_ref != null || a.amount.HasValue || a.max_spend.HasValue);
 
         private static bool ValidText(string value, int max) => !string.IsNullOrEmpty(value) && value.Length <= max;
@@ -579,6 +584,7 @@ namespace PawnPilot
             if (c.arguments.amount.HasValue) Property(args, ref argFirst, "amount", c.arguments.amount.Value.ToString(CultureInfo.InvariantCulture));
             if (c.arguments.authorization_ref != null) Property(args, ref argFirst, "authorization_ref", Quote(c.arguments.authorization_ref));
             if (c.arguments.collection_fingerprint != null) Property(args, ref argFirst, "collection_fingerprint", Quote(c.arguments.collection_fingerprint));
+            if (c.arguments.container != null) Property(args, ref argFirst, "container", Quote(c.arguments.container));
             if (c.arguments.customer_ref != null) Property(args, ref argFirst, "customer_ref", Quote(c.arguments.customer_ref));
             if (c.arguments.dialogue_ref != null) Property(args, ref argFirst, "dialogue_ref", Quote(c.arguments.dialogue_ref));
             if (c.arguments.item_refs != null)
@@ -654,7 +660,7 @@ namespace PawnPilot
         private static ActionArguments Clone(ActionArguments a) => a == null ? null : new ActionArguments
         {
             customer_ref = a.customer_ref, item_refs = a.item_refs == null ? null : new List<string>(a.item_refs),
-            offer_ref = a.offer_ref, collection_fingerprint = a.collection_fingerprint, option_ref = a.option_ref,
+            offer_ref = a.offer_ref, collection_fingerprint = a.collection_fingerprint, container = a.container, option_ref = a.option_ref,
             dialogue_ref = a.dialogue_ref, mode = a.mode, authorization_ref = a.authorization_ref, amount = a.amount, max_spend = a.max_spend
         };
 
