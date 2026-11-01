@@ -16,19 +16,19 @@ from bridge.server import Broker, Server
 
 ROOT = Path(__file__).resolve().parents[1]
 TOKEN = "f" * 64
-TERMINAL_STATUSES = ("succeeded", "rejected", "failed")
+TERMINAL_STATUSES = ("succeeded", "rejected")
 
 
 def fresh_snapshot() -> dict:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "broker_epoch": "broker-test-1",
         "connected": True,
         "blocking_reason": None,
         "blocked_command_id": None,
         "can_act": True,
         "state": {
-            "schema_version": 1,
+            "schema_version": 2,
             "version": "world-test-1:7",
             "loaded": True,
             "ready": True,
@@ -40,7 +40,12 @@ def fresh_snapshot() -> dict:
             "menu_open": True,
             "can_close_menu": True,
             "not_ready_reason": None,
+            "interaction": {"phase": "store", "consistency": "unverified", "reason": None, "operable": True},
+            "business": {"support": "unsupported", "customer_ref": None, "item_refs": None,
+                         "offer_ref": None, "collection_fingerprint": None},
+            "legal_actions": [{"action": "close_menu", "arguments": {}}],
         },
+        "execution": None,
     }
 
 
@@ -49,9 +54,9 @@ class McpSubprocessCase(unittest.TestCase):
         self.config_path = ROOT / "tests" / "fixtures" / "mcp-session.json"
         self.state = fresh_snapshot()["state"]
         self.broker = Broker(TOKEN, ttl=60, heartbeat_timeout=60)
-        self.broker.exchange({"schema_version": 1, "broker_epoch": self.broker.broker_epoch,
+        self.broker.exchange({"schema_version": 2, "broker_epoch": self.broker.broker_epoch,
                               "session_id": "mcp-test-session", "state": self.state,
-                              "has_result": False})
+                              "has_result": False, "result": None, "progress": None})
         self.server = Server(self.broker, port=0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -86,10 +91,10 @@ class McpSubprocessCase(unittest.TestCase):
     def call_sync(self, tool, args=None, *, list_tools=False):
         return asyncio.run(self.call(tool, args, list_tools=list_tools))
 
-    def test_stdio_initializes_lists_four_tools_and_calls_all_tools(self):
+    def test_stdio_initializes_lists_five_tools_and_calls_all_tools(self):
         listed = self.call_sync("", list_tools=True)
         self.assertEqual({tool.name for tool in listed.tools},
-                         {"health_check", "observe", "act", "get_action_status"})
+                         {"health_check", "observe", "act", "get_action_status", "wait_for_update"})
 
         health = self.call_sync("health_check")
         self.assertTrue(health["protocol_compatible"])
@@ -102,17 +107,19 @@ class McpSubprocessCase(unittest.TestCase):
         self.assertEqual(observed["snapshot"]["state"]["cash"], 125)
 
         acted = self.call_sync("act", {
-            "command_id": "cmd-001", "action": "close_menu", "broker_epoch": self.broker.broker_epoch,
+            "schema_version": 2, "command_id": "cmd-001", "action": "close_menu", "arguments": {}, "broker_epoch": self.broker.broker_epoch,
             "expected_world_epoch": "world-test-1", "expected_revision": 7,
             "expected_version": "world-test-1:7",
         })
         self.assertEqual(acted["command_status"], "pending")
+        self.assertEqual(self.broker.records["cmd-001"]["command"]["arguments"], {})
         self.assertEqual(self.broker.records["cmd-001"]["command"], {
-            "schema_version": 1, "id": "cmd-001", "action": "close_menu",
+            "schema_version": 2, "id": "cmd-001", "action": "close_menu", "arguments": {},
             "broker_epoch": self.broker.broker_epoch,
             "expected_world_epoch": "world-test-1",
             "expected_revision": 7, "expected_version": "world-test-1:7",
-            "expires_at_unix_ms": self.broker.records["cmd-001"]["command"]["expires_at_unix_ms"],
+            "start_deadline_unix_ms": self.broker.records["cmd-001"]["command"]["start_deadline_unix_ms"],
+            "execution_timeout_ms": 5000,
         })
 
         # A retry with an identical envelope returns the durable record, including
@@ -121,14 +128,14 @@ class McpSubprocessCase(unittest.TestCase):
         self.state["version"] = "world-test-1:8"
         self.broker.state = self.state
         repeated = self.call_sync("act", {
-            "command_id": "cmd-001", "action": "close_menu", "broker_epoch": self.broker.broker_epoch,
+            "schema_version": 2, "command_id": "cmd-001", "action": "close_menu", "arguments": {}, "broker_epoch": self.broker.broker_epoch,
             "expected_world_epoch": "world-test-1", "expected_revision": 7,
             "expected_version": "world-test-1:7",
         })
         self.assertEqual(repeated["command_status"], "pending")
 
         self.assertEqual(self.broker.records["cmd-001"]["request"], {
-            "schema_version": 1, "id": "cmd-001", "action": "close_menu",
+            "schema_version": 2, "id": "cmd-001", "action": "close_menu", "arguments": {},
             "broker_epoch": self.broker.broker_epoch, "expected_world_epoch": "world-test-1",
             "expected_revision": 7, "expected_version": "world-test-1:7",
         })
@@ -141,16 +148,30 @@ class McpSubprocessCase(unittest.TestCase):
         for index, command_status in enumerate(TERMINAL_STATUSES):
             command_id = f"cmd-{index}"
             queued = self.broker.enqueue({
-                "schema_version": 1, "id": command_id, "action": "close_menu",
+                "schema_version": 2, "id": command_id, "action": "close_menu", "arguments": {},
                 "broker_epoch": self.broker.broker_epoch,
                 "expected_world_epoch": "world-test-1", "expected_revision": 7,
                 "expected_version": "world-test-1:7",
             })
             record = self.broker.records[command_id]
-            result = {"schema_version": 1, "id": command_id,
+            execution = ({"id": command_id, "broker_epoch": self.broker.broker_epoch,
+                          "stage": "completed", "sequence": 1, "may_have_side_effects": False,
+                          "started_at_unix_ms": None, "execution_deadline_unix_ms": None}
+                         if command_status == "rejected" else
+                         {"id": command_id, "broker_epoch": self.broker.broker_epoch,
+                          "stage": "completed" if command_status == "succeeded" else "uncertain",
+                          "sequence": 1, "may_have_side_effects": True,
+                          "started_at_unix_ms": 1000, "execution_deadline_unix_ms": 6000}
+                         if command_status == "succeeded" else None)
+            result = {"schema_version": 2, "id": command_id,
                       "broker_epoch": self.broker.broker_epoch, "status": command_status,
-                      "reason": "fixture_terminal", "before": self.state, "after": self.state}
+                      "reason": "fixture_terminal", "before": self.state,
+                      "after": ({**self.state, "version": "world-test-1:8", "revision": 8,
+                                 "menu_open": False, "can_close_menu": False, "legal_actions": []}
+                                if command_status == "succeeded" else self.state),
+                      "execution": execution}
             self.broker._terminal(record, command_status, "fixture_terminal", result)
+            record["execution"] = execution
             result = self.call_sync("get_action_status", {"command_id": command_id})
             self.assertTrue(result["found"])
             self.assertEqual(result["command_status"], command_status)
@@ -160,7 +181,7 @@ class McpSubprocessCase(unittest.TestCase):
         # Broker's actual pending/running transitions remain queryable.
         for command_id, command_status in (("cmd-pending", "pending"), ("cmd-running", "running")):
             self.broker.enqueue({
-                "schema_version": 1, "id": command_id, "action": "close_menu",
+                "schema_version": 2, "id": command_id, "action": "close_menu", "arguments": {},
                 "broker_epoch": self.broker.broker_epoch,
                 "expected_world_epoch": "world-test-1", "expected_revision": 7,
                 "expected_version": "world-test-1:7",
@@ -175,15 +196,16 @@ class McpSubprocessCase(unittest.TestCase):
 
         command_id = "cmd-outcome-unknown"
         self.broker.enqueue({
-            "schema_version": 1, "id": command_id, "action": "close_menu",
+            "schema_version": 2, "id": command_id, "action": "close_menu", "arguments": {},
             "broker_epoch": self.broker.broker_epoch,
             "expected_world_epoch": "world-test-1", "expected_revision": 7,
             "expected_version": "world-test-1:7",
         })
         record = self.broker.records[command_id]
-        evidence = {"schema_version": 1, "id": command_id,
-                    "broker_epoch": self.broker.broker_epoch, "status": "uncertain",
-                    "reason": "delivery_outcome_unknown", "before": self.state, "after": self.state}
+        evidence = {"schema_version": 2, "id": command_id,
+                    "broker_epoch": self.broker.broker_epoch, "status": "outcome_unknown",
+                    "reason": "delivery_outcome_unknown", "before": self.state, "after": self.state,
+                    "execution": None}
         self.broker._terminal(record, "outcome_unknown", "delivery_outcome_unknown", evidence)
         unknown = self.call_sync("get_action_status", {"command_id": command_id})
         self.assertEqual(unknown["command_status"], "outcome_unknown")
@@ -195,16 +217,16 @@ class McpSubprocessCase(unittest.TestCase):
     def test_broker_rejects_pending_command_when_observed_state_advances(self):
         command_id = "cmd-stale-before-delivery"
         self.broker.enqueue({
-            "schema_version": 1, "id": command_id, "action": "close_menu",
+            "schema_version": 2, "id": command_id, "action": "close_menu", "arguments": {},
             "broker_epoch": self.broker.broker_epoch,
             "expected_world_epoch": "world-test-1", "expected_revision": 7,
             "expected_version": "world-test-1:7",
         })
         self.state["revision"] = 8
         self.state["version"] = "world-test-1:8"
-        self.broker.exchange({"schema_version": 1, "broker_epoch": self.broker.broker_epoch,
+        self.broker.exchange({"schema_version": 2, "broker_epoch": self.broker.broker_epoch,
                               "session_id": "mcp-test-session", "state": self.state,
-                              "has_result": False})
+                              "has_result": False, "result": None, "progress": None})
         result = self.call_sync("get_action_status", {"command_id": command_id})
         self.assertEqual(result["command_status"], "rejected")
         self.assertEqual(result["result"]["reason"], "stale_state")
@@ -213,23 +235,33 @@ class McpSubprocessCase(unittest.TestCase):
     def test_manual_alignment_is_returned_as_separate_resolution_evidence(self):
         command_id = "cmd-unknown-reconcile"
         self.broker.enqueue({
-            "schema_version": 1, "id": command_id, "action": "close_menu",
+            "schema_version": 2, "id": command_id, "action": "close_menu", "arguments": {},
             "broker_epoch": self.broker.broker_epoch,
             "expected_world_epoch": "world-test-1", "expected_revision": 7,
             "expected_version": "world-test-1:7",
         })
         record = self.broker.records[command_id]
+        delivered = self.broker.exchange({"schema_version": 2, "broker_epoch": self.broker.broker_epoch,
+                              "session_id": "mcp-test-session", "state": self.state,
+                              "has_result": False, "result": None, "progress": None})
+        self.assertTrue(delivered["has_command"])
+        self.assertEqual(record["command_status"], "running")
         self.broker._terminal(record, "outcome_unknown", "delivery_outcome_unknown")
-        record["command"]["expires_at_unix_ms"] = 0
         self.state["revision"] = 8
         self.state["version"] = "world-test-1:8"
         self.state["menu_open"] = False
         self.state["can_close_menu"] = False
-        self.broker.exchange({"schema_version": 1, "broker_epoch": self.broker.broker_epoch,
+        self.state["legal_actions"] = []
+        self.broker.exchange({"schema_version": 2, "broker_epoch": self.broker.broker_epoch,
                               "session_id": "mcp-test-session", "state": self.state,
-                              "has_result": False})
+                              "has_result": False, "result": None, "progress": None})
+        self.broker.clock = lambda: time.time() + 100
+        self.broker.monotonic = lambda: time.monotonic() + 100
+        self.broker.exchange({"schema_version": 2, "broker_epoch": self.broker.broker_epoch,
+                              "session_id": "fresh-mcp-session", "state": self.state,
+                              "has_result": False, "result": None, "progress": None})
         self.broker.reconcile({
-            "schema_version": 1, "id": command_id, "broker_epoch": self.broker.broker_epoch,
+            "schema_version": 2, "id": command_id, "broker_epoch": self.broker.broker_epoch,
             "world_epoch": "world-test-1", "revision": 8, "expected_version": "world-test-1:8",
             "operator_note": "Verified the menu is closed in the current state.",
             "confirm_no_replay": True,
@@ -247,7 +279,7 @@ class McpSubprocessCase(unittest.TestCase):
         self.thread.join(timeout=2)
         self.server.server_port = port
         listed = self.call_sync("", list_tools=True)
-        self.assertEqual(len(listed.tools), 4)
+        self.assertEqual(len(listed.tools), 5)
         health = self.call_sync("health_check")
         self.assertFalse(health["broker_connected"])
         self.assertEqual(health["error_source"], "connection")
@@ -256,7 +288,7 @@ class McpSubprocessCase(unittest.TestCase):
         self.assertEqual(status["error_source"], "connection")
 
     def test_malformed_schema_version_fails_closed_as_protocol_error(self):
-        self.state["schema_version"] = 2
+        self.state["schema_version"] = 1
         self.broker.state = self.state
         health = self.call_sync("health_check")
         self.assertFalse(health["protocol_compatible"])
@@ -281,7 +313,7 @@ class McpSubprocessCase(unittest.TestCase):
 
         self.broker.enqueue = delayed_enqueue
         result = self.call_sync("act", {
-            "command_id": "cmd-timeout", "action": "close_menu", "broker_epoch": self.broker.broker_epoch,
+            "schema_version": 2, "command_id": "cmd-timeout", "action": "close_menu", "arguments": {}, "broker_epoch": self.broker.broker_epoch,
             "expected_world_epoch": "world-test-1", "expected_revision": 7,
             "expected_version": "world-test-1:7",
         })

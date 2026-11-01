@@ -6,6 +6,11 @@ from pathlib import Path
 import urllib.error
 import urllib.request
 
+try:
+    from .protocol import strict_json_loads
+except ImportError:
+    from protocol import strict_json_loads
+
 PORT = 18765
 MAX_RESPONSE = 65536
 
@@ -21,7 +26,7 @@ def read_response(response):
     if len(raw) > MAX_RESPONSE:
         raise ResponseError("response_too_large")
     try:
-        value = json.loads(raw, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
+        value = strict_json_loads(raw)
     except (ValueError, UnicodeError) as exc:
         raise ResponseError("response_invalid_json") from exc
     if not isinstance(value, dict):
@@ -61,7 +66,7 @@ def main():
     parser.add_argument("--confirm-no-replay", action="store_true")
     args = parser.parse_args()
     config = json.loads(Path(args.config).read_text(encoding="utf-8"))
-    if args.action == "state":
+    if args.action in {"state", "observe"}:
         status, result = request(config, "/state")
     elif args.action == "result":
         if not args.id or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", args.id):
@@ -72,7 +77,7 @@ def main():
                 or args.revision is None or not args.confirm_no_replay):
             parser.error("manual reconciliation requires reviewed current version fields, --operator-note and --confirm-no-replay")
         status, result = request(config, "/reconcile", {
-            "schema_version": 1, "id": args.id, "broker_epoch": args.broker_epoch,
+            "schema_version": 2, "id": args.id, "broker_epoch": args.broker_epoch,
             "world_epoch": args.world_epoch, "revision": args.revision,
             "expected_version": args.expected_version, "operator_note": args.operator_note,
             "confirm_no_replay": True})
@@ -80,7 +85,7 @@ def main():
         if not all([args.id, args.broker_epoch, args.world_epoch, args.expected_version]) or args.revision is None:
             parser.error("commands require --id, --broker-epoch, --world-epoch, --revision and --expected-version from a reviewed snapshot")
         status, result = request(config, "/commands", {
-            "schema_version": 1, "id": args.id, "action": args.action,
+            "schema_version": 2, "id": args.id, "action": args.action, "arguments": {},
             "broker_epoch": args.broker_epoch, "expected_world_epoch": args.world_epoch,
             "expected_revision": args.revision, "expected_version": args.expected_version})
     print(json.dumps({"http_status": status, "body": result}, ensure_ascii=False, indent=2))

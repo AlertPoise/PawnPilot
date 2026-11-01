@@ -1,10 +1,10 @@
-# PawnPilot — M1
+# PawnPilot — M2-B
 
 《深空当铺：可能是偷的》的本机 MCP 工具链。仅支持基础观察和通过原生 EscapeUIManager.OnResume 关闭已打开的 ESC 菜单；不提供交易、自主经营或任意方法执行。
 
 Codex → MCP stdio Adapter → loopback HTTP broker ← Unity 主线程主动轮询 Mod。
 
-Adapter 与 broker 独立进程；Adapter 不启动 broker，Codex 退出不销毁结果。保留 M0 目录及安装 ID pawnpilot_m0，桥接版本 0.1.0。[M0 证据](docs/m0-feasibility.md)保留，[M1 报告](docs/m1-implementation.md)记录实际验收。
+Adapter 与 broker 独立进程；Adapter 不启动 broker，Codex 退出不销毁结果。保留 M0 目录及安装 ID pawnpilot_m0。当前 wire 协议升级为 v2，跨帧执行与恢复详见 [M2-B 报告](docs/m2b-implementation.md)及[精确契约](protocol/v2-contract.md)；历史 [M1](docs/m1-implementation.md) 和 [M2-A](docs/m2a-trade-path.md) 证据保留。
 
 ## 环境与构建
 
@@ -19,7 +19,7 @@ Copy-Item local.props.example local.props
 ./scripts/build.ps1
 ~~~
 
-pyproject.toml 固定官方 MCP SDK 2.3.0、Pydantic 2.12.5；uv.lock 固定传递依赖及哈希。本次官方 PyPI 下载过慢、GitHub TLS 失败，锁文件使用清华 PyPI 镜像。setup 使用 frozen 锁文件，缓存及 .venv 均在项目内。SDK v2 正式入口名为 MCPServer。
+pyproject.toml 固定官方 MCP SDK 2.3.0、Pydantic 2.12.5 和异步等待使用的 httpx2 2.16.0；uv.lock 固定传递依赖及哈希。锁文件沿用清华 PyPI 镜像。setup 使用 frozen 锁文件，缓存及 .venv 均在项目内。SDK v2 正式入口名为 MCPServer，与 PawnPilot wire 版本分别管理。
 
 ## 启动与配置
 
@@ -48,14 +48,17 @@ pyproject.toml 固定官方 MCP SDK 2.3.0、Pydantic 2.12.5；uv.lock 固定传�
 |---|---|
 | health_check | 无参数；连接、兼容性、loaded/ready、阻塞原因；health_check.can_act 表示当前 close_menu 可用 |
 | observe | 无参数；快照、legal_actions、等待/人工处理原因；失联快照是历史数据 |
-| act | command_id、action="close_menu"、broker_epoch、expected_world_epoch、expected_revision、expected_version；提交后返回状态 |
+| act | schema_version=2、command_id、action="close_menu"、arguments={}、broker_epoch、expected_world_epoch、expected_revision、expected_version；提交后返回状态 |
 | get_action_status | 原 command_id；规范状态、before/after、原 broker epoch、人工对齐证据；not_found 不证明执行失败 |
+| wait_for_update | 只读；等待 revision/身份改变、指定命令终态或基础可操作状态；最长 30 秒，可取消 |
 
 参数和返回结构都有 JSON Schema。业务错误结构化返回，区分 broker、protocol、connection、configuration、internal。日志不污染 MCP stdout。[Agent Skill](.agents/skills/pawnpilot-player/SKILL.md)规定一次一个动作、未知先查询、人工暂停不得自行恢复。
 
-schema_version=1 是结构版本；broker_epoch 每次 broker 启动改变；session_id 是 Mod 进程身份；world_epoch 在场景切换、载入 Hook 或存档身份改变时更新；revision 随可见快照变化递增；version 必须等于 world_epoch:revision。
+schema_version=2 是 wire 结构版本；旧 wire 请求明确拒绝，历史 v1 journal 先备份再迁移，查询保留原证据。broker_epoch 每次 broker 启动改变；session_id 是 Mod 进程身份；world_epoch 在场景切换、载入 Hook 或存档身份改变时更新；revision 随可见快照变化递增；version 必须等于 world_epoch:revision。
 
 loaded 表示当前游戏场景中存档已初始化；ready 额外要求必要 UI/库存组件存在并稳定两个 Unity Update 帧。动作前再次核对身份和状态。loaded=false 时现金 0 是无效占位。两个 can_act 字段作用域不同：health_check.can_act 表示当前 close_menu 可用；observe.snapshot.can_act 保留 broker 门禁可用性，具体合法动作以 legal_actions 为准。菜单已关闭且没有其他阻塞时，前者 false，后者 true，而 legal_actions 为空。
+
+初始化 ready 不证明业务/UI 同步。真实 business 明确为 unsupported，interaction.consistency 为 unverified；参数契约中的商品集合与报价引用尚未成为可执行能力。执行进度独立于游戏 revision，跨帧等待不停止心跳。动作效果已确认后可结束当前动作，让 Agent 处理后续交互。
 
 ## 命令状态与恢复
 
@@ -65,14 +68,14 @@ loaded 表示当前游戏场景中存档已初始化；ready 额外要求必要 
 | running | 已先落盘再交付，可能已执行；不会再次交付 |
 | succeeded | C# 后置条件验证成功 |
 | rejected | 未通过门禁/未交付；重新观察后才考虑新动作 |
-| failed | 已报告错误，不能据此假设没有副作用 |
+| failed | 仅历史 v1 结果；新动作调用后异常归入 outcome_unknown |
 | outcome_unknown | 结果未知，阻塞新的写动作，只能查询原 ID |
 
 同 ID 同完整内容返回已有状态；内容不同明确拒绝。HTTP 超时或提交 5xx 按未知处理，查询原 ID，不能换 ID 重试。
 
 journal 使用独占进程锁、同目录临时文件、flush/fsync 与原子替换。命令先落盘后交付，结果先落盘后确认。重启 pending 转 rejected，running 转 unknown；原 Mod 保留结果可按原 epoch/session 归档，不重放。已完成结果跨重启可查。上限 4096 条/16 MiB，满载、损坏、写失败停止写入，不淘汰 ID。此方案不宣称 exactly-once，不能抵御人为删除记录或断电磁盘损坏。
 
-若 Mod 退出使结果丢失，不能删除 journal 清零。操作者核对当前世界、正常关闭菜单、重新 observe 并记录画面证据。原命令已到期、快照新鲜就绪且版本前进后，才可执行：
+若 Mod 退出使结果丢失，不能删除 journal 清零。操作者核对当前世界、正常关闭菜单、退出旧 Mod 并建立新会话，重新 observe 并记录画面证据。原命令最迟可能执行期限已过、快照新鲜就绪且版本前进后，才可执行：
 
 ~~~powershell
 python bridge/client.py reconcile --id '<原ID>' --broker-epoch '<当前broker>' --world-epoch '<当前world>' --revision '<当前revision>' --expected-version '<当前world>:<当前revision>' --operator-note '<人工核对世界、菜单及证据位置>' --confirm-no-replay
@@ -83,18 +86,18 @@ python bridge/client.py reconcile --id '<原ID>' --broker-epoch '<当前broker>'
 ## 验证与清理
 
 ~~~powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v
 $env:DOTNET_CLI_HOME = Join-Path $PWD '.dotnet'
 $env:NUGET_PACKAGES = Join-Path $PWD '.nuget'
 $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
 dotnet run --project tests/PawnPilot.CoreTests/PawnPilot.CoreTests.csproj -c Release
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v
 # 真正 Codex CLI，默认只读，需要已登录账户：
 python scripts/verify-codex.py --label read-check
 # 仅用于已批准的独立测试槽、正常打开的 ESC 菜单：
 python scripts/verify-codex.py --label live-check --close-menu
 ~~~
 
-验证脚本使用临时 CLI 配置，只对本次已授权的 PawnPilot 调用自动批准，不改全局设置。默认模型是本次账户可用的非 Astra gpt-5.6-luna，可用 --model 指定其他可用非 Astra 模型。证据位于 artifacts/m1/codex，同名标签不覆盖。Windows 沙箱若拒绝 SDK stdio 管道（WinError 5），在正常终端运行，不能把沙箱失败算 PASS。
+先构建 managed Release 测试程序，Python 端到端测试会通过它运行测试专用跨帧模拟。验证脚本使用临时 CLI 配置，只对本次已授权的 PawnPilot 调用自动批准，不改全局设置。默认模型是此前账户可用的非 Astra gpt-5.6-luna，可用 --model 指定其他可用非 Astra 模型。新证据位于 artifacts/m2b/codex，同名标签不覆盖。Windows 沙箱若拒绝 SDK stdio 管道（WinError 5），在正常终端运行，不能把沙箱失败算 PASS。
 
 结束时在游戏 UI 删除本次测试槽、禁用 Mod、正常退出，再按收据清理：
 

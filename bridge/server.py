@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
+import copy
 import hmac
 import json
 from pathlib import Path
@@ -14,15 +14,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 try:
     from .journal import Journal, JournalError
+    from .protocol import (WIRE_VERSION, progress_matches_command, request_fingerprint,
+                           valid_command, valid_progress, valid_progress_transition,
+                           valid_request, valid_result_structure, valid_snapshot,
+                           valid_success_result, strict_json_loads)
 except ImportError:  # Support the existing `python bridge/server.py` launch path.
     from journal import Journal, JournalError
+    from protocol import (WIRE_VERSION, progress_matches_command, request_fingerprint,
+                          valid_command, valid_progress, valid_progress_transition,
+                          valid_request, valid_result_structure, valid_snapshot,
+                          valid_success_result, strict_json_loads)
 
 PORT = 18765
 MAX_BODY = 65536
-ACTIONS = frozenset({"observe", "close_menu"})
-RESULT_STATUS = {"success": "succeeded", "succeeded": "succeeded",
-                 "rejected": "rejected", "uncertain": "outcome_unknown",
-                 "outcome_unknown": "outcome_unknown", "error": "failed", "failed": "failed"}
+ACTION = "close_menu"
 LEGACY_STATUS = {"pending": "queued", "running": "delivered", "succeeded": "success",
                  "rejected": "rejected", "failed": "error", "outcome_unknown": "uncertain"}
 
@@ -35,11 +40,19 @@ class ProtocolError(Exception):
 class Broker:
     """Durable single-writer broker; a delivered action is never replayed."""
     def __init__(self, token: str, clock=time.time, ttl=5.0, heartbeat_timeout=3.0,
-                 journal_path=None, max_records=4096):
+                 journal_path=None, max_records=4096, execution_timeout_ms=5000,
+                 monotonic=None):
+        if type(execution_timeout_ms) is not int or not 1 <= execution_timeout_ms <= 30_000:
+            raise ValueError("execution_timeout_ms must be between 1 and 30000")
         self.token = token
         self.clock = clock
+        # Test clocks are commonly injected as a single source. Production keeps elapsed
+        # durations on a monotonic clock even if the wall clock is adjusted.
+        self.monotonic = monotonic if monotonic is not None else (
+            time.monotonic if clock is time.time else clock)
         self.ttl = ttl
         self.heartbeat_timeout = heartbeat_timeout
+        self.execution_timeout_ms = execution_timeout_ms
         self.lock = threading.Lock()
         self.journal = Journal(journal_path) if journal_path is not None else None
         self.max_records = max_records
@@ -47,6 +60,8 @@ class Broker:
         self.session_id = None
         self.state = None
         self.last_seen = 0.0
+        self.start_monotonic_deadlines = {}
+        self.execution_monotonic_deadlines = {}
         self.closed = False
         self.records = {}
         self.broker_epoch = str(uuid.uuid4())
@@ -82,10 +97,20 @@ class Broker:
                      if r["command_status"] in {"pending", "running"}
                      or (r["command_status"] == "outcome_unknown" and not r.get("resolution"))), None)
 
+    @staticmethod
+    def _record_schema_version(record):
+        return record["command"].get("schema_version", 1)
+
+    @staticmethod
+    def _command_deadline(command):
+        if command.get("schema_version") == 1:
+            return command["expires_at_unix_ms"]
+        return command["start_deadline_unix_ms"] + command["execution_timeout_ms"]
+
     def _persist(self):
         if not self.journal:
             return
-        value = {"schema_version": 1, "broker_epoch": self.broker_epoch,
+        value = {"journal_format_version": 2, "broker_epoch": self.broker_epoch,
                  "records": list(self.records.values())}
         try:
             self.journal.save(value)
@@ -93,12 +118,19 @@ class Broker:
             self.poisoned = True
             raise ProtocolError(503, "broker_persistence_failed")
 
+    def _broker_result(self, record, status, reason):
+        command = record["command"]
+        if self._record_schema_version(record) == 1:
+            return {"schema_version": 1, "id": record["command_id"],
+                    "broker_epoch": command["broker_epoch"], "status": LEGACY_STATUS[status],
+                    "reason": reason, "before": None, "after": None}
+        return {"schema_version": WIRE_VERSION, "id": record["command_id"],
+                "broker_epoch": command["broker_epoch"], "status": status,
+                "reason": reason, "before": None, "after": None, "execution": None}
+
     def _set_terminal(self, record, status, reason, result=None):
         record["command_status"] = status
-        record["result"] = result or {"schema_version": 1, "id": record["command_id"],
-                                      "broker_epoch": record["command"]["broker_epoch"],
-                                      "status": LEGACY_STATUS[status],
-                                      "reason": reason, "before": None, "after": None}
+        record["result"] = copy.deepcopy(result) if result is not None else self._broker_result(record, status, reason)
         record["updated_at_unix_ms"] = max(record["created_at_unix_ms"], int(self.clock() * 1000))
 
     def _terminal(self, record, status, reason, result=None):
@@ -106,102 +138,147 @@ class Broker:
         self._persist()
 
     def _connected(self):
-        return self.session_id is not None and self.clock() - self.last_seen <= self.heartbeat_timeout
+        return self.session_id is not None and self.monotonic() - self.last_seen <= self.heartbeat_timeout
 
     def _expire(self):
         record = self._active()
-        if not record:
+        if not record or record["command_status"] not in {"pending", "running"}:
             return
-        if record["command_status"] == "pending" and self.clock() * 1000 > record["command"]["expires_at_unix_ms"]:
+        now_ms = int(self.clock() * 1000)
+        now_monotonic = self.monotonic()
+        command = record["command"]
+        start_elapsed = (now_ms >= command["start_deadline_unix_ms"]
+                         or now_monotonic >= self.start_monotonic_deadlines.get(
+                             record["command_id"], float("inf")))
+        if record["command_status"] == "pending" and start_elapsed:
             self._terminal(record, "rejected", "expired_before_delivery")
-        elif (record["command_status"] == "running"
-              and (self.clock() * 1000 > record["command"]["expires_at_unix_ms"] or not self._connected())):
+            return
+        if record["command_status"] != "running":
+            return
+        execution = record.get("execution")
+        if not self._connected():
             self._terminal(record, "outcome_unknown", "delivery_outcome_unknown")
+        elif execution is None and start_elapsed:
+            self._terminal(record, "outcome_unknown", "start_deadline_elapsed_without_invocation")
+        elif (execution is not None and execution["may_have_side_effects"]
+              and (now_ms >= execution["execution_deadline_unix_ms"]
+                   or now_monotonic >= self.execution_monotonic_deadlines.get(
+                       record["command_id"], float("inf")))):
+            self._terminal(record, "outcome_unknown", "execution_deadline_elapsed")
+        elif execution is not None and not execution["may_have_side_effects"] and start_elapsed:
+            self._terminal(record, "outcome_unknown", "start_deadline_elapsed_without_invocation")
 
     @staticmethod
     def _valid_state(state):
-        if not isinstance(state, dict):
-            return False
-        if set(state) != {"schema_version", "version", "world_epoch", "phase", "scene",
-                          "not_ready_reason", "revision", "loaded", "ready", "menu_open",
-                          "can_close_menu", "cash"}:
-            return False
-        epoch, revision = state.get("world_epoch"), state.get("revision")
-        return (type(state.get("schema_version")) is int and state["schema_version"] == 1
-                and isinstance(epoch, str) and 0 < len(epoch) <= 128
-                and type(revision) is int and revision >= 0
-                and isinstance(state.get("version"), str) and state["version"] == f"{epoch}:{revision}"
-                and isinstance(state.get("scene"), str) and len(state["scene"]) <= 128
-                and type(state.get("ready")) is bool and type(state.get("can_close_menu")) is bool
-                and (state.get("not_ready_reason") is None or
-                     (isinstance(state.get("not_ready_reason"), str) and len(state["not_ready_reason"]) <= 256))
-                and type(state.get("loaded")) is bool
-                and isinstance(state.get("phase"), str) and len(state["phase"]) <= 128
-                and type(state.get("menu_open")) is bool
-                and (state["ready"] or isinstance(state.get("not_ready_reason"), str))
-                and type(state.get("cash")) is int
-                and (not state["ready"] or (state["loaded"] and state.get("not_ready_reason") is None))
-                and (not state["can_close_menu"] or (state["ready"] and state["menu_open"])))
+        return valid_snapshot(state)
 
-    def exchange(self, body):
-        sid = body.get("session_id")
-        if type(body.get("schema_version")) is not int or body.get("schema_version") != 1:
+    @staticmethod
+    def _validate_exchange_shape(body):
+        expected = {"schema_version", "session_id", "broker_epoch", "state",
+                    "has_result", "result", "progress"}
+        if type(body) is not dict:
+            raise ProtocolError(400, "invalid_exchange")
+        if type(body.get("schema_version")) is not int or body.get("schema_version") != WIRE_VERSION:
             raise ProtocolError(400, "schema_version_unsupported")
-        seen_epoch = body.get("broker_epoch")
-        if seen_epoch is not None and (not isinstance(seen_epoch, str) or len(seen_epoch) > 64):
-            raise ProtocolError(400, "invalid_broker_epoch")
-        # Unity JsonUtility 的内联对象可能把 null 序列化成默认对象，必须用显式标志。
         if type(body.get("has_result")) is not bool:
             raise ProtocolError(400, "has_result_boolean_required")
-        state = body.get("state")
-        result = body.get("result") if body["has_result"] else None
-        if not isinstance(sid, str) or not 1 <= len(sid) <= 128 or not self._valid_state(state):
+        if set(body) != expected:
+            raise ProtocolError(400, "invalid_exchange")
+
+    def _progress_record(self, progress, sid):
+        record = self.records.get(progress["id"])
+        if (record is None or self._record_schema_version(record) != WIRE_VERSION
+                or record.get("delivery_session_id") != sid
+                or record["command"]["broker_epoch"] != progress["broker_epoch"]
+                or not progress_matches_command(progress, record["command"])
+                or not valid_progress_transition(record.get("execution"), progress)):
+            raise ProtocolError(409, "invalid_progress")
+        return record
+
+    def _validate_result(self, record, result):
+        if (self._record_schema_version(record) != WIRE_VERSION
+                or result["id"] != record["command_id"]
+                or result["broker_epoch"] != record["command"]["broker_epoch"]
+                or not progress_matches_command(result["execution"], record["command"])
+                or not valid_progress_transition(record.get("execution"), result["execution"])
+                or not valid_success_result(record["command"], result)):
+            raise ProtocolError(409, "invalid_result_evidence")
+
+    def exchange(self, body):
+        self._validate_exchange_shape(body)
+        sid = body["session_id"]
+        seen_epoch = body["broker_epoch"]
+        if (type(sid) is not str or not 1 <= len(sid) <= 128
+                or (seen_epoch is not None
+                    and (type(seen_epoch) is not str or not 1 <= len(seen_epoch) <= 128))):
+            raise ProtocolError(400, "invalid_exchange_identity")
+        state = body["state"]
+        if not valid_snapshot(state):
             raise ProtocolError(400, "invalid_snapshot")
-        if body["has_result"] and (not isinstance(result, dict)
-                                  or type(result.get("schema_version")) is not int
-                                  or result.get("schema_version") != 1
-                                  or not isinstance(result.get("id"), str)
-                                  or not isinstance(result.get("status"), str)
-                                  or result.get("status") not in RESULT_STATUS
-                                  or not isinstance(result.get("reason"), str) or len(result["reason"]) > 512
-                                  or not isinstance(result.get("broker_epoch"), str)
-                                  or (result.get("before") is not None
-                                      and not self._valid_state(result.get("before")))
-                                  or (result.get("after") is not None
-                                      and not self._valid_state(result.get("after")))
-                                  or (RESULT_STATUS.get(result.get("status")) == "succeeded"
-                                      and (not self._valid_state(result.get("before"))
-                                           or not self._valid_state(result.get("after"))))):
+        progress = body["progress"]
+        if progress is not None and not valid_progress(progress):
+            raise ProtocolError(400, "invalid_progress")
+        result = body["result"] if body["has_result"] else None
+        if body["has_result"] and not valid_result_structure(result):
             raise ProtocolError(400, "invalid_result")
+        if result is not None and progress is not None and progress != result["execution"]:
+            raise ProtocolError(400, "conflicting_progress_and_result")
+        if result is None and progress is not None and progress["stage"] in {"completed", "uncertain"}:
+            raise ProtocolError(409, "terminal_progress_requires_result")
+
         with self.lock:
             if self.closed or self.poisoned:
                 raise ProtocolError(503, "server_closed")
             self._expire()
-            if self.session_id is not None and self.session_id != sid:
+            session_changed = self.session_id is not None and self.session_id != sid
+            if session_changed:
                 active = self._active()
                 if active and active["command_status"] == "pending":
                     self._terminal(active, "rejected", "session_changed_before_delivery")
                 elif active and active["command_status"] == "running":
                     self._terminal(active, "outcome_unknown", "session_changed_after_delivery")
+
             acknowledged_id = None
+            progress_record = None
+            if progress is not None:
+                progress_record = self._progress_record(progress, sid)
+                if (result is None and progress_record["result"] is not None
+                        and progress_record["result"].get("execution") is not None):
+                    raise ProtocolError(409, "progress_after_terminal_result")
+                if (progress["may_have_side_effects"]
+                        and progress["id"] not in self.execution_monotonic_deadlines):
+                    now_ms = int(self.clock() * 1000)
+                    now_monotonic = self.monotonic()
+                    remaining_ms = min(
+                        progress["execution_deadline_unix_ms"] - progress["started_at_unix_ms"],
+                        max(0, progress["execution_deadline_unix_ms"] - now_ms))
+                    self.execution_monotonic_deadlines[progress["id"]] = (
+                        now_monotonic + remaining_ms / 1000)
             if result is not None:
                 record = self.records.get(result["id"])
                 if (record is None or record.get("delivery_session_id") != sid
                         or record["command"]["broker_epoch"] != result["broker_epoch"]):
                     raise ProtocolError(409, "unknown_or_conflicting_result")
                 acknowledged_id = result["id"]
-                self._validate_success_result(record, result)
+                self._validate_result(record, result)
                 if record["result"] == result:
                     pass
                 elif record["command_status"] in {"running", "outcome_unknown"}:
-                    status = RESULT_STATUS[result["status"]]
-                    self._terminal(record, status, result["reason"], result)
+                    record["execution"] = copy.deepcopy(result["execution"])
+                    self._terminal(record, result["status"], result["reason"], result)
                 else:
                     raise ProtocolError(409, "unknown_or_conflicting_result")
-            is_prior_session_result = (self.session_id is not None and self.session_id != sid
-                                       and result is not None and acknowledged_id is not None)
-            if not is_prior_session_result:
-                self.session_id, self.state, self.last_seen = sid, state, self.clock()
+            elif progress is not None:
+                progress_record["execution"] = copy.deepcopy(progress)
+                progress_record["updated_at_unix_ms"] = max(
+                    progress_record["updated_at_unix_ms"], int(self.clock() * 1000))
+                self._persist()
+
+            prior_session_evidence = (self.session_id is not None and self.session_id != sid
+                                      and (result is not None or progress is not None))
+            if not prior_session_evidence:
+                self.session_id, self.state, self.last_seen = sid, copy.deepcopy(state), self.monotonic()
+
             command = None
             active = self._active()
             if seen_epoch == self.broker_epoch and active and active["command_status"] == "pending":
@@ -210,52 +287,29 @@ class Broker:
                         or expected["expected_revision"] != state["revision"]
                         or expected["expected_version"] != state["version"]):
                     self._terminal(active, "rejected", "stale_state")
+                elif not state["can_close_menu"]:
+                    self._terminal(active, "rejected", "precondition")
                 else:
                     active["command_status"] = "running"
                     active["delivery_session_id"] = sid
                     active["updated_at_unix_ms"] = int(self.clock() * 1000)
                     self._persist()
                     command = dict(expected)
-            return {"schema_version": 1, "broker_epoch": self.broker_epoch,
+            return {"schema_version": WIRE_VERSION, "broker_epoch": self.broker_epoch,
                     "acknowledged_result_id": acknowledged_id,
                     "has_command": command is not None, "command": command}
 
-    @classmethod
-    def _validate_success_result(cls, record, result):
-        if RESULT_STATUS[result["status"]] != "succeeded":
-            return
-        before, after, command = result["before"], result["after"], record["command"]
-        if (not cls._valid_state(after)
-                or before["world_epoch"] != command["expected_world_epoch"]
-                or before["revision"] != command["expected_revision"]
-                or before["version"] != command["expected_version"]):
-            raise ProtocolError(409, "invalid_success_result")
-        if command["action"] == "close_menu":
-            if (not before["ready"] or not before["can_close_menu"] or not after["ready"]
-                    or after["world_epoch"] != before["world_epoch"]
-                    or after["scene"] != before["scene"] or after["menu_open"]
-                    or after["revision"] <= before["revision"] or after["version"] == before["version"]):
-                raise ProtocolError(409, "invalid_success_result")
-        elif (after["world_epoch"] != before["world_epoch"]
-              or after["revision"] != before["revision"] or after["version"] != before["version"]):
-            raise ProtocolError(409, "invalid_success_result")
-
     def enqueue(self, body):
-        required = (body.get("schema_version"), body.get("id"), body.get("broker_epoch"),
-                    body.get("expected_world_epoch"), body.get("expected_revision"),
-                    body.get("expected_version"), body.get("action"))
-        if (type(required[0]) is not int or required[0] != 1
-                or not isinstance(required[1], str) or not 1 <= len(required[1]) <= 128
-                or not isinstance(required[2], str) or not isinstance(required[3], str)
-                or type(required[4]) is not int or required[4] < 0
-                or not isinstance(required[5], str) or not isinstance(required[6], str)
-                or body["action"] not in ACTIONS):
+        if type(body) is not dict:
             raise ProtocolError(400, "invalid_command")
-        request = {"schema_version": 1, "id": body["id"], "broker_epoch": body["broker_epoch"],
-                   "action": body["action"], "expected_world_epoch": body["expected_world_epoch"],
-                   "expected_revision": body["expected_revision"], "expected_version": body["expected_version"]}
-        fingerprint = hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":"),
-                                               ensure_ascii=False).encode("utf-8")).hexdigest()
+        if type(body.get("schema_version")) is not int or body.get("schema_version") != WIRE_VERSION:
+            raise ProtocolError(400, "schema_version_unsupported")
+        if not valid_request(body):
+            raise ProtocolError(400, "invalid_command")
+        try:
+            fingerprint = request_fingerprint(body)
+        except ValueError:
+            raise ProtocolError(400, "invalid_command") from None
         with self.lock:
             if self.poisoned:
                 raise ProtocolError(503, "broker_persistence_failed")
@@ -265,6 +319,8 @@ class Broker:
                 if old["request_fingerprint"] != fingerprint:
                     raise ProtocolError(409, "command_id_conflict")
                 return self._command_reply(old)
+            if body["action"] != ACTION or body["arguments"] != {}:
+                raise ProtocolError(400, "action_not_allowed")
             if self.closed or not self._connected():
                 raise ProtocolError(503, "game_disconnected")
             if len(self.records) >= self.max_records:
@@ -277,22 +333,25 @@ class Broker:
                     or body["expected_revision"] != self.state["revision"]
                     or body["expected_version"] != self.state["version"]):
                 raise ProtocolError(409, "stale_state")
-            if body["action"] != "observe" and not self.state["ready"]:
+            if not self.state["ready"]:
                 raise ProtocolError(409, self.state.get("not_ready_reason") or "game_not_ready")
-            if body["action"] == "close_menu" and not self.state["can_close_menu"]:
+            if not self.state["can_close_menu"]:
                 raise ProtocolError(409, "precondition")
-            command = {"schema_version": 1, "id": body["id"], "action": body["action"],
-                       "broker_epoch": self.broker_epoch,
-                       "expected_world_epoch": body["expected_world_epoch"],
-                       "expected_revision": body["expected_revision"],
-                       "expected_version": body["expected_version"],
-                       "expires_at_unix_ms": int((self.clock() + self.ttl) * 1000)}
+            now_wall = self.clock()
+            now_monotonic = self.monotonic()
+            request = copy.deepcopy(body)
+            command = dict(request, start_deadline_unix_ms=int((now_wall + self.ttl) * 1000),
+                           execution_timeout_ms=self.execution_timeout_ms)
+            if not valid_command(command):
+                raise ProtocolError(500, "invalid_broker_command")
+            now_ms = int(now_wall * 1000)
             record = {"command_id": body["id"], "request_fingerprint": fingerprint,
                       "request": request, "command": command, "command_status": "pending",
                       "result": None, "delivery_session_id": None,
-                      "created_at_unix_ms": int(self.clock() * 1000),
-                      "updated_at_unix_ms": int(self.clock() * 1000)}
+                      "created_at_unix_ms": now_ms, "updated_at_unix_ms": now_ms,
+                      "execution": None}
             self.records[body["id"]] = record
+            self.start_monotonic_deadlines[body["id"]] = now_monotonic + self.ttl
             self._persist()
             return self._command_reply(record)
 
@@ -301,7 +360,7 @@ class Broker:
                 or set(body) != {"schema_version", "id", "broker_epoch", "world_epoch", "revision",
                                 "expected_version", "operator_note", "confirm_no_replay"}
                 or type(body.get("schema_version")) is not int
-                or body.get("schema_version") != 1 or not isinstance(body.get("id"), str)
+                or body.get("schema_version") != WIRE_VERSION or not isinstance(body.get("id"), str)
                 or not isinstance(body.get("broker_epoch"), str)
                 or not isinstance(body.get("world_epoch"), str) or not 1 <= len(body["world_epoch"]) <= 128
                 or type(body.get("revision")) is not int or body["revision"] < 0
@@ -321,8 +380,25 @@ class Broker:
             if (record is None or record["command_status"] != "outcome_unknown"
                     or record.get("resolution") is not None or record["command"].get("action") != "close_menu"):
                 raise ProtocolError(409, "command_not_reconcilable")
-            if self.clock() * 1000 <= record["command"]["expires_at_unix_ms"]:
+            if self.session_id == record.get("delivery_session_id"):
+                raise ProtocolError(409, "fresh_mod_session_required")
+            deadline = self._command_deadline(record["command"])
+            now_ms = int(self.clock() * 1000)
+            if now_ms < deadline:
                 raise ProtocolError(409, "command_not_expired")
+            mono_deadline = self.start_monotonic_deadlines.get(record["command_id"])
+            if mono_deadline is not None:
+                # This process can prove its latest local deadline without wall-clock drift.
+                # After restart the map is intentionally empty; the durable Unix deadline
+                # above plus the required new Mod session are the available evidence.
+                command = record["command"]
+                if self._record_schema_version(record) == WIRE_VERSION:
+                    mono_deadline += command["execution_timeout_ms"] / 1000
+                reported_deadline = self.execution_monotonic_deadlines.get(record["command_id"])
+                if reported_deadline is not None:
+                    mono_deadline = max(mono_deadline, reported_deadline)
+                if self.monotonic() < mono_deadline:
+                    raise ProtocolError(409, "command_not_expired")
             if (not self.state["ready"] or self.state["menu_open"]
                     or self.state["world_epoch"] != body["world_epoch"]
                     or self.state["revision"] != body["revision"]
@@ -332,13 +408,13 @@ class Broker:
             if (body["world_epoch"] == original["expected_world_epoch"]
                     and body["revision"] <= original["expected_revision"]):
                 raise ProtocolError(409, "snapshot_not_advanced")
-            resolution = {"schema_version": 1, "method": "manual_state_alignment",
+            resolution = {"schema_version": WIRE_VERSION, "method": "manual_state_alignment",
                           "command_id": record["command_id"], "broker_epoch": self.broker_epoch,
-                          "command_expires_at_unix_ms": original["expires_at_unix_ms"],
+                          "command_expires_at_unix_ms": deadline,
                           "session_id": self.session_id, "world_epoch": self.state["world_epoch"],
                           "revision": self.state["revision"], "version": self.state["version"],
-                          "snapshot": dict(self.state), "operator_note": body["operator_note"].strip(),
-                          "confirm_no_replay": True, "recorded_at_unix_ms": int(self.clock() * 1000)}
+                          "snapshot": copy.deepcopy(self.state), "operator_note": body["operator_note"].strip(),
+                          "confirm_no_replay": True, "recorded_at_unix_ms": now_ms}
             record["resolution"] = resolution
             record["updated_at_unix_ms"] = max(record["updated_at_unix_ms"],
                                                 resolution["recorded_at_unix_ms"])
@@ -348,9 +424,11 @@ class Broker:
     @staticmethod
     def _command_reply(record):
         return {"id": record["command_id"], "command_status": record["command_status"],
-                "status": LEGACY_STATUS[record["command_status"]],
-                "result": record["result"], "resolved": bool(record.get("resolution")),
-                "resolution": record.get("resolution")}
+                "status": record["command_status"],
+                "result": copy.deepcopy(record["result"]), "resolved": bool(record.get("resolution")),
+                "resolution": copy.deepcopy(record.get("resolution")), "schema_version": WIRE_VERSION,
+                "execution": copy.deepcopy(record.get("execution")),
+                "record_schema_version": Broker._record_schema_version(record)}
 
     def snapshot(self):
         with self.lock:
@@ -368,13 +446,14 @@ class Broker:
                 reason = self.state.get("not_ready_reason") or "game_not_ready"
             else:
                 reason = None
-            return {"schema_version": 1, "broker_epoch": self.broker_epoch,
-                    "session_id": self.session_id, "state": self.state,
+            return {"schema_version": WIRE_VERSION, "broker_epoch": self.broker_epoch,
+                    "session_id": self.session_id, "state": copy.deepcopy(self.state),
                     "connected": self._connected() and not self.closed,
                     "can_act": (self._connected() and self.state is not None and self.state["ready"]
                                 and not self.closed and not self.poisoned and not active),
                     "blocked_command_id": active["command_id"] if active else None,
-                    "blocking_reason": reason}
+                    "blocking_reason": reason,
+                    "execution": copy.deepcopy(active.get("execution")) if active else None}
 
     def result(self, command_id):
         with self.lock:
@@ -432,14 +511,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def _reply(self, status, body):
         raw = json.dumps(body, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(raw)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(raw)
-        self.close_connection = True
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(raw)
+        except ConnectionError:
+            # A bounded/cancelled read can close before even an error response is sent.
+            # Command/result persistence already happened; never retry a mutation here.
+            pass
+        finally:
+            self.close_connection = True
 
     def _handle(self, method):
         try:
@@ -470,7 +555,13 @@ class Handler(BaseHTTPRequestHandler):
                 raw = self.rfile.read(length)
                 if len(raw) != length:
                     raise ProtocolError(400, "incomplete_body")
-                body = json.loads(raw, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
+                try:
+                    body = strict_json_loads(raw.decode("utf-8"))
+                except (ValueError, UnicodeError) as exc:
+                    reason = str(exc) if str(exc) in {
+                        "duplicate_json_key", "json_too_deep", "nonfinite_json"
+                    } else "invalid_json"
+                    raise ProtocolError(400, reason) from None
                 if not isinstance(body, dict):
                     raise ProtocolError(400, "object_required")
                 if self.path == "/exchange":

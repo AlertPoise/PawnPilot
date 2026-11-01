@@ -1,10 +1,13 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.SceneManagement;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace PawnPilot
 {
@@ -14,6 +17,7 @@ namespace PawnPilot
         private SessionConfig config;
         private readonly string session = Guid.NewGuid().ToString("N");
         private readonly ActionGate gate = new ActionGate();
+        private ActionDriver actionDriver;
         private readonly WorldVersion worldVersion = new WorldVersion();
         private readonly WorldIdentityTracker worldIdentity = new WorldIdentityTracker();
         private readonly ReadyFrameTracker readyFrames = new ReadyFrameTracker();
@@ -26,8 +30,12 @@ namespace PawnPilot
         private ActionResult pendingResult;
         private bool connectionReported;
         private bool failureReported;
+        private bool driverFailureLogged;
+        private static readonly long MonotonicOrigin = Stopwatch.GetTimestamp();
 #if M2A_READ_ONLY_PROBE
         private readonly TradeDiagnostic tradeDiagnostic = new TradeDiagnostic();
+        private readonly VerificationDiagnostic verificationDiagnostic = new VerificationDiagnostic();
+        private string lastVerificationSample;
         private string lastDiagnosticVersion;
         private bool diagnosticStopped;
 #endif
@@ -36,13 +44,57 @@ namespace PawnPilot
         {
             TypeNameHandling = TypeNameHandling.None,
             MetadataPropertyHandling = MetadataPropertyHandling.Ignore,
-            MaxDepth = 16
+            MaxDepth = 16,
+            Converters = { new ActionArgumentsJsonConverter() }
         };
+
+        private sealed class ActionArgumentsJsonConverter : JsonConverter<ActionArguments>
+        {
+            public override ActionArguments ReadJson(JsonReader reader, Type objectType, ActionArguments existingValue,
+                bool hasExistingValue, JsonSerializer serializer)
+            {
+                if (reader.TokenType == JsonToken.Null) return null;
+                var value = JObject.Load(reader);
+                return new ActionArguments
+                {
+                    customer_ref = value["customer_ref"]?.Value<string>(),
+                    item_refs = value["item_refs"]?.ToObject<List<string>>(serializer),
+                    offer_ref = value["offer_ref"]?.Value<string>(),
+                    collection_fingerprint = value["collection_fingerprint"]?.Value<string>(),
+                    option_ref = value["option_ref"]?.Value<string>()
+                };
+            }
+
+            public override void WriteJson(JsonWriter writer, ActionArguments value, JsonSerializer serializer)
+            {
+                writer.WriteStartObject();
+                if (value != null)
+                {
+                    WriteString(writer, "customer_ref", value.customer_ref);
+                    if (value.item_refs != null)
+                    {
+                        writer.WritePropertyName("item_refs"); serializer.Serialize(writer, value.item_refs);
+                    }
+                    WriteString(writer, "offer_ref", value.offer_ref);
+                    WriteString(writer, "collection_fingerprint", value.collection_fingerprint);
+                    WriteString(writer, "option_ref", value.option_ref);
+                }
+                writer.WriteEndObject();
+            }
+
+            private static void WriteString(JsonWriter writer, string key, string value)
+            {
+                if (value == null) return;
+                writer.WritePropertyName(key);
+                writer.WriteValue(value);
+            }
+        }
         private static string ToJson(object value) => JsonConvert.SerializeObject(value, JsonSettings);
 
         public void Initialize(ModLog logger)
         {
             log = logger;
+            actionDriver = new ActionDriver(gate);
             ModHook.OnGameLoadedLate += OnGameLoaded;
             SceneManager.activeSceneChanged += SceneChanged;
             activeSceneHandle = SceneManager.GetActiveScene().handle;
@@ -52,11 +104,39 @@ namespace PawnPilot
 
         private void Update()
         {
-            RefreshReadinessFrame();
+            if (stopped || actionDriver == null) return;
+            var driverStep = actionDriver.Tick(RefreshReadinessFrame, Capture, brokerEpoch,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), MonotonicMilliseconds(),
+                _ => ResumeMenu(), ActionGate.VerifyCloseMenu);
+            if (driverStep.newlyFailed && !driverFailureLogged)
+            {
+                driverFailureLogged = true;
+                log.Error("PAWNPILOT_EXECUTOR_HALTED " + driverStep.failureType +
+                    "; action cancelled fail-closed and no later frame can invoke or complete it");
+            }
+            if (pendingResult == null && gate.PendingResult != null)
+            {
+                pendingResult = gate.PendingResult;
+                log.Log("PAWNPILOT_RESULT " + ToJson(pendingResult));
+            }
 #if M2A_READ_ONLY_PROBE
             if (stopped || diagnosticStopped) return;
             try
             {
+                var verification = verificationDiagnostic.Capture(worldVersion.Epoch, latestReadiness.ready,
+                    VerificationDiagnosticReader.Read);
+                var verificationJson = ToJson(new { cash = PlayerStore.HasInstance ? PlayerStore.Instance.playerCash : 0,
+                    sample = verification });
+                if (verificationJson != lastVerificationSample)
+                {
+                    log.Log("PAWNPILOT_M2_VERIFY_READ_ONLY " + ToJson(new
+                    {
+                        source = "game_runtime", diagnostic_format = 1, frame = Time.frameCount,
+                        realtime = Time.realtimeSinceStartup, cash = PlayerStore.HasInstance ? PlayerStore.Instance.playerCash : 0,
+                        sample = verification
+                    }));
+                    lastVerificationSample = verificationJson;
+                }
                 var sample = tradeDiagnostic.Capture(worldVersion.Epoch, latestReadiness.ready, TradeDiagnosticReader.Read);
                 string version = sample.world_epoch + ":" + sample.diagnostic_revision;
                 if (version == lastDiagnosticVersion) return;
@@ -209,8 +289,19 @@ namespace PawnPilot
                 phase = latestReadiness.phase,
                 not_ready_reason = latestReadiness.reason,
                 menu_open = open,
-                can_close_menu = ready && open && menu.isActiveAndEnabled
+                can_close_menu = ready && open && menu.isActiveAndEnabled,
+                interaction = new InteractionObservation
+                {
+                    phase = latestReadiness.phase ?? "unknown",
+                    consistency = "unverified",
+                    reason = ready ? "business_consistency_unverified" : latestReadiness.reason,
+                    operable = ready
+                },
+                business = new BusinessObservation { support = "unsupported" },
+                legal_actions = new List<LegalAction>()
             };
+            if (state.can_close_menu)
+                state.legal_actions.Add(new LegalAction { action = "close_menu", arguments = new ActionArguments() });
             state.revision = 0;
             state.version = null;
             string signature = ToJson(state);
@@ -222,12 +313,14 @@ namespace PawnPilot
         private static bool IsReadinessCandidate(ReadinessSignals signals) => signals.gameplay_scene &&
             signals.store_present && signals.store_initialized && signals.ui_initialized;
 
-        private Snapshot ResumeMenu()
+        private void ResumeMenu()
         {
             // 与 Resume 按钮完全相同的正常入口，不直接 SetActive 或写存档。
             StoreUIManager.Instance.escapeUIManager.OnResume();
-            return Capture();
         }
+
+        private static long MonotonicMilliseconds() =>
+            (long)((Stopwatch.GetTimestamp() - MonotonicOrigin) * 1000.0 / Stopwatch.Frequency);
 
         private IEnumerator Poll()
         {
@@ -240,7 +333,8 @@ namespace PawnPilot
                     var exchange = new Exchange
                     {
                         schema_version = Protocol.SchemaVersion, session_id = session, broker_epoch = brokerEpoch,
-                        state = Capture(), has_result = pendingResult != null, result = pendingResult
+                        state = Capture(), has_result = pendingResult != null, result = pendingResult,
+                        progress = gate.CurrentProgress
                     };
                     current = new UnityWebRequest("http://127.0.0.1:18765/exchange", "POST");
                     current.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(ToJson(exchange)));
@@ -262,9 +356,7 @@ namespace PawnPilot
                         if (current.result == UnityWebRequest.Result.Success)
                         {
                             if (current.downloadHandler.data.Length > 65536) throw new InvalidOperationException("Oversize reply");
-                            var reply = JsonConvert.DeserializeObject<Reply>(current.downloadHandler.text, JsonSettings);
-                            if (reply == null || reply.schema_version != Protocol.SchemaVersion || string.IsNullOrEmpty(reply.broker_epoch))
-                                throw new InvalidOperationException("Invalid reply envelope");
+                            var reply = DeserializeReplyStrict(current.downloadHandler.text);
                             bool epochChanged = brokerEpoch != null && brokerEpoch != reply.broker_epoch;
                             if (pendingResult == null && !string.IsNullOrEmpty(reply.acknowledged_result_id))
                                 throw new InvalidOperationException("Unexpected result acknowledgement");
@@ -272,23 +364,47 @@ namespace PawnPilot
                             {
                                 if (reply.acknowledged_result_id != pendingResult.id)
                                     throw new InvalidOperationException("Mismatched result acknowledgement");
+                                if (!gate.Acknowledge(reply.acknowledged_result_id))
+                                    throw new InvalidOperationException("Unknown result acknowledgement");
                                 pendingResult = null;
                             }
-                            if (pendingResult != null && reply.has_command)
+                            if (epochChanged)
+                            {
+                                var epochResult = gate.OnBrokerEpochChanged(reply.broker_epoch, Capture());
+                                if (pendingResult == null && epochResult != null) pendingResult = gate.PendingResult ?? epochResult;
+                            }
+                            if ((pendingResult != null || gate.IsWriteBlocked) && reply.has_command)
                                 throw new InvalidOperationException("Command received before result acknowledgement");
-                            if (epochChanged && pendingResult != null && reply.has_command)
-                                throw new InvalidOperationException("Broker epoch changed with unresolved result");
                             brokerEpoch = reply.broker_epoch;
                             if (!connectionReported) { log.Log("PAWNPILOT_CONNECTED"); connectionReported = true; }
                             failureReported = false;
                             if (reply.has_command)
                             {
-                                if (reply.command == null || reply.command.schema_version != Protocol.SchemaVersion ||
-                                    string.IsNullOrEmpty(reply.command.id) || reply.command.broker_epoch != brokerEpoch)
-                                    throw new InvalidOperationException("Invalid command envelope");
-                                pendingResult = gate.Execute(reply.command, Capture(), brokerEpoch,
-                                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ResumeMenu);
-                                log.Log("PAWNPILOT_RESULT " + ToJson(pendingResult));
+                                if (actionDriver.IsFailed)
+                                {
+                                    log.Error("PAWNPILOT_RECOVERY_REQUIRED command received after executor halt; action not accepted");
+                                    recoveryRequired = true;
+                                }
+                                else
+                                {
+                                var immediate = gate.Accept(reply.command, Capture(), brokerEpoch,
+                                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                                if (immediate != null)
+                                {
+                                    var retained = gate.PendingResult;
+                                    if (retained != null && retained.id == immediate.id)
+                                    {
+                                        pendingResult = retained;
+                                        log.Log("PAWNPILOT_RESULT " + ToJson(pendingResult));
+                                    }
+                                    else
+                                    {
+                                        log.Error("PAWNPILOT_PROTOCOL_REJECTED untracked command result id=" + (immediate.id ?? "none") +
+                                            " reason=" + immediate.reason + "; restart game/mod after reviewing logs");
+                                        recoveryRequired = true;
+                                    }
+                                }
+                                }
                             }
                         }
                         else if (current.responseCode == 401 || current.responseCode == 409)
@@ -314,9 +430,112 @@ namespace PawnPilot
             }
         }
 
+        private static Reply DeserializeReplyStrict(string json)
+        {
+            using (var sr = new System.IO.StringReader(json))
+            using (var reader = new JsonTextReader(sr) { MaxDepth = 16, DateParseHandling = DateParseHandling.None })
+            {
+                var root = JObject.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
+                if (reader.Read()) throw new InvalidOperationException("Trailing JSON content");
+                RequireKeys(root, "schema_version", "broker_epoch", "acknowledged_result_id", "has_command", "command");
+                RequireInteger(root, "schema_version", 2, 2);
+                RequireBoundedString(root, "broker_epoch", 128, false);
+                RequireString(root, "acknowledged_result_id", true);
+                if (root["acknowledged_result_id"].Type == JTokenType.String)
+                {
+                    int ackLength = root["acknowledged_result_id"].Value<string>().Length;
+                    if (ackLength < 1 || ackLength > 128) throw new InvalidOperationException("Invalid acknowledgement id");
+                }
+                RequireType(root, "has_command", JTokenType.Boolean);
+                bool hasCommand = root["has_command"].Value<bool>();
+                if (hasCommand)
+                {
+                    if (!(root["command"] is JObject command)) throw new InvalidOperationException("command must be object");
+                    RequireKeys(command, "schema_version", "id", "broker_epoch", "action", "expected_world_epoch",
+                        "expected_revision", "expected_version", "arguments", "start_deadline_unix_ms", "execution_timeout_ms");
+                    RequireInteger(command, "schema_version", 2, 2);
+                    RequireBoundedString(command, "id", 128, false);
+                    RequireBoundedString(command, "broker_epoch", 128, false);
+                    RequireBoundedString(command, "action", 128, false);
+                    RequireBoundedString(command, "expected_world_epoch", 128, false);
+                    RequireInteger(command, "expected_revision", 0, int.MaxValue);
+                    RequireBoundedString(command, "expected_version", 256, false);
+                    RequireInteger(command, "start_deadline_unix_ms", 1, long.MaxValue);
+                    RequireInteger(command, "execution_timeout_ms", 1, 30000);
+                    if (!(command["arguments"] is JObject arguments)) throw new InvalidOperationException("arguments must be object");
+                    RequireAllowedOptionalKeys(arguments, "customer_ref", "item_refs", "offer_ref", "collection_fingerprint", "option_ref");
+                    foreach (var key in new[] { "customer_ref", "offer_ref", "collection_fingerprint", "option_ref" })
+                        if (arguments.Property(key) != null) RequireString(arguments, key, false);
+                    if (arguments.Property("item_refs") != null)
+                    {
+                        if (!(arguments["item_refs"] is JArray items)) throw new InvalidOperationException("item_refs must be array");
+                        foreach (var item in items) if (item.Type != JTokenType.String) throw new InvalidOperationException("item_refs must contain strings");
+                    }
+                }
+                else if (root["command"].Type != JTokenType.Null) throw new InvalidOperationException("command must be null without has_command");
+                var reply = root.ToObject<Reply>(JsonSerializer.Create(JsonSettings));
+                if (reply == null || reply.schema_version != Protocol.SchemaVersion || string.IsNullOrEmpty(reply.broker_epoch))
+                    throw new InvalidOperationException("Invalid reply envelope");
+                return reply;
+            }
+        }
+
+        private static void RequireKeys(JObject value, params string[] required)
+        {
+            var expected = new HashSet<string>(required, StringComparer.Ordinal);
+            foreach (var property in value.Properties()) if (!expected.Remove(property.Name)) throw new InvalidOperationException("Unexpected JSON key");
+            if (expected.Count != 0) throw new InvalidOperationException("Missing JSON key");
+        }
+
+        private static void RequireAllowedOptionalKeys(JObject value, params string[] allowed)
+        {
+            var expected = new HashSet<string>(allowed, StringComparer.Ordinal);
+            foreach (var property in value.Properties()) if (!expected.Contains(property.Name)) throw new InvalidOperationException("Unexpected JSON key");
+        }
+
+        private static void RequireType(JObject value, string key, JTokenType type)
+        {
+            if (value[key] == null || value[key].Type != type) throw new InvalidOperationException("Invalid JSON value type");
+        }
+
+        private static void RequireString(JObject value, string key, bool allowNull)
+        {
+            var token = value[key];
+            if (token == null || (token.Type != JTokenType.String && !(allowNull && token.Type == JTokenType.Null)))
+                throw new InvalidOperationException("Invalid JSON string");
+        }
+
+        private static void RequireBoundedString(JObject value, string key, int maxLength, bool allowNull)
+        {
+            RequireString(value, key, allowNull);
+            if (value[key].Type == JTokenType.String)
+            {
+                int length = value[key].Value<string>().Length;
+                if (length < 1 || length > maxLength) throw new InvalidOperationException("String outside bounds");
+            }
+        }
+
+        private static void RequireInteger(JObject value, string key, long minimum, long maximum)
+        {
+            var token = value[key];
+            if (token == null || token.Type != JTokenType.Integer) throw new InvalidOperationException("Invalid JSON integer");
+            long number;
+            try { number = token.Value<long>(); }
+            catch { throw new InvalidOperationException("Integer outside range"); }
+            if (number < minimum || number > maximum) throw new InvalidOperationException("Integer outside range");
+        }
+
         public void Shutdown()
         {
             if (stopped) return;
+            try
+            {
+                var cancelled = gate.Cancel("mod_shutdown", null);
+                if (cancelled != null)
+                    log?.Warning("PAWNPILOT_LOCAL_CANCEL status=" + cancelled.status + " reason=" + cancelled.reason +
+                        "; shutdown may disconnect before this result is acknowledged");
+            }
+            catch (Exception ex) { log?.Warning("PAWNPILOT_LOCAL_CANCEL_FAILED " + ex.GetType().Name); }
             stopped = true;
             if (subscribed)
             {

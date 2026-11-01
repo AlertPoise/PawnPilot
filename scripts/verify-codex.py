@@ -24,7 +24,7 @@ def main():
     python = ROOT / ".venv" / "Scripts" / "python.exe"
     if not codex or not python.is_file():
         parser.error("Codex CLI and project .venv are required")
-    directory = ROOT / "artifacts" / "m1" / "codex"
+    directory = ROOT / "artifacts" / "m2b" / "codex"
     directory.mkdir(parents=True, exist_ok=True)
     output = directory / f"{args.label}.jsonl"
     if output.exists():
@@ -39,20 +39,25 @@ def main():
         prompt += (
             "The user approved this isolated live test. If observe reports connected, ready, "
             "can_act and legal close_menu, submit exactly ONE act(close_menu) with a new unique "
-            "command_id and the exact observed broker_epoch/world_epoch/revision/version. "
-            "Then call get_action_status for that same ID until terminal, at most 8 queries. "
+            "command_id, schema_version=2, arguments={} and the exact observed "
+            "broker_epoch/world_epoch/revision/version. "
+            "Then call wait_for_update with criterion=command_terminal for that ID, "
+            "max_wait_ms=10000; call get_action_status for that same ID once. "
             "Never submit act again, even on timeout, unknown, stale or error. Then observe once. "
             "If prerequisites fail, stop and report. Include command ID and before/after evidence."
         )
     else:
-        prompt += "Do not call act. Also query get_action_status for ID integration_nonexistent_readonly."
+        prompt += (
+            "Do not call act. Also query get_action_status for ID integration_nonexistent_readonly. "
+            "Call wait_for_update with criterion=operable and max_wait_ms=500 to exercise bounded waiting."
+        )
     config = {
         "mcp_servers.pawnpilot.command": str(python),
         "mcp_servers.pawnpilot.args": ["-m", "pawnpilot_mcp"],
         "mcp_servers.pawnpilot.cwd": str(ROOT),
         "mcp_servers.pawnpilot.required": True,
         "mcp_servers.pawnpilot.startup_timeout_sec": 20,
-        "mcp_servers.pawnpilot.tool_timeout_sec": 15,
+        "mcp_servers.pawnpilot.tool_timeout_sec": 40,
         "mcp_servers.pawnpilot.default_tools_approval_mode": "approve",
     }
     command = [codex, "exec", "--ignore-user-config", "--ephemeral", "--json",

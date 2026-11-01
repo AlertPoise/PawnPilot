@@ -67,7 +67,7 @@ namespace PawnPilot
             if (text == null || !text.isActiveAndEnabled || !Active(text.gameObject) || text.color.a <= 0) return null;
             foreach (var group in text.GetComponentsInParent<CanvasGroup>(false))
                 if (group.alpha <= 0) return null;
-            return text.text;
+            return DiagnosticRenderedText.Read(text);
         }
 
         private static string KnownBlocker(StoreUIManager ui, PlayerStore store)

@@ -1,29 +1,107 @@
-"""MCP stdio tools that adapt the local PawnPilot broker."""
+"""MCP stdio tools adapting the local PawnPilot broker."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import asyncio
+import re
+import time
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.error import URLError
 
+import httpx2
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, model_validator
 
+import bridge.client as broker_client
 from bridge.client import ResponseError, request
+from bridge.protocol import (strict_json_loads, valid_close_menu_evidence, valid_progress,
+                              valid_result_structure, valid_snapshot)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_CONFIG = Path("artifacts/session.json")
+MAX_RESPONSE_BYTES = 65536
+MAX_WAIT_MS = 30000
+POLL_INTERVAL_SECONDS = 0.25
+_COMMAND_ID = r"^[A-Za-z0-9_-]+$"
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+class CloseMenuArguments(StrictModel):
+    """The only production action currently supported; it accepts no parameters."""
+
+
+class Interaction(StrictModel):
+    phase: str = Field(max_length=128)
+    consistency: Literal["consistent", "updating", "unverified", "blocked"]
+    reason: str | None = Field(max_length=256)
+    operable: bool
+
+
+class BusinessState(StrictModel):
+    support: Literal["unsupported"]
+    customer_ref: None
+    item_refs: None
+    offer_ref: None
+    collection_fingerprint: None
+
+
+class LegalAction(StrictModel):
+    action: Literal["close_menu"]
+    arguments: CloseMenuArguments
+
+
 class GameState(StrictModel):
+    schema_version: Literal[2]
+    version: str = Field(min_length=1, max_length=256)
+    loaded: bool
+    ready: bool
+    world_epoch: str = Field(min_length=1, max_length=128)
+    revision: int = Field(ge=0, le=2147483647)
+    phase: str = Field(max_length=128)
+    scene: str = Field(max_length=128)
+    menu_open: bool
+    can_close_menu: bool
+    cash: int = Field(ge=-2147483648, le=2147483647)
+    not_ready_reason: str | None = Field(max_length=256)
+    interaction: Interaction
+    business: BusinessState
+    legal_actions: list[LegalAction] = Field(max_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_wire_shape(cls, value):
+        if not valid_snapshot(value):
+            raise ValueError("invalid_v2_game_state")
+        return value
+
+    @model_validator(mode="after")
+    def validate_state(self):
+        if self.version != f"{self.world_epoch}:{self.revision}":
+            raise ValueError("version_must_match_world_epoch_and_revision")
+        if self.ready and (not self.loaded or self.not_ready_reason is not None):
+            raise ValueError("ready_state_inconsistent")
+        if self.interaction.operable and not self.ready:
+            raise ValueError("interaction_operable_requires_ready")
+        if self.interaction.consistency == "blocked" and self.interaction.operable:
+            raise ValueError("blocked_interaction_cannot_be_operable")
+        if self.can_close_menu and (not self.ready or not self.menu_open):
+            raise ValueError("menu_action_precondition_inconsistent")
+        actions = [entry.action for entry in self.legal_actions]
+        if self.can_close_menu != (actions == ["close_menu"]):
+            raise ValueError("legal_actions_must_match_supported_game_actions")
+        return self
+
+
+class GameStateV1(StrictModel):
+    """Read-only parser for evidence retained by a v1 journal."""
+
     schema_version: Literal[1]
     version: str = Field(min_length=1, max_length=256)
     loaded: bool
@@ -34,8 +112,18 @@ class GameState(StrictModel):
     scene: str = Field(max_length=128)
     menu_open: bool
     can_close_menu: bool
-    cash: int | None = None
+    cash: int
     not_ready_reason: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_v1_shape(cls, value):
+        keys = {"schema_version", "version", "world_epoch", "phase", "scene", "not_ready_reason",
+                "revision", "loaded", "ready", "menu_open", "can_close_menu", "cash"}
+        if (type(value) is not dict or set(value) != keys or type(value.get("schema_version")) is not int
+                or value.get("schema_version") != 1):
+            raise ValueError("invalid_v1_game_state")
+        return value
 
     @model_validator(mode="after")
     def validate_version_tuple(self):
@@ -48,25 +136,96 @@ class GameState(StrictModel):
         return self
 
 
+class BusinessStateV2(StrictModel):
+    support: Literal["unsupported"]
+    customer_ref: None
+    item_refs: None
+    offer_ref: None
+    collection_fingerprint: None
+
+
+class ExecutionProgress(StrictModel):
+    id: str = Field(min_length=1, max_length=128)
+    broker_epoch: str = Field(min_length=1, max_length=128)
+    stage: Literal["validated", "invoking", "verifying", "completed", "uncertain"]
+    sequence: int = Field(gt=0, le=2147483647)
+    may_have_side_effects: bool
+    started_at_unix_ms: int | None = Field(ge=0)
+    execution_deadline_unix_ms: int | None = Field(ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_wire_shape(cls, value):
+        if not valid_progress(value):
+            raise ValueError("invalid_execution_progress")
+        return value
+
+    @model_validator(mode="after")
+    def validate_stage_evidence(self):
+        timestamps = self.started_at_unix_ms is not None and self.execution_deadline_unix_ms is not None
+        if self.stage == "validated" and (self.may_have_side_effects or self.started_at_unix_ms is not None
+                                           or self.execution_deadline_unix_ms is not None):
+            raise ValueError("validated_progress_must_precede_side_effects")
+        if self.stage in {"invoking", "verifying"} and (not self.may_have_side_effects or not timestamps):
+            raise ValueError("invoked_progress_requires_effect_flag_and_timestamps")
+        if self.stage == "uncertain" and (not self.may_have_side_effects or not timestamps):
+            raise ValueError("uncertain_progress_requires_effect_flag_and_timestamps")
+        if timestamps and (self.started_at_unix_ms < 1 or
+                           not 1 <= self.execution_deadline_unix_ms - self.started_at_unix_ms <= 30_000):
+            raise ValueError("invalid_execution_timestamp_span")
+        return self
+
+
 class Snapshot(StrictModel):
+    schema_version: Literal[2]
+    broker_epoch: str = Field(min_length=1, max_length=128)
+    session_id: str | None = Field(max_length=128)
+    connected: bool
+    state: GameState | None
+    blocking_reason: str | None = Field(max_length=512)
+    blocked_command_id: str | None = Field(max_length=128)
+    can_act: bool
+    execution: ExecutionProgress | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_wire_version(cls, value):
+        if type(value) is not dict or type(value.get("schema_version")) is not int or value["schema_version"] != 2:
+            raise ValueError("invalid_snapshot_schema_version")
+        return value
+
+    @model_validator(mode="after")
+    def validate_operability(self):
+        if self.can_act and (not self.connected or self.state is None or not self.state.ready):
+            raise ValueError("broker_can_act_requires_connected_ready_snapshot")
+        if self.can_act and (self.blocked_command_id is not None or self.execution is not None):
+            raise ValueError("broker_can_act_conflicts_with_blocked_command_or_execution")
+        if self.execution is not None and self.blocked_command_id != self.execution.id:
+            raise ValueError("execution_must_match_blocked_command")
+        return self
+
+
+class SnapshotV1(StrictModel):
+    """Strict v1 state envelope for historical result evidence only."""
+
     schema_version: Literal[1]
     broker_epoch: str = Field(min_length=1, max_length=128)
     session_id: str | None = None
     connected: bool
-    state: GameState | None
+    state: GameStateV1 | None
     blocking_reason: str | None = None
     blocked_command_id: str | None = None
     can_act: bool
 
 
 class ToolReply(StrictModel):
+    schema_version: Literal[2] = 2
     ok: bool
     error_source: Literal["none", "broker", "protocol", "connection", "configuration", "internal"]
     error: str | None = None
 
 
 class HealthReply(ToolReply):
-    schema_version: int | None = None
     protocol_compatible: bool | None
     broker_connected: bool
     bridge_connected: bool
@@ -86,47 +245,219 @@ class ObserveReply(ToolReply):
     broker_connected: bool
     bridge_connected: bool
     snapshot: Snapshot | None = None
-    legal_actions: list[Literal["close_menu"]] = Field(default_factory=list)
+    legal_actions: list[Literal["close_menu"]] = Field(default_factory=list, max_length=1)
     wait_reason: str | None = None
     manual_action_required: bool = False
+
+
+class ActionEvidenceV1(StrictModel):
+    schema_version: Literal[1]
+    id: str = Field(min_length=1, max_length=128)
+    broker_epoch: str = Field(min_length=1, max_length=128)
+    status: Literal["success", "succeeded", "rejected", "uncertain", "outcome_unknown", "error", "failed"]
+    reason: str = Field(max_length=512)
+    before: GameStateV1 | None = None
+    after: GameStateV1 | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_v1_shape(cls, value):
+        keys = {"schema_version", "id", "broker_epoch", "status", "reason", "before", "after"}
+        if (type(value) is not dict or set(value) != keys or type(value.get("schema_version")) is not int
+                or value.get("schema_version") != 1):
+            raise ValueError("invalid_v1_result")
+        return value
+
+
+class ActionEvidenceV2(StrictModel):
+    schema_version: Literal[2]
+    id: str = Field(min_length=1, max_length=128)
+    broker_epoch: str = Field(min_length=1, max_length=128)
+    status: Literal["succeeded", "rejected", "outcome_unknown"]
+    reason: str = Field(max_length=512)
+    before: GameState | None
+    after: GameState | None
+    execution: ExecutionProgress | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_wire_shape(cls, value):
+        if not valid_result_structure(value, require_execution=False):
+            raise ValueError("invalid_v2_result")
+        if (type(value) is dict and value.get("status") == "succeeded"
+                and not valid_close_menu_evidence(value.get("before"), value.get("after"))):
+            raise ValueError("invalid_close_menu_success_evidence")
+        return value
+
+    @model_validator(mode="after")
+    def validate_evidence(self):
+        if self.execution is not None and self.execution.id != self.id:
+            raise ValueError("execution_id_mismatch")
+        if self.status == "succeeded":
+            if (self.execution is None or self.execution.stage != "completed"
+                    or not self.execution.may_have_side_effects or self.before is None or self.after is None):
+                raise ValueError("success_requires_completed_effect_evidence")
+        if self.status == "rejected" and self.execution is not None and self.execution.may_have_side_effects:
+            raise ValueError("rejection_cannot_claim_possible_side_effects")
+        if self.status == "outcome_unknown" and self.execution is not None and not self.execution.may_have_side_effects:
+            raise ValueError("unknown_result_requires_possible_side_effects")
+        return self
+
+
+ActionEvidence = ActionEvidenceV2 | ActionEvidenceV1
+
+
+class ResolutionEvidenceV1(StrictModel):
+    schema_version: Literal[1]
+    method: Literal["manual_state_alignment"]
+    command_id: str = Field(min_length=1, max_length=128)
+    broker_epoch: str = Field(min_length=1, max_length=128)
+    command_expires_at_unix_ms: int = Field(ge=0)
+    session_id: str = Field(min_length=1, max_length=128)
+    world_epoch: str = Field(min_length=1, max_length=128)
+    revision: int = Field(ge=0)
+    version: str = Field(min_length=1, max_length=256)
+    snapshot: GameStateV1
+    operator_note: str = Field(min_length=8, max_length=512)
+    confirm_no_replay: Literal[True]
+    recorded_at_unix_ms: int = Field(ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_wire_version(cls, value):
+        if type(value) is not dict or type(value.get("schema_version")) is not int or value["schema_version"] != 1:
+            raise ValueError("invalid_v1_resolution_schema_version")
+        return value
+
+    @model_validator(mode="after")
+    def validate_snapshot_identity(self):
+        if (self.version != f"{self.world_epoch}:{self.revision}"
+                or self.snapshot.world_epoch != self.world_epoch
+                or self.snapshot.revision != self.revision
+                or self.snapshot.version != self.version):
+            raise ValueError("resolution_snapshot_identity_mismatch")
+        return self
+
+
+class ResolutionEvidenceV2(StrictModel):
+    schema_version: Literal[2]
+    method: Literal["manual_state_alignment"]
+    command_id: str = Field(min_length=1, max_length=128)
+    broker_epoch: str = Field(min_length=1, max_length=128)
+    command_expires_at_unix_ms: int = Field(ge=0)
+    session_id: str = Field(min_length=1, max_length=128)
+    world_epoch: str = Field(min_length=1, max_length=128)
+    revision: int = Field(ge=0, le=2147483647)
+    version: str = Field(min_length=1, max_length=256)
+    snapshot: GameState
+    operator_note: str = Field(min_length=8, max_length=512)
+    confirm_no_replay: Literal[True]
+    recorded_at_unix_ms: int = Field(ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_wire_version(cls, value):
+        if type(value) is not dict or type(value.get("schema_version")) is not int or value["schema_version"] != 2:
+            raise ValueError("invalid_v2_resolution_schema_version")
+        return value
+
+    @model_validator(mode="after")
+    def validate_snapshot_identity(self):
+        if (self.version != f"{self.world_epoch}:{self.revision}"
+                or self.snapshot.world_epoch != self.world_epoch
+                or self.snapshot.revision != self.revision
+                or self.snapshot.version != self.version):
+            raise ValueError("resolution_snapshot_identity_mismatch")
+        return self
+
+
+ResolutionEvidence = ResolutionEvidenceV2 | ResolutionEvidenceV1
+
+
+class CommandReply(StrictModel):
+    schema_version: Literal[2]
+    id: str = Field(min_length=1, max_length=128)
+    command_status: Literal["pending", "running", "succeeded", "rejected", "failed", "outcome_unknown"]
+    status: Literal["pending", "running", "succeeded", "rejected", "failed", "outcome_unknown"]
+    result: ActionEvidence | None
+    resolved: bool
+    resolution: ResolutionEvidence | None
+    execution: ExecutionProgress | None
+    record_schema_version: Literal[1, 2]
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_raw_envelope(cls, value):
+        if (type(value) is not dict or type(value.get("schema_version")) is not int
+                or value.get("schema_version") != 2):
+            raise ValueError("command_envelope_must_be_object")
+        record_version = value.get("record_schema_version")
+        result = value.get("result")
+        if type(record_version) is not int or record_version not in (1, 2):
+            raise ValueError("invalid_record_schema_version")
+        if result is not None:
+            result_version = result.get("schema_version") if type(result) is dict else None
+            if type(result_version) is not int:
+                raise ValueError("invalid_result_schema_version")
+            if result_version != record_version:
+                raise ValueError("record_and_result_schema_mismatch")
+            if result_version == 2 and not valid_result_structure(result, require_execution=False):
+                raise ValueError("invalid_v2_result")
+        elif record_version not in (1, 2):
+            raise ValueError("invalid_record_schema_version")
+        if value.get("resolved") is not (value.get("resolution") is not None):
+            raise ValueError("resolution_flag_mismatch")
+        status = value.get("status")
+        command_status = value.get("command_status")
+        aliases = {"success": "succeeded", "error": "failed", "uncertain": "outcome_unknown"}
+        normalized = aliases.get(status, status)
+        if normalized != command_status:
+            raise ValueError("command_status_alias_mismatch")
+        if normalized in {"pending", "running"}:
+            if result is not None:
+                raise ValueError("nonterminal_command_has_result")
+        elif normalized in {"succeeded", "rejected", "failed", "outcome_unknown"} and result is None:
+            raise ValueError("terminal_command_missing_result")
+        if result is not None:
+            result_status = result.get("status") if type(result) is dict else None
+            if aliases.get(result_status, result_status) != normalized:
+                raise ValueError("result_status_does_not_match_command")
+        return value
+
+    @model_validator(mode="after")
+    def validate_envelope(self):
+        if self.status != self.command_status:
+            raise ValueError("command_status_alias_mismatch")
+        if self.result is not None and self.result.id != self.id:
+            raise ValueError("result_id_mismatch")
+        if self.resolution is not None and self.resolution.command_id != self.id:
+            raise ValueError("resolution_id_mismatch")
+        if self.execution is not None and self.execution.id != self.id:
+            raise ValueError("progress_id_mismatch")
+        if self.record_schema_version == 2 and isinstance(self.result, ActionEvidenceV1):
+            raise ValueError("v2_record_has_v1_result")
+        if self.record_schema_version == 1 and (isinstance(self.result, ActionEvidenceV2) or self.execution is not None):
+            raise ValueError("v1_record_has_v2_evidence")
+        if self.resolved != (self.resolution is not None):
+            raise ValueError("resolution_flag_mismatch")
+        result_execution = getattr(self.result, "execution", None) if self.result is not None else None
+        if self.result is not None and result_execution is not None and self.execution != result_execution:
+            raise ValueError("execution_evidence_mismatch")
+        return self
 
 
 class ActReply(ToolReply):
     command_id: str
     command_status: Literal["pending", "running", "succeeded", "rejected", "failed", "outcome_unknown"]
+    status: Literal["pending", "running", "succeeded", "rejected", "failed", "outcome_unknown"]
     broker_epoch: str
     world_epoch: str
     revision: int
     version: str
     reason: str | None = None
-    result: "ActionEvidence | None" = None
-
-
-class ActionEvidence(StrictModel):
-    schema_version: Literal[1] | None = None
-    id: str
-    broker_epoch: str
-    status: Literal["success", "succeeded", "rejected", "uncertain", "outcome_unknown", "error", "failed"]
-    command_status: Literal["pending", "running", "succeeded", "rejected", "failed", "outcome_unknown"] | None = None
-    reason: str = ""
-    before: GameState | None = None
-    after: GameState | None = None
-
-
-class ResolutionEvidence(StrictModel):
-    schema_version: Literal[1]
-    method: Literal["manual_state_alignment"]
-    command_id: str
-    broker_epoch: str
-    command_expires_at_unix_ms: int
-    session_id: str
-    world_epoch: str
-    revision: int
-    version: str
-    snapshot: GameState
-    operator_note: str
-    confirm_no_replay: Literal[True]
-    recorded_at_unix_ms: int
+    result: ActionEvidence | None = None
+    execution: ExecutionProgress | None = None
+    record_schema_version: Literal[1, 2] | None = None
 
 
 class ActionStatusReply(ToolReply):
@@ -138,6 +469,42 @@ class ActionStatusReply(ToolReply):
     result: ActionEvidence | None = None
     resolved: bool = False
     resolution: ResolutionEvidence | None = None
+    execution: ExecutionProgress | None = None
+    record_schema_version: Literal[1, 2] | None = None
+
+
+class WaitRequest(StrictModel):
+    criterion: Literal["revision", "command_terminal", "operable"]
+    max_wait_ms: int = Field(ge=0, le=MAX_WAIT_MS)
+    broker_epoch: str | None = Field(default=None, min_length=1, max_length=128)
+    world_epoch: str | None = Field(default=None, min_length=1, max_length=128)
+    revision: int | None = Field(default=None, strict=True, ge=0, le=2147483647)
+    command_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=_COMMAND_ID)
+
+    @model_validator(mode="after")
+    def validate_criterion_fields(self):
+        expected = {"criterion", "max_wait_ms"}
+        if self.criterion == "revision":
+            expected |= {"broker_epoch", "world_epoch", "revision"}
+        elif self.criterion == "command_terminal":
+            expected.add("command_id")
+        supplied = self.model_fields_set
+        if supplied != expected:
+            raise ValueError("wait_parameters_must_match_criterion")
+        if self.criterion == "revision" and (self.broker_epoch is None or self.world_epoch is None or self.revision is None):
+            raise ValueError("revision_wait_requires_observed_identity")
+        if self.criterion == "command_terminal" and self.command_id is None:
+            raise ValueError("command_terminal_wait_requires_command_id")
+        return self
+
+
+class WaitReply(ToolReply):
+    outcome: Literal["updated", "terminal", "operable", "timed_out"] | None = None
+    snapshot: Snapshot | None = None
+    command_id: str | None = None
+    command_status: Literal["pending", "running", "succeeded", "rejected", "failed", "outcome_unknown", "not_found"] | None = None
+    command: CommandReply | None = None
+    reason: str | None = None
 
 
 class AdapterError(Exception):
@@ -146,9 +513,13 @@ class AdapterError(Exception):
         self.source = source
 
 
+def _exact_schema_2(value):
+    if type(value) is not int or value != 2:
+        raise ValueError("schema_version_must_be_exact_integer_2")
+    return value
+
+
 def _config_path() -> Path:
-    # Test harnesses may point at an isolated token file. The broker endpoint and
-    # production port remain owned by bridge.client (127.0.0.1:18765).
     return Path(os.environ.get("PAWNPILOT_CONFIG", str(DEFAULT_CONFIG)))
 
 
@@ -174,7 +545,6 @@ def _call(path: str, body: dict | None = None) -> tuple[int, dict]:
     except ResponseError as exc:
         raise AdapterError("protocol", str(exc)) from exc
     except (TimeoutError, OSError, URLError) as exc:
-        # A timed-out command may already have run. Never submit it again here.
         raise AdapterError("connection", "broker_request_timed_out_or_unreachable") from exc
     except Exception as exc:
         raise AdapterError("internal", "broker_request_internal_error") from exc
@@ -186,15 +556,94 @@ def _call(path: str, body: dict | None = None) -> tuple[int, dict]:
 def _snapshot() -> Snapshot:
     status, payload = _call("/state")
     if status != 200:
-        raise AdapterError("broker", str(payload.get("error", f"http_{status}")))
+        error = str(payload.get("error", f"http_{status}"))
+        source = "protocol" if error == "schema_version_unsupported" or status == 400 else "broker"
+        raise AdapterError(source, error)
     try:
         return Snapshot.model_validate(payload)
     except ValidationError as exc:
         raise AdapterError("protocol", "broker_state_schema_invalid") from exc
 
 
-def _reply_error(source: str, message: str, **values):
-    return {"ok": False, "error_source": source, "error": message, **values}
+def _state_can_act(snap: Snapshot) -> bool:
+    return bool(snap.connected and snap.can_act and snap.state and snap.state.ready and snap.state.legal_actions)
+
+
+def _command_reply(payload: dict, command_id: str) -> CommandReply:
+    if payload.get("id") != command_id:
+        raise AdapterError("protocol", "command_response_id_mismatch")
+    try:
+        return CommandReply.model_validate(payload)
+    except ValidationError as exc:
+        raise AdapterError("protocol", "command_response_schema_invalid") from exc
+
+
+def _to_action_status(command: CommandReply) -> ActionStatusReply:
+    return ActionStatusReply(ok=True, error_source="none", command_id=command.id, found=True,
+                              command_status=command.command_status,
+                              broker_epoch=command.result.broker_epoch if command.result else None,
+                              reason=command.result.reason if command.result else None,
+                              result=command.result, resolved=command.resolved,
+                              resolution=command.resolution, execution=command.execution,
+                              record_schema_version=command.record_schema_version)
+
+
+async def _async_get(client: httpx2.AsyncClient, config: dict, path: str,
+                     timeout: float) -> tuple[int, dict]:
+    """Bounded, cancellation-friendly GET. Wait never makes a mutating request."""
+    url = f"http://127.0.0.1:{broker_client.PORT}{path}"
+    headers = {"Authorization": "Bearer " + config["token"], "Accept": "application/json"}
+    try:
+        async with client.stream("GET", url, headers=headers, timeout=timeout) as response:
+            if 300 <= response.status_code < 400:
+                raise AdapterError("protocol", "broker_redirect_refused")
+            content_length = response.headers.get("content-length")
+            if content_length is not None and content_length.isdigit() and int(content_length) > MAX_RESPONSE_BYTES:
+                raise AdapterError("protocol", "response_too_large")
+            raw = bytearray()
+            async for chunk in response.aiter_bytes(chunk_size=8192):
+                raw.extend(chunk)
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise AdapterError("protocol", "response_too_large")
+            if response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+                raise AdapterError("protocol", "response_json_required")
+    except AdapterError:
+        raise
+    except httpx2.TimeoutException as exc:
+        raise AdapterError("connection", "broker_read_timed_out") from exc
+    except httpx2.TransportError as exc:
+        raise AdapterError("connection", "broker_request_unreachable") from exc
+    try:
+        payload = strict_json_loads(bytes(raw))
+    except (ValueError, UnicodeError) as exc:
+        raise AdapterError("protocol", "response_invalid_json") from exc
+    if not isinstance(payload, dict):
+        raise AdapterError("protocol", "broker_response_must_be_object")
+    return response.status_code, payload
+
+
+async def _snapshot_async(client: httpx2.AsyncClient, config: dict, timeout: float) -> Snapshot:
+    status, payload = await _async_get(client, config, "/state", timeout)
+    if status != 200:
+        error = str(payload.get("error", f"http_{status}"))
+        source = "protocol" if error == "schema_version_unsupported" or status == 400 else "broker"
+        raise AdapterError(source, error)
+    try:
+        return Snapshot.model_validate(payload)
+    except ValidationError as exc:
+        raise AdapterError("protocol", "broker_state_schema_invalid") from exc
+
+
+async def _command_async(client: httpx2.AsyncClient, config: dict, command_id: str,
+                         timeout: float) -> CommandReply | None:
+    status, payload = await _async_get(client, config, "/results/" + command_id, timeout)
+    if status == 404:
+        return None
+    if status != 200:
+        error = str(payload.get("error", f"http_{status}"))
+        source = "protocol" if error == "schema_version_unsupported" or status == 400 else "broker"
+        raise AdapterError(source, error)
+    return _command_reply(payload, command_id)
 
 
 mcp = MCPServer("PawnPilot")
@@ -206,28 +655,30 @@ def health_check() -> HealthReply:
     try:
         snap = _snapshot()
     except AdapterError as exc:
-        return HealthReply(ok=False, error_source=exc.source, error=str(exc),
-                           protocol_compatible=False if exc.source == "protocol" else None,
-                           broker_connected=exc.source in {"broker", "protocol"},
-                           bridge_connected=False, loaded=False, ready=False, can_act=False)
+        return HealthReply(ok=False, error_source=exc.source, error=str(exc), protocol_compatible=False
+                           if exc.source == "protocol" else None,
+                           broker_connected=exc.source in {"broker", "protocol"}, bridge_connected=False,
+                           loaded=False, ready=False, can_act=False)
     state = snap.state
+    can_act = _state_can_act(snap)
+    blocking_reason = None if can_act else (
+        snap.blocking_reason or (state.not_ready_reason if state else None)
+        or ("menu_not_open" if state and state.ready and not state.can_close_menu else None))
     return HealthReply(ok=True, error_source="none", protocol_compatible=True,
                        broker_connected=True, bridge_connected=snap.connected,
                        loaded=bool(state and state.loaded), ready=bool(state and state.ready),
-                       can_act=bool(snap.connected and state and state.ready and snap.can_act and state.can_close_menu), schema_version=snap.schema_version,
-                       broker_epoch=snap.broker_epoch,
+                       can_act=can_act, broker_epoch=snap.broker_epoch,
                        world_epoch=state.world_epoch if state else None,
                        revision=state.revision if state else None,
                        version=state.version if state else None,
                        phase=state.phase if state else None,
-                       blocking_reason=snap.blocking_reason or (state.not_ready_reason if state else None)
-                       or ("menu_not_open" if state and state.ready and not state.can_close_menu else None),
+                       blocking_reason=blocking_reason,
                        blocked_command_id=snap.blocked_command_id)
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False))
 def observe() -> ObserveReply:
-    """Read the current broker snapshot and the actions currently supported by M1."""
+    """Read the current v2 snapshot and project its currently legal supported actions."""
     try:
         snap = _snapshot()
     except AdapterError as exc:
@@ -235,67 +686,67 @@ def observe() -> ObserveReply:
                             broker_connected=exc.source in {"broker", "protocol"}, bridge_connected=False,
                             wait_reason=str(exc), manual_action_required=exc.source == "broker")
     state = snap.state
-    legal = ["close_menu"] if snap.connected and snap.can_act and state and state.ready and state.can_close_menu else []
-    reason = snap.blocking_reason or (state.not_ready_reason if state else None)
+    can_act = _state_can_act(snap)
+    legal = [entry.action for entry in state.legal_actions] if can_act and state else []
+    reason = snap.blocking_reason or (state.interaction.reason if state else None) or (state.not_ready_reason if state else None)
     if not snap.connected and reason is None:
         reason = "game_bridge_disconnected"
     elif state and not state.ready and reason is None:
         reason = "game_not_ready"
+    elif snap.connected and not legal and reason is None:
+        reason = "no_legal_actions"
     return ObserveReply(ok=True, error_source="none", broker_connected=True,
-                        bridge_connected=snap.connected, snapshot=snap,
-                        legal_actions=legal, wait_reason=reason,
-                        manual_action_required=bool(snap.blocked_command_id))
+                        bridge_connected=snap.connected, snapshot=snap, legal_actions=legal,
+                        wait_reason=reason, manual_action_required=bool(snap.blocked_command_id))
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False))
-def act(command_id: Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")],
-        action: Literal["close_menu"], broker_epoch: str,
-        expected_world_epoch: str, expected_revision: Annotated[int, Field(ge=0)],
-        expected_version: str) -> ActReply:
-    """Submit one version-guarded close_menu action. Keep command_id to query ambiguous outcomes."""
-    body = {"schema_version": SCHEMA_VERSION, "id": command_id, "action": action,
-            "broker_epoch": broker_epoch, "expected_world_epoch": expected_world_epoch,
-            "expected_revision": expected_revision, "expected_version": expected_version}
+def act(schema_version: Annotated[Literal[2], BeforeValidator(_exact_schema_2)],
+        command_id: Annotated[str, Field(min_length=1, max_length=128, pattern=_COMMAND_ID)],
+        action: Literal["close_menu"], arguments: CloseMenuArguments,
+        broker_epoch: Annotated[str, Field(min_length=1, max_length=128)],
+        expected_world_epoch: Annotated[str, Field(min_length=1, max_length=128)],
+        expected_revision: Annotated[int, Field(strict=True, ge=0, le=2147483647)],
+        expected_version: Annotated[str, Field(min_length=1, max_length=256)]) -> ActReply:
+    """Submit one version-guarded action; query the same ID after ambiguous outcomes."""
+    body = {"schema_version": schema_version, "id": command_id, "action": action,
+            "arguments": arguments.model_dump(mode="json"), "broker_epoch": broker_epoch,
+            "expected_world_epoch": expected_world_epoch, "expected_revision": expected_revision,
+            "expected_version": expected_version}
     try:
         status, payload = _call("/commands", body)
         if status != 200:
-            return ActReply(ok=False, error_source="broker", error=str(payload.get("error", f"http_{status}")),
-                            command_id=command_id, command_status="outcome_unknown" if status >= 500 else "rejected", broker_epoch=broker_epoch,
-                            world_epoch=expected_world_epoch, revision=expected_revision,
-                            version=expected_version, reason=str(payload.get("error", f"http_{status}")))
-        if payload.get("id") != command_id:
-            raise AdapterError("protocol", "command_response_id_mismatch")
-        canonical = payload.get("command_status", payload.get("status"))
-        # If the POST response is malformed, submission may have reached the broker.
-        # Mark uncertainty and direct the caller to query this same command id.
-        if canonical not in {"pending", "running", "succeeded", "rejected", "failed", "outcome_unknown"}:
-            raise AdapterError("protocol", "command_response_status_invalid")
-        try:
-            evidence = ActionEvidence.model_validate(payload["result"]) if payload.get("result") is not None else None
-        except ValidationError as exc:
-            raise AdapterError("protocol", "command_result_schema_invalid") from exc
-        if evidence is not None and evidence.id != command_id:
-            raise AdapterError("protocol", "command_result_id_mismatch")
-        reason = payload.get("reason") or (evidence.reason if evidence else None)
-        return ActReply(ok=canonical not in {"rejected", "failed", "outcome_unknown"},
-                        error_source="none" if canonical not in {"rejected", "failed", "outcome_unknown"} else "broker",
-                        error=None if canonical not in {"rejected", "failed", "outcome_unknown"} else str(reason or canonical),
-                        command_id=command_id, command_status=canonical, broker_epoch=broker_epoch,
-                        world_epoch=expected_world_epoch, revision=expected_revision,
-                        version=expected_version, reason=reason, result=evidence)
+            reason = str(payload.get("error", f"http_{status}"))
+            if reason == "schema_version_unsupported" or status == 400:
+                source, command_status = "protocol", "rejected"
+            else:
+                source, command_status = "broker", "outcome_unknown" if status >= 500 else "rejected"
+            return ActReply(ok=False, error_source=source, error=reason,
+                            command_id=command_id, command_status=command_status, status=command_status,
+                            broker_epoch=broker_epoch, world_epoch=expected_world_epoch,
+                            revision=expected_revision, version=expected_version, reason=reason)
+        command = _command_reply(payload, command_id)
+        reason = command.result.reason if command.result else None
+        failed = command.command_status in {"rejected", "failed", "outcome_unknown"}
+        return ActReply(ok=not failed, error_source="broker" if failed else "none",
+                        error=reason if failed else None, command_id=command.id,
+                        command_status=command.command_status, status=command.status,
+                        broker_epoch=broker_epoch, world_epoch=expected_world_epoch,
+                        revision=expected_revision, version=expected_version, reason=reason,
+                        result=command.result, execution=command.execution,
+                        record_schema_version=command.record_schema_version)
     except AdapterError as exc:
-        # If a command call timed out or returned a malformed response, its result
-        # is ambiguous. Surface that ambiguity instead of suggesting a retry.
-        status_value = "outcome_unknown" if exc.source in {"connection", "protocol", "internal"} else "rejected"
+        # A malformed/ambiguous POST response may follow a durable enqueue. Never retry here.
+        result_status = "outcome_unknown" if exc.source in {"connection", "protocol", "internal"} else "rejected"
         return ActReply(ok=False, error_source=exc.source, error=str(exc), command_id=command_id,
-                        command_status=status_value, broker_epoch=broker_epoch,
+                        command_status=result_status, status=result_status, broker_epoch=broker_epoch,
                         world_epoch=expected_world_epoch, revision=expected_revision,
                         version=expected_version, reason="query_this_command_id_before_any_new_action"
-                        if status_value == "outcome_unknown" else str(exc))
+                        if result_status == "outcome_unknown" else str(exc))
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False))
-def get_action_status(command_id: Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")]) -> ActionStatusReply:
+def get_action_status(command_id: Annotated[str, Field(min_length=1, max_length=128, pattern=_COMMAND_ID)]) -> ActionStatusReply:
     """Query a prior command by its original ID; not found is not proof of failure."""
     try:
         status, payload = _call("/results/" + command_id)
@@ -306,39 +757,88 @@ def get_action_status(command_id: Annotated[str, Field(min_length=1, max_length=
         return ActionStatusReply(ok=False, error_source="broker", error="command_not_found",
                                  command_id=command_id, found=False, command_status="not_found")
     if status != 200:
-        return ActionStatusReply(ok=False, error_source="broker", error=str(payload.get("error", f"http_{status}")),
-                                 command_id=command_id, found=None, command_status=None)
-    if payload.get("id") != command_id:
-        return ActionStatusReply(ok=False, error_source="protocol", error="result_response_id_mismatch",
-                                 command_id=command_id, found=None, command_status=None)
-    canonical = payload.get("command_status", payload.get("status"))
-    if canonical not in {"pending", "running", "succeeded", "rejected", "failed", "outcome_unknown"}:
-        return ActionStatusReply(ok=False, error_source="protocol", error="result_response_status_invalid",
+        reason = str(payload.get("error", f"http_{status}"))
+        source = "protocol" if reason == "schema_version_unsupported" or status == 400 else "broker"
+        return ActionStatusReply(ok=False, error_source=source, error=reason,
                                  command_id=command_id, found=None, command_status=None)
     try:
-        evidence = ActionEvidence.model_validate(payload["result"]) if payload.get("result") is not None else None
-    except ValidationError:
-        return ActionStatusReply(ok=False, error_source="protocol", error="result_evidence_schema_invalid",
+        return _to_action_status(_command_reply(payload, command_id))
+    except AdapterError as exc:
+        return ActionStatusReply(ok=False, error_source=exc.source, error=str(exc),
                                  command_id=command_id, found=None, command_status=None)
-    if evidence is not None and evidence.id != command_id:
-        return ActionStatusReply(ok=False, error_source="protocol", error="result_evidence_id_mismatch",
-                                 command_id=command_id, found=None, command_status=None)
+
+
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False))
+async def wait_for_update(request: WaitRequest) -> WaitReply:
+    """Wait briefly for a revision, terminal command result, or supported game-operable state."""
     try:
-        resolution = (ResolutionEvidence.model_validate(payload["resolution"])
-                      if payload.get("resolution") is not None else None)
-    except ValidationError:
-        return ActionStatusReply(ok=False, error_source="protocol", error="resolution_evidence_schema_invalid",
-                                 command_id=command_id, found=None, command_status=None)
-    if resolution is not None and resolution.command_id != command_id:
-        return ActionStatusReply(ok=False, error_source="protocol", error="resolution_evidence_id_mismatch",
-                                 command_id=command_id, found=None, command_status=None)
-    return ActionStatusReply(ok=True, error_source="none", command_id=command_id, found=True,
-                             command_status=canonical,
-                             broker_epoch=evidence.broker_epoch if evidence else None,
-                             reason=evidence.reason if evidence else payload.get("reason"), result=evidence,
-                             resolved=payload.get("resolved") is True, resolution=resolution)
+        config = _load_config()
+    except AdapterError as exc:
+        return WaitReply(ok=False, error_source=exc.source, error=str(exc), reason=str(exc))
+
+    deadline = time.monotonic() + (0.05 if request.max_wait_ms == 0 else request.max_wait_ms / 1000.0)
+    terminal = {"succeeded", "rejected", "failed", "outcome_unknown"}
+    last_snapshot = None
+    last_command = None
+    last_command_status = None
+    try:
+        async with httpx2.AsyncClient(trust_env=False, follow_redirects=False, timeout=1.0) as client:
+            while True:
+                remaining = deadline - time.monotonic()
+                cycle_budget = remaining
+                if cycle_budget <= 0:
+                    return WaitReply(ok=True, error_source="none", outcome="timed_out", snapshot=last_snapshot,
+                                     command_id=request.command_id, command_status=last_command_status,
+                                     command=last_command, reason="deadline_elapsed")
+                try:
+                    # Bound the entire poll cycle, including both GETs for command waits.
+                    async with asyncio.timeout(cycle_budget):
+                        snap = await _snapshot_async(client, config, min(1.0, cycle_budget + 0.02))
+                        last_snapshot = snap
+                        command = None
+                        if request.criterion == "command_terminal":
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise TimeoutError
+                            command = await _command_async(client, config, request.command_id,
+                                                           min(1.0, remaining + 0.02))
+                            last_command = command
+                            last_command_status = command.command_status if command else "not_found"
+                            if command is not None and command.command_status in terminal:
+                                return WaitReply(ok=True, error_source="none", outcome="terminal", snapshot=snap,
+                                                 command_id=request.command_id, command_status=command.command_status,
+                                                 command=command, reason=command.result.reason if command.result else None)
+                        elif request.criterion == "revision":
+                            state = snap.state
+                            if (snap.broker_epoch != request.broker_epoch or state is not None and
+                                    (state.world_epoch != request.world_epoch or state.revision != request.revision)):
+                                return WaitReply(ok=True, error_source="none", outcome="updated", snapshot=snap)
+                        elif (snap.connected and snap.can_act and snap.state is not None and snap.state.ready
+                              and snap.state.interaction.operable):
+                            return WaitReply(ok=True, error_source="none", outcome="operable", snapshot=snap)
+                except TimeoutError:
+                    return WaitReply(ok=True, error_source="none", outcome="timed_out", snapshot=last_snapshot,
+                                     command_id=request.command_id, command_status=last_command_status,
+                                     command=last_command, reason="deadline_elapsed")
+                if request.max_wait_ms == 0:
+                    return WaitReply(ok=True, error_source="none", outcome="timed_out", snapshot=last_snapshot,
+                                     command_id=request.command_id, command_status=last_command_status,
+                                     command=last_command, reason="deadline_elapsed")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return WaitReply(ok=True, error_source="none", outcome="timed_out", snapshot=last_snapshot,
+                                     command_id=request.command_id, command_status=last_command_status,
+                                     command=last_command, reason="deadline_elapsed")
+                await asyncio.sleep(min(POLL_INTERVAL_SECONDS, remaining))
+    except AdapterError as exc:
+        return WaitReply(ok=False, error_source=exc.source, error=str(exc), reason=str(exc),
+                         command_id=request.command_id)
+    except httpx2.TimeoutException:
+        return WaitReply(ok=False, error_source="connection", error="broker_read_timed_out",
+                         reason="broker_read_timed_out", command_id=request.command_id)
+    # asyncio.CancelledError intentionally propagates: MCP cancellation is not timeout.
 
 
 def main() -> None:
-    # v2's stdio runner diverts ordinary stdout writes away from the protocol stream.
+    # The MCP SDK owns stdout for protocol messages; diagnostics stay on stderr.
     asyncio.run(mcp.run_stdio_async())

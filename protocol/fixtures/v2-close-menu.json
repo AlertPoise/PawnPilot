@@ -1,0 +1,233 @@
+{
+  "source": "fixture",
+  "before": {
+    "schema_version": 2,
+    "world_epoch": "fixture-world",
+    "revision": 1,
+    "version": "fixture-world:1",
+    "scene": "InventoryScene",
+    "loaded": true,
+    "ready": true,
+    "can_close_menu": true,
+    "not_ready_reason": null,
+    "cash": 550,
+    "phase": "MORNING",
+    "menu_open": true,
+    "interaction": {
+      "phase": "menu",
+      "consistency": "unverified",
+      "reason": "business_not_implemented",
+      "operable": true
+    },
+    "business": {
+      "support": "unsupported",
+      "customer_ref": null,
+      "item_refs": null,
+      "offer_ref": null,
+      "collection_fingerprint": null
+    },
+    "legal_actions": [
+      {
+        "action": "close_menu",
+        "arguments": {}
+      }
+    ]
+  },
+  "after": {
+    "schema_version": 2,
+    "world_epoch": "fixture-world",
+    "revision": 2,
+    "version": "fixture-world:2",
+    "scene": "InventoryScene",
+    "loaded": true,
+    "ready": true,
+    "can_close_menu": false,
+    "not_ready_reason": null,
+    "cash": 550,
+    "phase": "MORNING",
+    "menu_open": false,
+    "interaction": {
+      "phase": "idle",
+      "consistency": "unverified",
+      "reason": "business_not_implemented",
+      "operable": true
+    },
+    "business": {
+      "support": "unsupported",
+      "customer_ref": null,
+      "item_refs": null,
+      "offer_ref": null,
+      "collection_fingerprint": null
+    },
+    "legal_actions": []
+  },
+  "request": {
+    "schema_version": 2,
+    "id": "fixture-close-1",
+    "broker_epoch": "fixture-broker",
+    "action": "close_menu",
+    "expected_world_epoch": "fixture-world",
+    "expected_revision": 1,
+    "expected_version": "fixture-world:1",
+    "arguments": {}
+  },
+  "command": {
+    "schema_version": 2,
+    "id": "fixture-close-1",
+    "broker_epoch": "fixture-broker",
+    "action": "close_menu",
+    "expected_world_epoch": "fixture-world",
+    "expected_revision": 1,
+    "expected_version": "fixture-world:1",
+    "arguments": {},
+    "start_deadline_unix_ms": 105000,
+    "execution_timeout_ms": 5000
+  },
+  "progress": {
+    "id": "fixture-close-1",
+    "broker_epoch": "fixture-broker",
+    "stage": "completed",
+    "sequence": 4,
+    "may_have_side_effects": true,
+    "started_at_unix_ms": 100100,
+    "execution_deadline_unix_ms": 105100
+  },
+  "result": {
+    "schema_version": 2,
+    "id": "fixture-close-1",
+    "broker_epoch": "fixture-broker",
+    "status": "succeeded",
+    "reason": "observed",
+    "before": {
+      "schema_version": 2,
+      "world_epoch": "fixture-world",
+      "revision": 1,
+      "version": "fixture-world:1",
+      "scene": "InventoryScene",
+      "loaded": true,
+      "ready": true,
+      "can_close_menu": true,
+      "not_ready_reason": null,
+      "cash": 550,
+      "phase": "MORNING",
+      "menu_open": true,
+      "interaction": {
+        "phase": "menu",
+        "consistency": "unverified",
+        "reason": "business_not_implemented",
+        "operable": true
+      },
+      "business": {
+        "support": "unsupported",
+        "customer_ref": null,
+        "item_refs": null,
+        "offer_ref": null,
+        "collection_fingerprint": null
+      },
+      "legal_actions": [
+        {
+          "action": "close_menu",
+          "arguments": {}
+        }
+      ]
+    },
+    "after": {
+      "schema_version": 2,
+      "world_epoch": "fixture-world",
+      "revision": 2,
+      "version": "fixture-world:2",
+      "scene": "InventoryScene",
+      "loaded": true,
+      "ready": true,
+      "can_close_menu": false,
+      "not_ready_reason": null,
+      "cash": 550,
+      "phase": "MORNING",
+      "menu_open": false,
+      "interaction": {
+        "phase": "idle",
+        "consistency": "unverified",
+        "reason": "business_not_implemented",
+        "operable": true
+      },
+      "business": {
+        "support": "unsupported",
+        "customer_ref": null,
+        "item_refs": null,
+        "offer_ref": null,
+        "collection_fingerprint": null
+      },
+      "legal_actions": []
+    },
+    "execution": {
+      "id": "fixture-close-1",
+      "broker_epoch": "fixture-broker",
+      "stage": "completed",
+      "sequence": 4,
+      "may_have_side_effects": true,
+      "started_at_unix_ms": 100100,
+      "execution_deadline_unix_ms": 105100
+    }
+  },
+  "fingerprint_cases": [
+    {
+      "request": {
+        "schema_version": 2,
+        "id": "fixture-close-1",
+        "broker_epoch": "fixture-broker",
+        "action": "close_menu",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "expected_version": "fixture-world:1",
+        "arguments": {}
+      },
+      "canonical_json": "{\"action\":\"close_menu\",\"arguments\":{},\"broker_epoch\":\"fixture-broker\",\"expected_revision\":1,\"expected_version\":\"fixture-world:1\",\"expected_world_epoch\":\"fixture-world\",\"id\":\"fixture-close-1\",\"schema_version\":2}",
+      "sha256": "dae3d42aabecffac8585e05ac8c6851afd29ce93a16cef41dd7ef79533d8cb11",
+      "executable": true
+    },
+    {
+      "request": {
+        "schema_version": 2,
+        "id": "fixture-close-1",
+        "broker_epoch": "fixture-broker",
+        "action": "close_menu",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "expected_version": "fixture-world:1",
+        "arguments": {
+          "customer_ref": "world:customer:1",
+          "item_refs": [
+            "world:item:1",
+            "world:item:2"
+          ],
+          "offer_ref": "world:offer:1",
+          "collection_fingerprint": "collection:12",
+          "option_ref": "option:1"
+        }
+      },
+      "canonical_json": "{\"action\":\"close_menu\",\"arguments\":{\"collection_fingerprint\":\"collection:12\",\"customer_ref\":\"world:customer:1\",\"item_refs\":[\"world:item:1\",\"world:item:2\"],\"offer_ref\":\"world:offer:1\",\"option_ref\":\"option:1\"},\"broker_epoch\":\"fixture-broker\",\"expected_revision\":1,\"expected_version\":\"fixture-world:1\",\"expected_world_epoch\":\"fixture-world\",\"id\":\"fixture-close-1\",\"schema_version\":2}",
+      "sha256": "d45ef160e6304136576f1a580c6fbccd5dbce7fedc53a6454ac9eaed8741d65a",
+      "executable": false
+    },
+    {
+      "request": {
+        "schema_version": 2,
+        "id": "fixture-close-1",
+        "broker_epoch": "fixture-broker",
+        "action": "close_menu",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "expected_version": "fixture-world:1",
+        "arguments": {
+          "item_refs": [
+            "world:item:2",
+            "world:item:1"
+          ]
+        }
+      },
+      "canonical_json": "{\"action\":\"close_menu\",\"arguments\":{\"item_refs\":[\"world:item:2\",\"world:item:1\"]},\"broker_epoch\":\"fixture-broker\",\"expected_revision\":1,\"expected_version\":\"fixture-world:1\",\"expected_world_epoch\":\"fixture-world\",\"id\":\"fixture-close-1\",\"schema_version\":2}",
+      "sha256": "d8b8d62150c65107e01b493ed9be317d98f8d9b31d520efeaf2beff95c97ed73",
+      "executable": false
+    }
+  ]
+}

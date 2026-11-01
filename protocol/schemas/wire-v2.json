@@ -1,0 +1,601 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pawnpilot:wire:2",
+  "title": "PawnPilot wire v2",
+  "description": "Select a $defs boundary. Cross-field versions, timing, progress monotonicity and action evidence are additionally validated by bridge/protocol.py and the C# executor. Request describes generic bounded arguments; Command remains close_menu only.",
+  "$defs": {
+    "Arguments": {
+      "type": "object",
+      "properties": {
+        "customer_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "item_refs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          }
+        },
+        "offer_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "collection_fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "option_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "Interaction": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "consistency": {
+          "enum": [
+            "consistent",
+            "updating",
+            "unverified",
+            "blocked"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "phase",
+        "consistency",
+        "reason",
+        "operable"
+      ],
+      "additionalProperties": false
+    },
+    "Business": {
+      "type": "object",
+      "properties": {
+        "support": {
+          "const": "unsupported"
+        },
+        "customer_ref": {
+          "type": "null"
+        },
+        "item_refs": {
+          "type": "null"
+        },
+        "offer_ref": {
+          "type": "null"
+        },
+        "collection_fingerprint": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "support",
+        "customer_ref",
+        "item_refs",
+        "offer_ref",
+        "collection_fingerprint"
+      ],
+      "additionalProperties": false
+    },
+    "LegalAction": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "const": "close_menu"
+        },
+        "arguments": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "action",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    "Snapshot": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "world_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128
+        },
+        "scene": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128
+        },
+        "loaded": {
+          "type": "boolean"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "not_ready_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cash": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "menu_open": {
+          "type": "boolean"
+        },
+        "can_close_menu": {
+          "type": "boolean"
+        },
+        "interaction": {
+          "$ref": "#/$defs/Interaction"
+        },
+        "business": {
+          "$ref": "#/$defs/Business"
+        },
+        "legal_actions": {
+          "type": "array",
+          "maxItems": 1,
+          "items": {
+            "$ref": "#/$defs/LegalAction"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "version",
+        "world_epoch",
+        "revision",
+        "phase",
+        "scene",
+        "loaded",
+        "ready",
+        "not_ready_reason",
+        "cash",
+        "menu_open",
+        "can_close_menu",
+        "interaction",
+        "business",
+        "legal_actions"
+      ],
+      "additionalProperties": false
+    },
+    "Request": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "broker_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expected_world_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "expected_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "arguments": {
+          "$ref": "#/$defs/Arguments"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "broker_epoch",
+        "action",
+        "expected_world_epoch",
+        "expected_revision",
+        "expected_version",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    "Command": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "broker_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "action": {
+          "const": "close_menu"
+        },
+        "expected_world_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "expected_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "arguments": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "start_deadline_unix_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "execution_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "broker_epoch",
+        "action",
+        "expected_world_epoch",
+        "expected_revision",
+        "expected_version",
+        "arguments",
+        "start_deadline_unix_ms",
+        "execution_timeout_ms"
+      ],
+      "additionalProperties": false
+    },
+    "Progress": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "broker_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "stage": {
+          "enum": [
+            "validated",
+            "invoking",
+            "verifying",
+            "completed",
+            "uncertain"
+          ]
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "may_have_side_effects": {
+          "type": "boolean"
+        },
+        "started_at_unix_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "execution_deadline_unix_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "broker_epoch",
+        "stage",
+        "sequence",
+        "may_have_side_effects",
+        "started_at_unix_ms",
+        "execution_deadline_unix_ms"
+      ],
+      "additionalProperties": false
+    },
+    "Result": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "broker_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "rejected",
+            "outcome_unknown"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Progress"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "broker_epoch",
+        "status",
+        "reason",
+        "before",
+        "after",
+        "execution"
+      ],
+      "additionalProperties": false
+    },
+    "Exchange": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "broker_epoch": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "has_result": {
+          "type": "boolean"
+        },
+        "result": {},
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Progress"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "session_id",
+        "broker_epoch",
+        "state",
+        "has_result",
+        "result",
+        "progress"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "has_result": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/Result"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Reply": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "broker_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "acknowledged_result_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "has_command": {
+          "type": "boolean"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Command"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "broker_epoch",
+        "acknowledged_result_id",
+        "has_command",
+        "command"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
