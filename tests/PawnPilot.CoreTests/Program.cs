@@ -3,6 +3,11 @@ using System.Text.Json;
 
 try
 {
+if (args.Length == 1 && args[0] == "--export-candidate-fixtures")
+{
+    Console.WriteLine(CandidateAdmissionTests.Export());
+    return;
+}
 if (args.Length == 1 && args[0] == "--export-inspection-fixtures")
 {
     Console.WriteLine(InspectionHandoffTests.Export());
@@ -19,6 +24,7 @@ void Check(string name, bool condition)
     if (!condition) throw new Exception("FAIL " + name);
     Console.WriteLine("PASS " + name); count++;
 }
+CandidateAdmissionTests.Run(Check);
 Snapshot State(string version = "world:1", bool ready = true, bool loaded = true, bool open = true,
     string epoch = "world", int revision = 1, int cash = 10) =>
     new Snapshot

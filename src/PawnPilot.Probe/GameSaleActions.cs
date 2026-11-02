@@ -92,11 +92,11 @@ namespace PawnPilot
                 var args = new ActionArguments { customer_ref = customerRef, item_refs = refs,
                     collection_fingerprint = fingerprint };
                 if (CanPrepare(CommandFor(snapshot, "prepare_sale_items", args), snapshot))
-                    actions.Add(new LegalAction { action = "prepare_sale_items", arguments = args });
+                    CandidateAdmission.TryAdd(snapshot, actions, new LegalAction { action = "prepare_sale_items", arguments = args });
             }
 
             if (TryGetSaleArguments(snapshot, out var saleArgs) && CanSell(CommandFor(snapshot, "sell_visible_offer", saleArgs), snapshot))
-                actions.Add(new LegalAction { action = "sell_visible_offer", arguments = saleArgs });
+                CandidateAdmission.TryAdd(snapshot, actions, new LegalAction { action = "sell_visible_offer", arguments = saleArgs });
             return actions;
         }
 

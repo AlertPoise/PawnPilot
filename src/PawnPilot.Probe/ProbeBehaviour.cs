@@ -335,7 +335,8 @@ namespace PawnPilot
                 phase = latestReadiness.phase,
                 not_ready_reason = latestReadiness.reason,
                 menu_open = open,
-                can_close_menu = ready && open && menu.isActiveAndEnabled,
+                can_close_menu = ready && open && menu.isActiveAndEnabled &&
+                    !(day != null && (day.transition_pending || day.report_open || day.stage == "settlement")),
                 interaction = new InteractionObservation
                 {
                     phase = latestReadiness.phase ?? "unknown",
@@ -369,12 +370,9 @@ namespace PawnPilot
                 }
                 if (purchase != null)
                 {
-                    state.legal_actions.Add(purchase);
-                    state.business.details.capacity.status = "sufficient";
-                    state.business.details.capacity.reason = "native_grid_placement_verified";
-                    state.business.details.capacity.scope = "current_normal_purchase";
-                    state.business.details.eligibility.purchase_enabled = true;
-                    state.business.details.eligibility.missing.Clear();
+                    // Purchase preflight supplies capacity/eligibility; publication validates
+                    // against those final facts, never against the earlier placeholder DTO.
+                    CandidateAdmission.TryAddVerifiedPurchase(state, purchase);
                 }
                 else
                 {
@@ -411,6 +409,7 @@ namespace PawnPilot
             }
             state.version = worldVersion.Observe(signature + "|inventory-sort:" + inventoryActions.CompletionGeneration);
             state.revision = worldVersion.Revision;
+            CandidateAdmission.EnsureValid(state);
             return state;
         }
 

@@ -291,7 +291,7 @@ namespace PawnPilot
             var candidate = new Command { schema_version = Protocol.BusinessSchemaVersion,
                 action = action, arguments = new ActionArguments() };
             if (BusinessActionPolicy.ValidateCandidate(candidate, snapshot) != null) return;
-            result.Add(new LegalAction { action = action, arguments = new ActionArguments() });
+            CandidateAdmission.TryAdd(snapshot, result, new LegalAction { action = action, arguments = new ActionArguments() });
         }
 
         private void AddCurrentCustomerActions(Snapshot snapshot, List<LegalAction> result)
@@ -346,7 +346,7 @@ namespace PawnPilot
                 if (candidate != null) { candidate.status = "blocked"; candidate.reason = reason; }
                 return;
             }
-            result.Add(new LegalAction { action = action, arguments = arguments });
+            CandidateAdmission.TryAdd(snapshot, result, new LegalAction { action = action, arguments = arguments });
         }
 
         // Probe invokes this only after its DTO admission policy. It recaptures native facts on
@@ -499,10 +499,10 @@ namespace PawnPilot
         private static bool IsSupportedTutorialMentorDialogue(StoreClient client) => client != null &&
             client.identifier == "mentor" && client.clientIntent == StoreClient.ClientIntent.DIALOGUE;
 
-        // Normal failed bargaining changes intent to LEAVE before its visible final dialogue.
+        // This build uses DIALOGUE (5) for the visible final response after failed bargaining.
         // Permit only that acknowledged ordinary encounter's existing dialogue continuation.
         private static bool IsAcknowledgedBargainDeparture(StoreClient client, Snapshot snapshot) => client != null &&
-            (int)client.clientIntent == 5 && snapshot.business.details.bargain?.result == "responding" &&
+            client.clientIntent == StoreClient.ClientIntent.DIALOGUE && snapshot.business.details.bargain?.result == "responding" &&
             snapshot.business.details.bargain.terms_revision > 0 && snapshot.business.details.bargain.last_option_ref != null &&
             (client.identifier == "scavGeneral" || client.identifier == "shadyPharma" || client.identifier == "food_scav_story" ||
              client.identifier == "spacerFood" || client.identifier == "spacerFoodStory");

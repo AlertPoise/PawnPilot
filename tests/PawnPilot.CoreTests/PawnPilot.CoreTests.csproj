@@ -8,4 +8,5 @@
   <ItemGroup><Compile Include="../../src/PawnPilot.Probe/VerificationDiagnostic.cs" Link="VerificationDiagnostic.cs" /></ItemGroup>
   <ItemGroup><None Include="../../protocol/fixtures/v2-close-menu.json" Link="v2-close-menu.json" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
   <ItemGroup><None Include="../../protocol/fixtures/v3-business-observation.json" Link="v3-business-observation.json" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><None Include="../../protocol/fixtures/m3a-*.json;../../protocol/fixtures/v3-dialogue-snapshot.json" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

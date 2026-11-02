@@ -134,7 +134,7 @@ namespace PawnPilot
                 string reason = Check(command, snapshot, candidate: true, out _);
                 snapshot.business.details.candidates.Add(new BusinessCandidate { action = action,
                     status = reason == null ? "candidate" : "blocked", reason = reason ?? "native_day_preflight_verified" });
-                if (reason == null) actions.Add(new LegalAction { action = action, arguments = args });
+                if (reason == null) CandidateAdmission.TryAdd(snapshot, actions, new LegalAction { action = action, arguments = args });
             }
         }
 

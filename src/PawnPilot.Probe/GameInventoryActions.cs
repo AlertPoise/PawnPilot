@@ -41,7 +41,7 @@ namespace PawnPilot
                 });
                 return actions;
             }
-            actions.Add(new LegalAction
+            CandidateAdmission.TryAdd(snapshot, actions, new LegalAction
             {
                 action = "sort_inventory_default",
                 arguments = new ActionArguments { container = "player" }
@@ -106,6 +106,8 @@ namespace PawnPilot
                 if (entry == null || store == null || MapUIManager.Instance == null || MapUIManager.Instance.isOutside ||
                     UnityEngine.Application.version != "0.46D" || PlayerStore.VERSION != "VERSION 100-Rev6")
                 { reason = "inventory_sort_scene_unsupported"; return false; }
+                if (store.storeState.ToString() != snapshot.phase || store.currentClientInstance != null)
+                { reason = "inventory_sort_native_state_changed"; return false; }
                 var inventory = entry.invElement;
                 var window = entry.invWindow;
                 if (inventory == null || window == null || inventory.GetType() != typeof(GameGridInventory) ||

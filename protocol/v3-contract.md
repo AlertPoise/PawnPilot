@@ -5,6 +5,15 @@ The journal container format remains 2; each record retains its original wire sc
 No historical snapshot/result is relabelled. Broker accepts v2 and v3 sessions, but a session must not mix
 snapshot/command/result versions. MCP models explicitly distinguish both versions.
 
+M5-A production publication rule: every emitted `legal_actions` entry must satisfy its current
+schema-2 action admission against the same final snapshot. Native capability alone is insufficient.
+`CandidateAdmission` reuses the business policies, records ordinary denials in descriptive candidates,
+and validates the final assembled snapshot after purchase facts and inspection gating. An internally
+inconsistent assembled snapshot fails publication; it is not repaired by dropping bad legal entries.
+Execution still captures and validates current native state again. Ordinary actions (including menu
+close) are suppressed during day transitions, reports and settlement; day actions retain their own
+specific policy. Broker validation, historical schema-1/2 records and the wire format are unchanged.
+
 v3 retains v2 envelopes and canonical request hashing. The only snapshot shape change is
 `business`: the five v2 keys plus mandatory `details`. The broker reads both historical business
 details schema 1 and current schema 2; the outer wire version remains 3.
