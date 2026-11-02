@@ -1,0 +1,19 @@
+{
+  "goal": "在新建隔离测试槽内完成至多两个正常经营日；遇到人工检查、未知结果或未支持机制立即停止。",
+  "limits": {
+    "customers": 12,
+    "writes": 100,
+    "trades": 4,
+    "buy_spend": 550,
+    "bargains": 4,
+    "day_fees": 30,
+    "days": 2
+  },
+  "allowed_actions": [
+    "start_business", "receive_next_customer", "open_trade_panel", "advance_dialogue",
+    "choose_dialogue_option", "prepare_purchase_items", "purchase_visible_offer",
+    "prepare_sale_items", "sell_visible_offer", "dismiss_customer", "open_bargain_panel",
+    "choose_bargain_option", "close_bargain_panel", "sort_inventory_default",
+    "close_business", "open_end_of_day", "confirm_end_of_day", "close_day_report"
+  ]
+}

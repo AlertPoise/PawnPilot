@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 try:
     from .journal import Journal, JournalError
+    from .run_store import RunStore, RunStoreError
     from .protocol import (WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4, MAX_V2_MESSAGE_BYTES,
                            MAX_V3_MESSAGE_BYTES, MAX_V4_MESSAGE_BYTES, compact_json_size, response_size_valid,
                            progress_matches_command, request_fingerprint,
@@ -28,6 +29,7 @@ try:
                            strict_json_loads)
 except ImportError:  # Support the existing `python bridge/server.py` launch path.
     from journal import Journal, JournalError
+    from run_store import RunStore, RunStoreError
     from protocol import (WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4, MAX_V2_MESSAGE_BYTES,
                           MAX_V3_MESSAGE_BYTES, MAX_V4_MESSAGE_BYTES, compact_json_size, response_size_valid,
                           progress_matches_command, request_fingerprint,
@@ -57,7 +59,7 @@ class Broker:
     """Durable single-writer broker; a delivered action is never replayed."""
     def __init__(self, token: str, clock=time.time, ttl=5.0, heartbeat_timeout=3.0,
                  journal_path=None, max_records=4096, execution_timeout_ms=5000,
-                 monotonic=None):
+                 monotonic=None, run_path=None):
         if type(execution_timeout_ms) is not int or not 1 <= execution_timeout_ms <= 30_000:
             raise ValueError("execution_timeout_ms must be between 1 and 30000")
         self.token = token
@@ -69,8 +71,10 @@ class Broker:
         self.ttl = ttl
         self.heartbeat_timeout = heartbeat_timeout
         self.execution_timeout_ms = execution_timeout_ms
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.journal = Journal(journal_path) if journal_path is not None else None
+        self.run_store = RunStore(run_path) if run_path is not None else None
+        self._run_recovered = False
         self.max_records = max_records
         self.poisoned = False
         self.session_id = None
@@ -380,16 +384,80 @@ class Broker:
                              for a in state["legal_actions"]):
                     self._terminal(active, "rejected", "precondition")
                 else:
-                    active["command_status"] = "running"
-                    active["delivery_session_id"] = sid
-                    active["updated_at_unix_ms"] = int(self.clock() * 1000)
-                    self._persist()
-                    command = dict(expected)
+                    def commit_delivery():
+                        active["command_status"] = "running"
+                        active["delivery_session_id"] = sid
+                        active["updated_at_unix_ms"] = int(self.clock() * 1000)
+                        self._persist()
+
+                    if self.run_store is None:
+                        commit_delivery()
+                        command = dict(expected)
+                    else:
+                        try:
+                            self._sync_run()
+                            delivered = self.run_store.deliver(expected["id"], commit_delivery)
+                        except (RunStoreError, OSError, ValueError) as exc:
+                            # The journal may already say running. Never turn an
+                            # uncertain cross-file commit into a safe rejection.
+                            self.poisoned = True
+                            raise ProtocolError(503, "run_delivery_persistence_failed") from exc
+                        if delivered:
+                            command = dict(expected)
+                        else:
+                            self._terminal(active, "rejected", "run_delivery_blocked")
             return {"schema_version": wire_version, "broker_epoch": self.broker_epoch,
                     "acknowledged_result_id": acknowledged_id,
                     "has_command": command is not None, "command": command}
 
-    def enqueue(self, body):
+    def _sync_run(self):
+        if self.run_store is None:
+            return None
+        try:
+            context = self.run_store.snapshot()
+            if self.journal is None or Path(context["run"]["journal_path"]).resolve() != self.journal.path.resolve():
+                raise RunStoreError("run_journal_mismatch")
+            if not self._run_recovered:
+                self.run_store.recover(self.records, broker_epoch=self.broker_epoch)
+                self._run_recovered = True
+            self.run_store.sync(self.state, self.records, self.session_id,
+                                self._connected() and not self.closed, self.broker_epoch)
+            if self.state is not None and self._connected():
+                self.run_store.mark_completed(self.records, self.state, self.session_id)
+            return self.run_store.snapshot()
+        except (RunStoreError, OSError, ValueError) as exc:
+            raise ProtocolError(503, str(exc)) from None
+
+    def enqueue(self, body, dispatch_token=None):
+        # 运行预算的预留先落盘，随后才进入原来的唯一命令入队路径。
+        # 跨文件崩溃留下孤立预留时保守阻塞，不猜测已经提交与否。
+        if self.run_store is None:
+            return self._enqueue_command(body)
+        with self.lock:
+            if type(body) is not dict or not self._request_valid(body, body.get("schema_version")):
+                raise ProtocolError(400, "invalid_command")
+            if body["id"] in self.records:
+                return self._enqueue_command(body)
+            self._expire()
+            self._sync_run()
+            try:
+                self.run_store.reserve(body, self.state, self.records, self.session_id, dispatch_token)
+            except (RunStoreError, OSError, ValueError) as exc:
+                raise ProtocolError(409, str(exc)) from None
+            try:
+                reply = self._enqueue_command(body)
+            except ProtocolError as exc:
+                # journal写失败不能断言未入队：保留预留，重启时修复/阻塞。
+                if not self.poisoned and body["id"] not in self.records:
+                    try:
+                        self.run_store.reject(body["id"], exc.reason)
+                    except (RunStoreError, OSError, ValueError):
+                        self.poisoned = True
+                raise
+            self._sync_run()
+            return reply
+
+    def _enqueue_command(self, body):
         if type(body) is not dict:
             raise ProtocolError(400, "invalid_command")
         if type(body.get("schema_version")) is not int or body.get("schema_version") not in {WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4}:
@@ -587,12 +655,23 @@ class Broker:
                 reason = self.state.get("not_ready_reason") or "game_not_ready"
             else:
                 reason = None
+            run_blocked = False
+            if self.run_store is not None:
+                try:
+                    context = self._sync_run()
+                    run_blocked = context["run"]["status"] != "running"
+                    if reason is None and run_blocked:
+                        reason = "run_" + context["run"]["status"]
+                except ProtocolError as exc:
+                    run_blocked = True
+                    if reason is None:
+                        reason = exc.reason
             state_version = self.session_wire_version or WIRE_VERSION
             return {"schema_version": state_version, "broker_epoch": self.broker_epoch,
                     "session_id": self.session_id, "state": copy.deepcopy(self.state),
                     "connected": self._connected() and not self.closed,
                     "can_act": (self._connected() and self.state is not None and self.state["ready"]
-                                and not self.closed and not self.poisoned and not active),
+                                and not self.closed and not self.poisoned and not active and not run_blocked),
                     "blocked_command_id": active["command_id"] if active else None,
                     "blocking_reason": reason,
                     "execution": copy.deepcopy(active.get("execution")) if active else None}
@@ -721,7 +800,9 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == "/exchange":
                     answer = self.server.broker.exchange(body)
                 elif self.path == "/commands":
-                    answer = self.server.broker.enqueue(body)
+                    dispatch = self.headers.get("X-PawnPilot-Dispatch")
+                    answer = (self.server.broker.enqueue(body, dispatch_token=dispatch) if dispatch
+                              else self.server.broker.enqueue(body))
                 elif self.path == "/reconcile":
                     answer = self.server.broker.reconcile(body)
                 else:
@@ -772,11 +853,28 @@ def create_config(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="artifacts/session.json")
+    parser.add_argument("--run-context", help="Persistent managed-run file; absence never bypasses a pinned config")
     args = parser.parse_args()
     config = create_config(args.config)
     config_path = Path(args.config).resolve()
     journal_path = config_path.with_name("broker-journal.json")
-    server = Server(Broker(config["token"], journal_path=journal_path), diagnostics=True)
+    run_path = config.get("run_context")
+    if args.run_context:
+        requested = str(Path(args.run_context).resolve())
+        if run_path and str(Path(run_path).resolve()) != requested:
+            raise ValueError("run_context_config_conflict")
+        if not run_path:
+            # 在启动前固定managed模式；后续不传flag仍必须使用同一个RunStore。
+            config["run_context"] = requested
+            temporary = config_path.with_suffix(".run-pin.tmp")
+            with temporary.open("x", encoding="utf-8") as stream:
+                json.dump(config, stream)
+                stream.flush()
+                import os
+                os.fsync(stream.fileno())
+            temporary.replace(config_path)
+        run_path = requested
+    server = Server(Broker(config["token"], journal_path=journal_path, run_path=run_path), diagnostics=True)
     print(f"PawnPilot broker listening on 127.0.0.1:{PORT}; Ctrl+C to stop", flush=True)
     try:
         server.serve_forever(poll_interval=0.2)

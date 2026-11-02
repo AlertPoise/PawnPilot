@@ -41,11 +41,13 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def request(config, path, body=None):
+def request(config, path, body=None, *, dispatch_token=None):
     raw = None if body is None else json.dumps(body).encode("utf-8")
     headers = {"Authorization": "Bearer " + config["token"], "Content-Type": "application/json"}
     if type(body) is dict and type(body.get("schema_version")) is int and body["schema_version"] in (3, 4):
         headers["X-PawnPilot-Wire-Version"] = str(body["schema_version"])
+    if path == "/commands" and dispatch_token:
+        headers["X-PawnPilot-Dispatch"] = dispatch_token
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", data=raw,
                                  headers=headers)
     # 忽略系统代理，避免 localhost 请求和密钥送往代理服务器。

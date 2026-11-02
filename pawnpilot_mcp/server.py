@@ -904,7 +904,9 @@ def _load_config() -> dict:
 def _call(path: str, body: dict | None = None) -> tuple[int, dict]:
     config = _load_config()
     try:
-        status, payload = request(config, path, body)
+        dispatch = os.environ.get("PAWNPILOT_DISPATCH_TOKEN") if path == "/commands" else None
+        status, payload = (request(config, path, body, dispatch_token=dispatch) if dispatch
+                           else request(config, path, body))
     except ResponseError as exc:
         raise AdapterError("protocol", str(exc)) from exc
     except (TimeoutError, OSError, URLError) as exc:

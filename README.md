@@ -1,5 +1,7 @@
 # PawnPilot — M5-B 通用交互与结果契约
 
+M5-C 已实现持久 Decision Inbox、Run Context、累计授权预算和外部 Codex CLI Supervisor。真实 `gpt-5.6-luna` CLI → MCP → Broker → Unity 在隔离 save_20 完成15条成功命令，其中一次运行连续12条；暂停与重启保留历史和预算。首日含一次用户对香烟的处理决定，完成普通购买及日结；第二天在未审核特殊交互处安全停止，两日目标未完成。项目内实现与真实连续决策 **PASS**，完整自主单日/两日验收 **PARTIAL**；M5-B 绿色名片最终包遣走复验 PASS，主动推进/选择真实样本仍 PENDING。默认模型仍为 `gpt-6-luna`，5.6仅按用户授权用于本机经营验收。测试、架构、运行命令、证据与边界见 [M5-C 报告](docs/m5c-implementation.md)。
+
 M5-B 建立受限通用对话、可见选项、原生长按遣走及分层效果核验，生产启用 wire v4，历史 v2/v3 保持独立校验。真实隔离槽已完成普通开门、接待、遣走和一次日结；绿色名片顾客的通用遣走实际让其离场，但暴露跨顾客物品引用重签问题，原命令保留 unknown、未重放。项目内实现 PASS，实机 PARTIAL、最终修复包复验 PENDING；671 managed + 219 Python = 890 项通过，Release 构建0错误。修复、证据边界和后续验收见 [M5-B 报告](docs/m5b-implementation.md)。
 
 M5-A **项目内实现与静态调查 PASS，未进行新实机验收**。统一生产 `legal_actions` 候选准入，修复整理动作在日过渡期间与协议不一致的问题；Broker 严格校验、历史 wire/journal 和人工/未知结果门禁保持不变。自动化 **593 managed + 202 Python = 795项**通过，正式构建0错误（2个既有NU1900网络警告）。本机程序集与资源核验了绿色名片、废料数量接收、通缉/Aug扩展需求，以及声望45个注册特权/47个定义和逐阶段舍入规则。M5-B～D接口设计、证据等级及待授权实机项目见 [M5-A 报告](docs/m5a-implementation.md)。本轮没有安装Mod、操作游戏或存档。

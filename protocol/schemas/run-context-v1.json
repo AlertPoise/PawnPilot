@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pawnpilot:run-context:1",
+  "title": "PawnPilot managed run context v1",
+  "description": "Bounded authorization, decision inbox, dispatch reservations, and confirmed command evidence for one managed run.",
+  "$defs": {
+    "Budget": {
+      "type": "object",
+      "properties": {
+        "customers": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "writes": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "trades": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "buy_spend": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "bargains": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "day_fees": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "days": {"type": "integer", "minimum": 0, "maximum": 2147483647}
+      },
+      "required": ["customers", "writes", "trades", "buy_spend", "bargains", "day_fees", "days"],
+      "additionalProperties": false
+    },
+    "Evidence": {
+      "type": "object",
+      "properties": {
+        "result_status": {"enum": ["succeeded", "rejected", "failed", "outcome_unknown"]},
+        "world_epoch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "revision": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "evidence_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "required": ["result_status", "world_epoch", "revision", "evidence_hash"],
+      "additionalProperties": false
+    },
+    "Command": {
+      "type": "object",
+      "properties": {
+        "command_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "request_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "action": {"type": "string", "minLength": 1, "maxLength": 128},
+        "expected_world_epoch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "expected_revision": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "reservation_status": {"enum": ["reserved", "rejected_prequeue", "unknown"]},
+        "journal_status": {"anyOf": [{"enum": ["pending", "running", "succeeded", "rejected", "failed", "outcome_unknown"]}, {"type": "null"}]},
+        "budget_cost": {"$ref": "#/$defs/Budget"},
+        "created_at": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "updated_at": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "related_event_id": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+        "reason": {"anyOf": [{"type": "string", "maxLength": 512}, {"type": "null"}]},
+        "journal_broker_epoch": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+        "delivered": {"type": "boolean"},
+        "evidence": {"anyOf": [{"$ref": "#/$defs/Evidence"}, {"type": "null"}]}
+      },
+      "required": ["command_id", "request_fingerprint", "action", "expected_world_epoch", "expected_revision", "session_id", "reservation_status", "journal_status", "budget_cost", "created_at", "updated_at", "related_event_id", "reason", "journal_broker_epoch", "delivered", "evidence"],
+      "additionalProperties": false
+    },
+    "ResolutionEvidence": {
+      "type": "object",
+      "properties": {
+        "command_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "status": {"const": "succeeded"},
+        "world_epoch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "revision": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "evidence_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "required": ["command_id", "status", "world_epoch", "revision", "evidence_hash"],
+      "additionalProperties": false
+    },
+    "InboxEvent": {
+      "type": "object",
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "dedupe_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "kind": {"enum": ["decision", "manual", "unsupported"]},
+        "status": {"enum": ["pending", "submitted", "resolved", "superseded", "awaiting_user", "blocked_unknown", "unsupported"]},
+        "world_epoch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "customer_key": {"anyOf": [{"type": "string", "pattern": "^[0-9a-f]{64}$"}, {"type": "null"}]},
+        "dialogue_key": {"anyOf": [{"type": "string", "pattern": "^[0-9a-f]{64}$"}, {"type": "null"}]},
+        "day_number": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 2147483647}, {"type": "null"}]},
+        "occurrence": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "phase": {"type": "string", "maxLength": 128},
+        "semantic_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "first_seen": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "last_seen": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "related_command_id": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+        "reason": {"anyOf": [{"type": "string", "maxLength": 512}, {"type": "null"}]},
+        "resolution_evidence": {"anyOf": [{"$ref": "#/$defs/ResolutionEvidence"}, {"type": "null"}]},
+        "superseded_by": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]}
+      },
+      "required": ["event_id", "dedupe_key", "kind", "status", "world_epoch", "customer_key", "dialogue_key", "day_number", "occurrence", "phase", "semantic_fingerprint", "first_seen", "last_seen", "related_command_id", "reason", "resolution_evidence", "superseded_by"],
+      "additionalProperties": false
+    },
+    "History": {
+      "type": "object",
+      "properties": {
+        "command_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "action": {"type": "string", "minLength": 1, "maxLength": 128},
+        "world_epoch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "status": {"const": "succeeded"},
+        "confirmed_at": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "evidence_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "required": ["command_id", "action", "world_epoch", "status", "confirmed_at", "evidence_hash"],
+      "additionalProperties": false
+    },
+    "OperatorConfirmation": {
+      "type": "object",
+      "properties": {
+        "world_epoch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "customer_ref": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,128}$"},
+        "handoff_ref": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,128}$"},
+        "item_refs": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,128}$"}},
+        "instruction": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "command_id": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]}
+      },
+      "required": ["world_epoch", "session_id", "customer_ref", "handoff_ref", "item_refs", "instruction", "command_id"],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "revision": {"type": "integer", "minimum": 0},
+    "run": {
+      "type": "object",
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "save_label": {"type": "string", "minLength": 1, "maxLength": 128},
+        "journal_path": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "world_epoch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "start_day": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "target_day": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "goal": {"type": "string", "maxLength": 4096},
+        "status": {"enum": ["paused", "running", "stopped", "awaiting_user", "blocked_unknown", "world_mismatch", "disconnected", "unsupported", "completed"]},
+        "created_at": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "updated_at": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+      },
+      "required": ["run_id", "save_label", "journal_path", "world_epoch", "session_id", "start_day", "target_day", "goal", "status", "created_at", "updated_at"],
+      "additionalProperties": false
+    },
+    "authorization": {
+      "type": "object",
+      "properties": {
+        "version": {"type": "integer", "minimum": 1},
+        "limits": {"$ref": "#/$defs/Budget"},
+        "allowed_actions": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}}
+      },
+      "required": ["version", "limits", "allowed_actions"],
+      "additionalProperties": false
+    },
+    "budget": {"$ref": "#/$defs/Budget"},
+    "operator_confirmation": {"anyOf": [{"$ref": "#/$defs/OperatorConfirmation"}, {"type": "null"}]},
+    "plan": {
+      "type": "object",
+      "properties": {
+        "text": {"type": "string", "maxLength": 4096},
+        "updated_at": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "source": {"enum": ["agent", "user"]}
+      },
+      "required": ["text", "updated_at", "source"],
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "world_epoch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "broker_epoch": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+        "day_number": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 2147483647}, {"type": "null"}]},
+        "seen_at": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+      },
+      "required": ["world_epoch", "session_id", "broker_epoch", "day_number", "seen_at"],
+      "additionalProperties": false
+    },
+    "controls": {
+      "type": "object",
+      "properties": {
+        "paused": {"type": "boolean"},
+        "stopped": {"type": "boolean"},
+        "awaiting_user": {"type": "boolean"},
+        "world_mismatch": {"type": "boolean"},
+        "blocked_unknown": {"type": "boolean"},
+        "disconnected": {"type": "boolean"},
+        "unsupported": {"type": "boolean"},
+        "completed": {"type": "boolean"},
+        "reason": {"anyOf": [{"type": "string", "maxLength": 512}, {"type": "null"}]},
+        "dispatch": {
+          "type": "object",
+          "properties": {
+            "token_hash": {"anyOf": [{"type": "string", "pattern": "^[0-9a-f]{64}$"}, {"type": "null"}]},
+            "owner": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+            "expires_at": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}, {"type": "null"}]},
+            "revoked": {"type": "boolean"},
+            "command_id": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+            "authorization_version": {"anyOf": [{"type": "integer", "minimum": 1, "maximum": 2147483647}, {"type": "null"}]},
+            "world_epoch": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+            "session_id": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+            "broker_epoch": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]}
+          },
+          "required": ["token_hash", "owner", "expires_at", "revoked", "command_id", "authorization_version", "world_epoch", "session_id", "broker_epoch"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["paused", "stopped", "awaiting_user", "world_mismatch", "blocked_unknown", "disconnected", "unsupported", "completed", "reason", "dispatch"],
+      "additionalProperties": false
+    },
+    "inbox": {"type": "array", "maxItems": 512, "items": {"$ref": "#/$defs/InboxEvent"}},
+    "commands": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/Command"}},
+    "customer_keys": {"type": "array", "maxItems": 512, "uniqueItems": true, "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "confirmed_history": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/History"}},
+    "completion_evidence": {
+      "anyOf": [
+        {"type": "object", "properties": {
+          "target_day": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+          "world_epoch": {"type": "string", "minLength": 1, "maxLength": 128},
+          "revision": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+          "command_ids": {"type": "array", "minItems": 1, "maxItems": 4096, "items": {"type": "string", "minLength": 1, "maxLength": 128}}
+        }, "required": ["target_day", "world_epoch", "revision", "command_ids"], "additionalProperties": false},
+        {"type": "null"}
+      ]
+    }
+  },
+  "required": ["schema_version", "revision", "run", "authorization", "budget", "plan", "binding", "controls", "inbox", "commands", "customer_keys", "confirmed_history", "completion_evidence"],
+  "additionalProperties": false
+}

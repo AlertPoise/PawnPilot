@@ -6,6 +6,12 @@ description: 使用 PawnPilot MCP 观察《深空当铺：可能是偷的》，�
 # PawnPilot 单日经营、通用交互与人工检查接管
 
 
+M5-C Supervisor 在游戏外持续调度经营 Agent，不替 Agent 决定买卖、选项或遣走。每轮先核对注入的 Run Context（用户授权、累计预算、未决 Inbox、已确认历史、Agent 计划），再 health_check/observe。恢复先核查原 journal 中的命令与阻塞，再观察当前世界；历史计划仅作参考，不能复用旧 surface/control refs。阅读 Inbox 不等于解决，submitted 不等于成功；只有原命令的可靠结果能确认 Agent 已执行的事实。
+
+监督模式每轮最多一个新 act，随后按原 ID 查状态并重新观察；下一决策由下一轮 Agent 根据最新证据判断。预算由 Broker 持久累计，模型不能改授权、重置计数或更换任务绕过预算。Supervisor/CLI 重启、读档和人工操作都不返还 unknown 的预留预算。awaiting_user、blocked_unknown、unsupported 必须明确报告；不得把自然语言总结、CLI 正常退出或没有 legal_actions 当作一天完成。人工检查仍严格遵循下文真人确认规则，监督器不自动解除。只有用户本人对当前商品明确作出处理决定后，操作员才能经 confirm-inspection 将该决定绑定当前 world/session/customer/handoff/item refs；经营 Agent 仅可用这份一次性确认执行对应 resume_inspection_handoff，再 fresh observe。接受商品或决定按普通商品购买不等于已鉴定为真品；不能更改真假状态或挪用到新商品/新接管。
+
+Agent 可在受限最终结构化回复的 plan 字段更新计划；该字段不改变授权或游戏事实。声望目标可以作为计划保存，完整声望读取和规则仍属于 M5-D。经营子会话不编辑 PawnPilot 源码、不执行 shell、不启动其他 Agent；只使用当前开放的 PawnPilot 五工具。
+
 M5-B wire v4 新增 `surface`，保留 business schema 2 和历史 wire v2/v3。先读取最新 observe：`surface.phase` 描述对话阶段，`surface.status` 描述当前整体操作状态；两者不能互换。`status=progressing` 时做有界等待；typing 阶段优先等待，确需跳过且最新合法动作允许时才使用受限 advance_dialogue。连续三次无业务进展则报告原因；`unknown`/`unsupported` 不解释成仍在自动推进。`awaiting_agent` 表示当前至少有合法动作，仍须理解可见内容和效果范围后选择，不能因为只有一个选项就点击。`awaiting_user` 按现有人工检查规则处理。需要更多信息时只使用已合法开放的只读观察、查询和等待。
 
 主对话完成不代表顾客已离场：`completed` 且顾客仍在场时检查当前合法 `dismiss_customer`。`trade_type=other` 本身不是必须人工接管的理由。通用 `advance_dialogue`、`choose_dialogue_option`、`dismiss_customer` 仍使用既有名称；复制最新 legal_actions 的完整参数，包括签发的 `surface_ref`、`control_ref`，不拼接原生对象、控件路径或坐标。旧参数形状只适用于当前真实发布的旧适配器候选。选项不完整、禁用、未知回调或经济范围未审核时，不构造选择动作，不用GUI绕过MCP门禁。

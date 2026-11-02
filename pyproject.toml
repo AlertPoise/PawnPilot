@@ -14,4 +14,4 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["pawnpilot_mcp*", "bridge*"]
+include = ["pawnpilot_mcp*", "bridge*", "pawnpilot_supervisor*"]
