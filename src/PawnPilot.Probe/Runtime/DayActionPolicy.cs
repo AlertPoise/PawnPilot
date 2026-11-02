@@ -24,7 +24,7 @@ namespace PawnPilot
         public static string Validate(Command command, Snapshot snapshot)
         {
             if (command == null || !ArgumentsValid(command.action, command.arguments)) return "invalid_day_arguments";
-            if (snapshot == null || !snapshot.loaded || !snapshot.ready || snapshot.schema_version != Protocol.BusinessSchemaVersion)
+            if (snapshot == null || !snapshot.loaded || !snapshot.ready || !Protocol.IsBusinessVersion(snapshot.schema_version))
                 return "not_ready";
             if (BusinessProjection.IsInspectionWaitingIn(snapshot)) return "inspection_handoff";
             if (snapshot.menu_open) return "ui_scope_unverified";
@@ -62,7 +62,7 @@ namespace PawnPilot
         public static bool Postcondition(Command command, Snapshot before, Snapshot after)
         {
             if (command == null || !Handles(command.action) || Validate(command, before) != null || after == null || !after.ready ||
-                after.schema_version != Protocol.BusinessSchemaVersion || before.world_epoch != after.world_epoch || before.scene != after.scene ||
+                !Protocol.IsBusinessVersion(after.schema_version) || !Protocol.IsBusinessVersion(before.schema_version) || before.world_epoch != after.world_epoch || before.scene != after.scene ||
                 after.revision <= before.revision) return false;
             var old = before.business.details.day;
             var current = after.business?.details?.day;

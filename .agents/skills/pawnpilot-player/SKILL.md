@@ -1,9 +1,16 @@
 ---
 name: pawnpilot-player
-description: 使用 PawnPilot MCP 观察《深空当铺：可能是偷的》，按当前 legal_actions 执行已授权的普通经营动作。
+description: 使用 PawnPilot MCP 观察《深空当铺：可能是偷的》，按当前 legal_actions 执行已授权的经营及受限通用交互动作。
 ---
 
-# PawnPilot 单日经营、普通交易与人工检查接管
+# PawnPilot 单日经营、通用交互与人工检查接管
+
+
+M5-B wire v4 新增 `surface`，保留 business schema 2 和历史 wire v2/v3。先读取最新 observe：`surface.phase` 描述对话阶段，`surface.status` 描述当前整体操作状态；两者不能互换。`status=progressing` 时做有界等待；typing 阶段优先等待，确需跳过且最新合法动作允许时才使用受限 advance_dialogue。连续三次无业务进展则报告原因；`unknown`/`unsupported` 不解释成仍在自动推进。`awaiting_agent` 表示当前至少有合法动作，仍须理解可见内容和效果范围后选择，不能因为只有一个选项就点击。`awaiting_user` 按现有人工检查规则处理。需要更多信息时只使用已合法开放的只读观察、查询和等待。
+
+主对话完成不代表顾客已离场：`completed` 且顾客仍在场时检查当前合法 `dismiss_customer`。`trade_type=other` 本身不是必须人工接管的理由。通用 `advance_dialogue`、`choose_dialogue_option`、`dismiss_customer` 仍使用既有名称；复制最新 legal_actions 的完整参数，包括签发的 `surface_ref`、`control_ref`，不拼接原生对象、控件路径或坐标。旧参数形状只适用于当前真实发布的旧适配器候选。选项不完整、禁用、未知回调或经济范围未审核时，不构造选择动作，不用GUI绕过MCP门禁。
+
+`surface.controls[].effect_contract/effects` 表示已审核效果范围，不是已发生结果。剧情输入可有库存或隐藏剧情副作用；仅在当前合法动作和用户授权内执行。放射性废料等付款/部分接收交易本轮只读，不自动提交。每次动作按原 command_id 查终态并重新 observe。`interaction_result.input_receipt=returned` 只证明有限原生输入返回；`verification=confirmed` 和 observed_effects 仅证明已观察的有限范围，unverified_effects 仍未知，不能将其升级为整个剧情完成。文档赠送契约允许后续自动流程尚未赠物，不保证奖励已到账。超时、unknown 或部分效果不换ID重放，也不自行解除人工检查或未知结果阻塞。
 
 M4 单日经营使用同一次 Codex 经营会话连续处理顾客。按最新观察推进 PREPARE → OPENING → SERVING → BETWEEN_CUSTOMERS → CLOSING → SETTLEMENT → NEXT_MORNING → DONE；这些是 Agent 的工作阶段，不是必须按顺序点击的按钮。起始日期、累计接待数、写请求、买卖笔数、买入支出、议价次数与夜费上限应来自本轮明确授权；CLI 重启不能重置预算。进入起始日期的次日后，至多正常关闭夜报，立即停止，不调用 start_business。实机状态与已覆盖范围见 `docs/m4-implementation.md`。
 
@@ -29,7 +36,7 @@ M4 会话审计只对直接由 broker 返回的明确 stale_state 入队前拒�
 
 M3-C真实CLI已完成测试商品接管、门禁拒绝、用户确认后恢复和重新观察：人工阶段现金550→324，五件商品已自有、顾客已离场，恢复前后现金324不变，Agent未重复购买。此样本不证明指定香烟/水容器实机触发，也不证明恢复后Agent自动购买；不要复用其金额或引用。
 
-仅使用 `health_check`、`observe`、`act`、`get_action_status`、`wait_for_update`。动作按本次快照的精确 `legal_actions` 独立开放，包含已接入的开门、接待、普通对话、商品准备、正常购买及结束交互；注册名称或文档描述本身不代表当前可执行。`wait_for_update` 是有界只读等待。`act.schema_version` 必须等于同次观察的 `state.schema_version`（2 或 3），不能自行升版或混用会话。
+仅使用 `health_check`、`observe`、`act`、`get_action_status`、`wait_for_update`。动作按本次快照的精确 `legal_actions` 独立开放，包含已接入的开门、接待、普通对话、商品准备、正常购买及结束交互；注册名称或文档描述本身不代表当前可执行。`wait_for_update` 是有界只读等待。`act.schema_version` 必须等于同次观察的 `state.schema_version`（2、3 或 4），不能自行升版或混用会话。
 
 开始时先 `health_check`，再 `observe`。只有 broker/bridge 已连接、协议兼容、世界 `ready=true`、`can_act=true` 且 `legal_actions` 包含该动作时才可提交。`act.schema_version` 优先复制最新 `observe.action_schema_version`，它等于同次嵌套 `snapshot.state.schema_version`；null表示没有已连接的游戏快照，不能提交。兼容旧Adapter缺少该字段时，才取嵌套版本。响应外层schema2及business.details.schema_version均不是动作版本。逐字复制同次version字符串。议价面板可能使全局interaction.operable=false，但其专属legal_actions仍可用。`close_menu` 仅用于明确授权的诊断，不能作为自主经营遇到人工暂停的恢复策略。失联快照属于历史数据；`loaded=false` 的现金占位值无效。
 

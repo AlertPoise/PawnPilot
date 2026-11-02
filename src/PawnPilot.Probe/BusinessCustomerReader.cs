@@ -179,7 +179,9 @@ namespace PawnPilot
             {
                 if (bubble == null || bubble.textfield == null || !bubble.gameObject.activeInHierarchy) continue;
                 var rect = bubble.textfield.rectTransform;
-                if (rect == null || !VisibleUiReader.RectVisible(rect) || !VisibleUiReader.TextVisible(bubble.textfield, rect)) continue;
+                // 打字中仅读已经生成并显示的前缀；完整文本校验会把typing误判为无文本。
+                if (rect == null || !VisibleUiReader.RectVisible(rect) || !bubble.textfield.isActiveAndEnabled ||
+                    bubble.textfield.color.a <= 0) continue;
                 if (visible != null) return null; // Ambiguous active speaker; never guess which line to expose.
                 visible = ReadRenderedText(bubble.textfield, allowPartial: true);
             }
@@ -190,7 +192,9 @@ namespace PawnPilot
         // respects maxVisibleCharacters during typewriter animation and never exports a future line.
         private static string ReadRenderedText(TMPro.TMP_Text text, bool allowPartial)
         {
-            if (text == null || text.textInfo == null) return null;
+            if (text == null || text.textInfo == null || text.havePropertiesChanged ||
+                text.textInfo.characterInfo == null || text.textInfo.pageCount > 1 || text.pageToDisplay != 1 ||
+                text.isTextOverflowing || text.isTextTruncated) return null;
             int count = text.textInfo.characterCount;
             if (count <= 0) return null;
             int visibleCount = text.maxVisibleCharacters < 0 ? count : Math.Min(count, text.maxVisibleCharacters);
@@ -201,6 +205,8 @@ namespace PawnPilot
             for (int i = 0; i < visibleCount && i < characters.Length; i++)
             {
                 if (builder.Length >= 256) return null;
+                if (characters[i].pageNumber != 0 || characters[i].lineNumber >= text.maxVisibleLines ||
+                    (!char.IsWhiteSpace(characters[i].character) && (!characters[i].isVisible || characters[i].color.a == 0))) return null;
                 builder.Append(characters[i].character);
             }
             var value = builder.ToString();

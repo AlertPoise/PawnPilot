@@ -44,6 +44,99 @@ namespace PawnPilot
             check("business_customer_replacement_invalidates_item_ref", !ReferenceEquals(oldCustomerIdentity, input.Customer.Identity) &&
                 replaced.customer_ref != newWorld.customer_ref && replaced.details.items[0].item_ref != newWorld.details.items[0].item_ref);
 
+            var v3ReplacementInput = CompleteTradeSample();
+            var v3DefaultProjection = new BusinessProjection();
+            var v3ReplacementBefore = v3DefaultProjection.Capture("v3-replacement-world", true, () => v3ReplacementInput);
+            string v3ReplacementItem = v3ReplacementBefore.details.items[0].item_ref;
+            v3ReplacementInput.Customer.Identity = new Identity();
+            var v3ReplacementAfter = v3DefaultProjection.Capture("v3-replacement-world", true, () => v3ReplacementInput);
+            check("business_v3_default_still_invalidates_item_refs_on_customer_change",
+                v3ReplacementAfter.customer_ref != v3ReplacementBefore.customer_ref &&
+                v3ReplacementAfter.details.items[0].item_ref != v3ReplacementItem);
+
+            var v4Input = CompleteTradeSample();
+            var v4Projection = new BusinessProjection(preserveItemRefsAcrossCustomers: true);
+            var v4BusinessBefore = v4Projection.Capture("v4-projection-world", true, () => v4Input);
+            var v4ItemRefsBefore = v4BusinessBefore.details.items.Select(item => item.item_ref).ToArray();
+            var v4BeforeSurface = CompletedCustomerSurface(v4BusinessBefore.customer_ref, "surface-before", "control-before");
+            var v4DismissArgs = new ActionArguments { customer_ref = v4BusinessBefore.customer_ref,
+                surface_ref = v4BeforeSurface.surface_ref, control_ref = v4BeforeSurface.controls[0].control_ref };
+            var v4DismissLegal = new LegalAction { action = "dismiss_customer", arguments = v4DismissArgs };
+            var v4BeforeSnapshot = ProjectedSnapshot(v4BusinessBefore, 1, v4BeforeSurface, new List<LegalAction> { v4DismissLegal });
+
+            string oldOfferRef = v4BusinessBefore.offer_ref;
+            string oldCollectionFingerprint = v4BusinessBefore.collection_fingerprint;
+            string oldCustomerRef = v4BusinessBefore.customer_ref;
+            string oldFrontFingerprint = v4BusinessBefore.details.front_collection_fingerprint;
+            v4Input.Customer.Identity = new Identity();
+            var v4BusinessAfter = v4Projection.Capture("v4-projection-world", true, () => v4Input);
+            var v4ItemRefsAfter = v4BusinessAfter.details.items.Select(item => item.item_ref).ToArray();
+            var v4AfterSurface = CompletedCustomerSurface(v4BusinessAfter.customer_ref, "surface-after", "control-after");
+            var v4AfterArgs = new ActionArguments { customer_ref = v4BusinessAfter.customer_ref,
+                surface_ref = v4AfterSurface.surface_ref, control_ref = v4AfterSurface.controls[0].control_ref };
+            var v4AfterLegal = new LegalAction { action = "dismiss_customer", arguments = v4AfterArgs };
+            var v4AfterSnapshot = ProjectedSnapshot(v4BusinessAfter, 2, v4AfterSurface, new List<LegalAction> { v4AfterLegal });
+            check("business_v4_keeps_observed_item_refs_across_customer_replacement",
+                v4BusinessAfter.customer_ref != oldCustomerRef && v4ItemRefsAfter.SequenceEqual(v4ItemRefsBefore));
+            check("business_v4_customer_change_invalidates_all_offer_collections",
+                v4BusinessAfter.offer_ref != oldOfferRef && v4BusinessAfter.collection_fingerprint != oldCollectionFingerprint &&
+                v4BusinessAfter.details.front_collection_fingerprint != oldFrontFingerprint &&
+                !v4Projection.TryResolvePurchase("v4-projection-world", oldCustomerRef, oldOfferRef,
+                    oldCollectionFingerprint, out _, out _, out _) &&
+                !v4Projection.TryResolveFrontCollection("v4-projection-world", oldCustomerRef,
+                    oldFrontFingerprint, out _, out _));
+            check("business_v4_preserved_item_ref_is_bound_only_to_current_customer",
+                !v4Projection.TryResolveItem("v4-projection-world", oldCustomerRef, "front", v4ItemRefsBefore[0], out _) &&
+                v4Projection.TryResolveItem("v4-projection-world", v4BusinessAfter.customer_ref, "front", v4ItemRefsAfter[0], out _));
+            check("business_v4_projection_snapshots_are_valid", ActionGate.IsSnapshotValid(v4BeforeSnapshot) &&
+                ActionGate.IsSnapshotValid(v4AfterSnapshot));
+
+            var purchaseState = ProjectedSnapshot(v4BusinessAfter, 2, v4AfterSurface, new List<LegalAction> { v4AfterLegal });
+            purchaseState.cash = 5000;
+            purchaseState.business.details.capacity.status = "sufficient";
+            purchaseState.business.details.capacity.reason = "native_grid_placement_verified";
+            purchaseState.business.details.capacity.scope = "current_normal_purchase";
+            purchaseState.business.details.eligibility.purchase_enabled = true;
+            purchaseState.business.details.eligibility.missing.Clear();
+            var stalePurchase = new LegalAction { action = "purchase_visible_offer", arguments = PurchaseArguments(v4BusinessBefore) };
+            var freshPurchase = new LegalAction { action = "purchase_visible_offer", arguments = PurchaseArguments(v4BusinessAfter) };
+            check("business_v4_rejects_stale_customer_offer_candidate_but_accepts_current_offer",
+                BusinessActionPolicy.ValidateCandidate(new Command { schema_version = 4, action = stalePurchase.action,
+                    arguments = stalePurchase.arguments }, purchaseState) == "purchase_state_changed" &&
+                BusinessActionPolicy.ValidateCandidate(new Command { schema_version = 4, action = freshPurchase.action,
+                    arguments = freshPurchase.arguments }, purchaseState) == null);
+
+            var v4DismissCommand = new Command { schema_version = 4, id = "projection-dismiss", broker_epoch = "broker",
+                action = v4DismissLegal.action, arguments = v4DismissArgs, expected_world_epoch = v4BeforeSnapshot.world_epoch,
+                expected_revision = v4BeforeSnapshot.revision, expected_version = v4BeforeSnapshot.version,
+                start_deadline_unix_ms = 100, execution_timeout_ms = 5000 };
+            var v4Gate = new ActionGate();
+            bool v4Accepted = v4Gate.Accept(v4DismissCommand, v4BeforeSnapshot, "broker", 1) == null;
+            v4Gate.Advance("broker", v4BeforeSnapshot, 2, 2, _ => { },
+                (command, beforeSnapshot, afterSnapshot) => InteractionPolicy.Verify(command, beforeSnapshot,
+                    afterSnapshot, nativeReturned: true));
+            bool v4Receipt = v4Gate.MarkNativeReturned(v4DismissCommand.id);
+            var v4DismissResult = v4Gate.Advance("broker", v4AfterSnapshot, 3, 3, _ => { },
+                (command, beforeSnapshot, afterSnapshot) => InteractionPolicy.Verify(command, beforeSnapshot,
+                    afterSnapshot, nativeReturned: true)).result;
+            check("business_v4_customer_replacement_passes_interaction_gate_without_false_item_removal",
+                v4Accepted && v4Receipt && v4DismissResult?.status == "succeeded" &&
+                v4DismissResult.interaction_result.removed_item_refs.Count == 0 &&
+                v4DismissResult.interaction_result.added_item_refs.Count == 0);
+
+            var v4BeforeWorldChange = v4BusinessAfter.details.items[0].item_ref;
+            var v4WorldChanged = v4Projection.Capture("v4-projection-next-world", true, () => v4Input);
+            check("business_v4_world_change_still_invalidates_preserved_item_refs",
+                v4WorldChanged.details.items[0].item_ref != v4BeforeWorldChange);
+            var v4BeforeBlockedInventory = v4WorldChanged.details.items[0].item_ref;
+            v4Input.Ui.Status = "blocked"; v4Input.Ui.Blockers = new[] { "trade_confirmation" };
+            var v4BlockedInventory = v4Projection.Capture("v4-projection-next-world", true, () => v4Input);
+            v4Input.Ui.Status = "unverified"; v4Input.Ui.Blockers = new[] { "global_ui_stack_unobservable" };
+            var v4AfterBlockedInventory = v4Projection.Capture("v4-projection-next-world", true, () => v4Input);
+            check("business_v4_blocked_inventory_clears_then_reissues_item_refs",
+                v4BlockedInventory.details.items.Count == 0 &&
+                v4AfterBlockedInventory.details.items[0].item_ref != v4BeforeBlockedInventory);
+
             input.Customer.Presence = "absent";
             input.Customer.Identity = null;
             input.Customer.Phase = "leaving";
@@ -286,6 +379,50 @@ namespace PawnPilot
                     Blockers = new[] { "global_ui_stack_unobservable" } }
             };
         }
+
+        private static Snapshot ProjectedSnapshot(BusinessObservation business, int revision,
+            SurfaceObservation surface, List<LegalAction> legalActions) => new Snapshot
+        {
+            schema_version = Protocol.InteractionSchemaVersion,
+            version = "v4-projection-world:" + revision,
+            world_epoch = "v4-projection-world",
+            revision = revision,
+            phase = "OPEN",
+            scene = "InventoryScene",
+            loaded = true,
+            ready = true,
+            not_ready_reason = null,
+            menu_open = false,
+            can_close_menu = false,
+            cash = 5000,
+            interaction = new InteractionObservation { phase = "OPEN", consistency = "unverified",
+                reason = "business_projection_test", operable = true },
+            business = business,
+            legal_actions = legalActions,
+            surface = surface
+        };
+
+        private static SurfaceObservation CompletedCustomerSurface(string customerRef, string surfaceRef, string controlRef)
+        {
+            var control = new SurfaceControl { control_ref = controlRef, action = "dismiss_customer", enabled = true,
+                effect_contract = "customer_departure", effects = new List<string> { "customer_departure", "story_state" },
+                reason = "native_dismiss_verified" };
+            return new SurfaceObservation { schema_version = 1, surface_ref = surfaceRef,
+                kind = "customer_completion", phase = "completed", status = "awaiting_agent",
+                completeness = "complete", reason = "customer_dialogue_completed", customer_ref = customerRef,
+                controls = new List<SurfaceControl> { control } };
+        }
+
+        private static ActionArguments PurchaseArguments(BusinessObservation business) => new ActionArguments
+        {
+            customer_ref = business.customer_ref,
+            item_refs = new List<string>(business.item_refs),
+            offer_ref = business.offer_ref,
+            collection_fingerprint = business.collection_fingerprint,
+            mode = "normal",
+            amount = business.details.quote.displayed_total,
+            max_spend = business.details.quote.displayed_total
+        };
 
         private static BusinessInput CompleteTradeSample()
         {

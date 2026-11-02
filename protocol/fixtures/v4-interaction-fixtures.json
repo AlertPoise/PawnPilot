@@ -1,0 +1,4827 @@
+{
+  "source": "fixture",
+  "schema_version": 4,
+  "cases": {
+    "presentation_confirmed": {
+      "command": {
+        "schema_version": 4,
+        "id": "presentation_confirmed",
+        "broker_epoch": "broker",
+        "action": "choose_dialogue_option",
+        "expected_version": "fixture-world:1",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "arguments": {
+          "customer_ref": "customer-1",
+          "option_ref": "option-1",
+          "dialogue_ref": "dialogue-1",
+          "surface_ref": "surface-1",
+          "control_ref": "control-1"
+        },
+        "start_deadline_unix_ms": 100,
+        "execution_timeout_ms": 5000
+      },
+      "before": {
+        "schema_version": 4,
+        "version": "fixture-world:1",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 1,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-1",
+              "dialogue_stage": "choices",
+              "dialogue_text": null,
+              "is_typing": false,
+              "waiting_for_advance": false,
+              "option_refs": [
+                "option-1"
+              ],
+              "options": [
+                {
+                  "option_ref": "option-1",
+                  "text": "Continue"
+                }
+              ]
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [
+          {
+            "action": "choose_dialogue_option",
+            "arguments": {
+              "customer_ref": "customer-1",
+              "option_ref": "option-1",
+              "dialogue_ref": "dialogue-1",
+              "surface_ref": "surface-1",
+              "control_ref": "control-1"
+            }
+          }
+        ],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-1",
+          "kind": "dialogue",
+          "phase": "awaiting_choice",
+          "status": "awaiting_agent",
+          "completeness": "complete",
+          "reason": "visible_current_surface",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-1",
+          "controls": [
+            {
+              "control_ref": "control-1",
+              "action": "choose_dialogue_option",
+              "mode": null,
+              "option_ref": "option-1",
+              "text": "Continue",
+              "enabled": true,
+              "effect_contract": "presentation",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state"
+              ],
+              "reason": "native_callback_verified"
+            }
+          ]
+        }
+      },
+      "after": {
+        "schema_version": 4,
+        "version": "fixture-world:2",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 2,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-2",
+              "dialogue_stage": "typing",
+              "dialogue_text": null,
+              "is_typing": true,
+              "waiting_for_advance": false,
+              "option_refs": [],
+              "options": []
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-2",
+          "kind": "dialogue",
+          "phase": "progressing",
+          "status": "progressing",
+          "completeness": "complete",
+          "reason": "dialogue_transition_observed",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-2",
+          "controls": [
+            {
+              "control_ref": "control-progress",
+              "action": "advance_dialogue",
+              "mode": "next",
+              "option_ref": null,
+              "text": null,
+              "enabled": false,
+              "effect_contract": "presentation",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state"
+              ],
+              "reason": "dialogue_transition_pending"
+            }
+          ]
+        }
+      },
+      "result": {
+        "schema_version": 4,
+        "id": "presentation_confirmed",
+        "broker_epoch": "broker",
+        "status": "succeeded",
+        "reason": "postcondition_observed",
+        "before": {
+          "schema_version": 4,
+          "version": "fixture-world:1",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 1,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-1",
+                "dialogue_stage": "choices",
+                "dialogue_text": null,
+                "is_typing": false,
+                "waiting_for_advance": false,
+                "option_refs": [
+                  "option-1"
+                ],
+                "options": [
+                  {
+                    "option_ref": "option-1",
+                    "text": "Continue"
+                  }
+                ]
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [
+            {
+              "action": "choose_dialogue_option",
+              "arguments": {
+                "customer_ref": "customer-1",
+                "option_ref": "option-1",
+                "dialogue_ref": "dialogue-1",
+                "surface_ref": "surface-1",
+                "control_ref": "control-1"
+              }
+            }
+          ],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-1",
+            "kind": "dialogue",
+            "phase": "awaiting_choice",
+            "status": "awaiting_agent",
+            "completeness": "complete",
+            "reason": "visible_current_surface",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-1",
+            "controls": [
+              {
+                "control_ref": "control-1",
+                "action": "choose_dialogue_option",
+                "mode": null,
+                "option_ref": "option-1",
+                "text": "Continue",
+                "enabled": true,
+                "effect_contract": "presentation",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state"
+                ],
+                "reason": "native_callback_verified"
+              }
+            ]
+          }
+        },
+        "after": {
+          "schema_version": 4,
+          "version": "fixture-world:2",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 2,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-2",
+                "dialogue_stage": "typing",
+                "dialogue_text": null,
+                "is_typing": true,
+                "waiting_for_advance": false,
+                "option_refs": [],
+                "options": []
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-2",
+            "kind": "dialogue",
+            "phase": "progressing",
+            "status": "progressing",
+            "completeness": "complete",
+            "reason": "dialogue_transition_observed",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-2",
+            "controls": [
+              {
+                "control_ref": "control-progress",
+                "action": "advance_dialogue",
+                "mode": "next",
+                "option_ref": null,
+                "text": null,
+                "enabled": false,
+                "effect_contract": "presentation",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state"
+                ],
+                "reason": "dialogue_transition_pending"
+              }
+            ]
+          }
+        },
+        "execution": {
+          "id": "presentation_confirmed",
+          "broker_epoch": "broker",
+          "stage": "completed",
+          "sequence": 4,
+          "may_have_side_effects": true,
+          "started_at_unix_ms": 2,
+          "execution_deadline_unix_ms": 5002
+        },
+        "interaction_result": {
+          "input_receipt": "returned",
+          "verification": "confirmed",
+          "effect_contract": "presentation",
+          "observed_effects": [
+            "presentation",
+            "dialogue_transition"
+          ],
+          "unverified_effects": [
+            "story_state"
+          ],
+          "cash_delta": 0,
+          "added_item_refs": [],
+          "removed_item_refs": []
+        }
+      },
+      "progress": {
+        "id": "presentation_confirmed",
+        "broker_epoch": "broker",
+        "stage": "completed",
+        "sequence": 4,
+        "may_have_side_effects": true,
+        "started_at_unix_ms": 2,
+        "execution_deadline_unix_ms": 5002
+      }
+    },
+    "document_gift_zero_confirmed": {
+      "command": {
+        "schema_version": 4,
+        "id": "document_gift_zero_confirmed",
+        "broker_epoch": "broker",
+        "action": "choose_dialogue_option",
+        "expected_version": "fixture-world:1",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "arguments": {
+          "customer_ref": "customer-1",
+          "option_ref": "option-1",
+          "dialogue_ref": "dialogue-1",
+          "surface_ref": "surface-1",
+          "control_ref": "control-1"
+        },
+        "start_deadline_unix_ms": 100,
+        "execution_timeout_ms": 5000
+      },
+      "before": {
+        "schema_version": 4,
+        "version": "fixture-world:1",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 1,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-1",
+              "dialogue_stage": "choices",
+              "dialogue_text": null,
+              "is_typing": false,
+              "waiting_for_advance": false,
+              "option_refs": [
+                "option-1"
+              ],
+              "options": [
+                {
+                  "option_ref": "option-1",
+                  "text": "Continue"
+                }
+              ]
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [
+          {
+            "action": "choose_dialogue_option",
+            "arguments": {
+              "customer_ref": "customer-1",
+              "option_ref": "option-1",
+              "dialogue_ref": "dialogue-1",
+              "surface_ref": "surface-1",
+              "control_ref": "control-1"
+            }
+          }
+        ],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-1",
+          "kind": "dialogue",
+          "phase": "awaiting_choice",
+          "status": "awaiting_agent",
+          "completeness": "complete",
+          "reason": "visible_current_surface",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-1",
+          "controls": [
+            {
+              "control_ref": "control-1",
+              "action": "choose_dialogue_option",
+              "mode": null,
+              "option_ref": "option-1",
+              "text": "Continue",
+              "enabled": true,
+              "effect_contract": "document_gift",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state",
+                "inventory_transfer"
+              ],
+              "reason": "native_callback_verified"
+            }
+          ]
+        }
+      },
+      "after": {
+        "schema_version": 4,
+        "version": "fixture-world:2",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 2,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-2",
+              "dialogue_stage": "typing",
+              "dialogue_text": null,
+              "is_typing": true,
+              "waiting_for_advance": false,
+              "option_refs": [],
+              "options": []
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-2",
+          "kind": "dialogue",
+          "phase": "progressing",
+          "status": "progressing",
+          "completeness": "complete",
+          "reason": "dialogue_transition_observed",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-2",
+          "controls": [
+            {
+              "control_ref": "control-progress",
+              "action": "advance_dialogue",
+              "mode": "next",
+              "option_ref": null,
+              "text": null,
+              "enabled": false,
+              "effect_contract": "presentation",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state"
+              ],
+              "reason": "dialogue_transition_pending"
+            }
+          ]
+        }
+      },
+      "result": {
+        "schema_version": 4,
+        "id": "document_gift_zero_confirmed",
+        "broker_epoch": "broker",
+        "status": "succeeded",
+        "reason": "postcondition_observed",
+        "before": {
+          "schema_version": 4,
+          "version": "fixture-world:1",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 1,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-1",
+                "dialogue_stage": "choices",
+                "dialogue_text": null,
+                "is_typing": false,
+                "waiting_for_advance": false,
+                "option_refs": [
+                  "option-1"
+                ],
+                "options": [
+                  {
+                    "option_ref": "option-1",
+                    "text": "Continue"
+                  }
+                ]
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [
+            {
+              "action": "choose_dialogue_option",
+              "arguments": {
+                "customer_ref": "customer-1",
+                "option_ref": "option-1",
+                "dialogue_ref": "dialogue-1",
+                "surface_ref": "surface-1",
+                "control_ref": "control-1"
+              }
+            }
+          ],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-1",
+            "kind": "dialogue",
+            "phase": "awaiting_choice",
+            "status": "awaiting_agent",
+            "completeness": "complete",
+            "reason": "visible_current_surface",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-1",
+            "controls": [
+              {
+                "control_ref": "control-1",
+                "action": "choose_dialogue_option",
+                "mode": null,
+                "option_ref": "option-1",
+                "text": "Continue",
+                "enabled": true,
+                "effect_contract": "document_gift",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state",
+                  "inventory_transfer"
+                ],
+                "reason": "native_callback_verified"
+              }
+            ]
+          }
+        },
+        "after": {
+          "schema_version": 4,
+          "version": "fixture-world:2",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 2,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-2",
+                "dialogue_stage": "typing",
+                "dialogue_text": null,
+                "is_typing": true,
+                "waiting_for_advance": false,
+                "option_refs": [],
+                "options": []
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-2",
+            "kind": "dialogue",
+            "phase": "progressing",
+            "status": "progressing",
+            "completeness": "complete",
+            "reason": "dialogue_transition_observed",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-2",
+            "controls": [
+              {
+                "control_ref": "control-progress",
+                "action": "advance_dialogue",
+                "mode": "next",
+                "option_ref": null,
+                "text": null,
+                "enabled": false,
+                "effect_contract": "presentation",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state"
+                ],
+                "reason": "dialogue_transition_pending"
+              }
+            ]
+          }
+        },
+        "execution": {
+          "id": "document_gift_zero_confirmed",
+          "broker_epoch": "broker",
+          "stage": "completed",
+          "sequence": 4,
+          "may_have_side_effects": true,
+          "started_at_unix_ms": 2,
+          "execution_deadline_unix_ms": 5002
+        },
+        "interaction_result": {
+          "input_receipt": "returned",
+          "verification": "confirmed",
+          "effect_contract": "document_gift",
+          "observed_effects": [
+            "presentation",
+            "dialogue_transition"
+          ],
+          "unverified_effects": [
+            "inventory_transfer",
+            "story_state"
+          ],
+          "cash_delta": 0,
+          "added_item_refs": [],
+          "removed_item_refs": []
+        }
+      },
+      "progress": {
+        "id": "document_gift_zero_confirmed",
+        "broker_epoch": "broker",
+        "stage": "completed",
+        "sequence": 4,
+        "may_have_side_effects": true,
+        "started_at_unix_ms": 2,
+        "execution_deadline_unix_ms": 5002
+      }
+    },
+    "document_gift_one_confirmed": {
+      "command": {
+        "schema_version": 4,
+        "id": "document_gift_one_confirmed",
+        "broker_epoch": "broker",
+        "action": "choose_dialogue_option",
+        "expected_version": "fixture-world:1",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "arguments": {
+          "customer_ref": "customer-1",
+          "option_ref": "option-1",
+          "dialogue_ref": "dialogue-1",
+          "surface_ref": "surface-1",
+          "control_ref": "control-1"
+        },
+        "start_deadline_unix_ms": 100,
+        "execution_timeout_ms": 5000
+      },
+      "before": {
+        "schema_version": 4,
+        "version": "fixture-world:1",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 1,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-1",
+              "dialogue_stage": "choices",
+              "dialogue_text": null,
+              "is_typing": false,
+              "waiting_for_advance": false,
+              "option_refs": [
+                "option-1"
+              ],
+              "options": [
+                {
+                  "option_ref": "option-1",
+                  "text": "Continue"
+                }
+              ]
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [
+          {
+            "action": "choose_dialogue_option",
+            "arguments": {
+              "customer_ref": "customer-1",
+              "option_ref": "option-1",
+              "dialogue_ref": "dialogue-1",
+              "surface_ref": "surface-1",
+              "control_ref": "control-1"
+            }
+          }
+        ],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-1",
+          "kind": "dialogue",
+          "phase": "awaiting_choice",
+          "status": "awaiting_agent",
+          "completeness": "complete",
+          "reason": "visible_current_surface",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-1",
+          "controls": [
+            {
+              "control_ref": "control-1",
+              "action": "choose_dialogue_option",
+              "mode": null,
+              "option_ref": "option-1",
+              "text": "Continue",
+              "enabled": true,
+              "effect_contract": "document_gift",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state",
+                "inventory_transfer"
+              ],
+              "reason": "native_callback_verified"
+            }
+          ]
+        }
+      },
+      "after": {
+        "schema_version": 4,
+        "version": "fixture-world:2",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 2,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-2",
+              "dialogue_stage": "typing",
+              "dialogue_text": null,
+              "is_typing": true,
+              "waiting_for_advance": false,
+              "option_refs": [],
+              "options": []
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "document-1"
+                ]
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              },
+              {
+                "item_ref": "document-1",
+                "container": "front",
+                "name": "Document",
+                "units": 1,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-2",
+          "kind": "dialogue",
+          "phase": "progressing",
+          "status": "progressing",
+          "completeness": "complete",
+          "reason": "dialogue_transition_observed",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-2",
+          "controls": [
+            {
+              "control_ref": "control-progress",
+              "action": "advance_dialogue",
+              "mode": "next",
+              "option_ref": null,
+              "text": null,
+              "enabled": false,
+              "effect_contract": "presentation",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state"
+              ],
+              "reason": "dialogue_transition_pending"
+            }
+          ]
+        }
+      },
+      "result": {
+        "schema_version": 4,
+        "id": "document_gift_one_confirmed",
+        "broker_epoch": "broker",
+        "status": "succeeded",
+        "reason": "postcondition_observed",
+        "before": {
+          "schema_version": 4,
+          "version": "fixture-world:1",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 1,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-1",
+                "dialogue_stage": "choices",
+                "dialogue_text": null,
+                "is_typing": false,
+                "waiting_for_advance": false,
+                "option_refs": [
+                  "option-1"
+                ],
+                "options": [
+                  {
+                    "option_ref": "option-1",
+                    "text": "Continue"
+                  }
+                ]
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [
+            {
+              "action": "choose_dialogue_option",
+              "arguments": {
+                "customer_ref": "customer-1",
+                "option_ref": "option-1",
+                "dialogue_ref": "dialogue-1",
+                "surface_ref": "surface-1",
+                "control_ref": "control-1"
+              }
+            }
+          ],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-1",
+            "kind": "dialogue",
+            "phase": "awaiting_choice",
+            "status": "awaiting_agent",
+            "completeness": "complete",
+            "reason": "visible_current_surface",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-1",
+            "controls": [
+              {
+                "control_ref": "control-1",
+                "action": "choose_dialogue_option",
+                "mode": null,
+                "option_ref": "option-1",
+                "text": "Continue",
+                "enabled": true,
+                "effect_contract": "document_gift",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state",
+                  "inventory_transfer"
+                ],
+                "reason": "native_callback_verified"
+              }
+            ]
+          }
+        },
+        "after": {
+          "schema_version": 4,
+          "version": "fixture-world:2",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 2,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-2",
+                "dialogue_stage": "typing",
+                "dialogue_text": null,
+                "is_typing": true,
+                "waiting_for_advance": false,
+                "option_refs": [],
+                "options": []
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "document-1"
+                  ]
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                },
+                {
+                  "item_ref": "document-1",
+                  "container": "front",
+                  "name": "Document",
+                  "units": 1,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-2",
+            "kind": "dialogue",
+            "phase": "progressing",
+            "status": "progressing",
+            "completeness": "complete",
+            "reason": "dialogue_transition_observed",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-2",
+            "controls": [
+              {
+                "control_ref": "control-progress",
+                "action": "advance_dialogue",
+                "mode": "next",
+                "option_ref": null,
+                "text": null,
+                "enabled": false,
+                "effect_contract": "presentation",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state"
+                ],
+                "reason": "dialogue_transition_pending"
+              }
+            ]
+          }
+        },
+        "execution": {
+          "id": "document_gift_one_confirmed",
+          "broker_epoch": "broker",
+          "stage": "completed",
+          "sequence": 4,
+          "may_have_side_effects": true,
+          "started_at_unix_ms": 2,
+          "execution_deadline_unix_ms": 5002
+        },
+        "interaction_result": {
+          "input_receipt": "returned",
+          "verification": "confirmed",
+          "effect_contract": "document_gift",
+          "observed_effects": [
+            "presentation",
+            "dialogue_transition",
+            "inventory_transfer"
+          ],
+          "unverified_effects": [
+            "story_state"
+          ],
+          "cash_delta": 0,
+          "added_item_refs": [
+            "document-1"
+          ],
+          "removed_item_refs": []
+        }
+      },
+      "progress": {
+        "id": "document_gift_one_confirmed",
+        "broker_epoch": "broker",
+        "stage": "completed",
+        "sequence": 4,
+        "may_have_side_effects": true,
+        "started_at_unix_ms": 2,
+        "execution_deadline_unix_ms": 5002
+      }
+    },
+    "customer_departure_confirmed": {
+      "command": {
+        "schema_version": 4,
+        "id": "customer_departure_confirmed",
+        "broker_epoch": "broker",
+        "action": "dismiss_customer",
+        "expected_version": "fixture-world:1",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "arguments": {
+          "customer_ref": "customer-1",
+          "surface_ref": "surface-1",
+          "control_ref": "control-1"
+        },
+        "start_deadline_unix_ms": 100,
+        "execution_timeout_ms": 5000
+      },
+      "before": {
+        "schema_version": 4,
+        "version": "fixture-world:1",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 1,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": null,
+              "dialogue_stage": "unknown",
+              "dialogue_text": null,
+              "is_typing": null,
+              "waiting_for_advance": null,
+              "option_refs": [],
+              "options": []
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [
+          {
+            "action": "dismiss_customer",
+            "arguments": {
+              "customer_ref": "customer-1",
+              "surface_ref": "surface-1",
+              "control_ref": "control-1"
+            }
+          }
+        ],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-1",
+          "kind": "customer_completion",
+          "phase": "completed",
+          "status": "awaiting_agent",
+          "completeness": "complete",
+          "reason": "visible_current_surface",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": null,
+          "controls": [
+            {
+              "control_ref": "control-1",
+              "action": "dismiss_customer",
+              "mode": null,
+              "option_ref": null,
+              "text": "Continue",
+              "enabled": true,
+              "effect_contract": "customer_departure",
+              "effects": [
+                "customer_departure",
+                "story_state"
+              ],
+              "reason": "native_callback_verified"
+            }
+          ]
+        }
+      },
+      "after": {
+        "schema_version": 4,
+        "version": "fixture-world:2",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 2,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-2",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-2",
+              "dialogue_stage": "typing",
+              "dialogue_text": null,
+              "is_typing": true,
+              "waiting_for_advance": false,
+              "option_refs": [],
+              "options": []
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-2",
+          "kind": "dialogue",
+          "phase": "progressing",
+          "status": "progressing",
+          "completeness": "complete",
+          "reason": "dialogue_transition_observed",
+          "text": null,
+          "customer_ref": "customer-2",
+          "dialogue_ref": "dialogue-2",
+          "controls": [
+            {
+              "control_ref": "control-progress",
+              "action": "advance_dialogue",
+              "mode": "next",
+              "option_ref": null,
+              "text": null,
+              "enabled": false,
+              "effect_contract": "presentation",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state"
+              ],
+              "reason": "dialogue_transition_pending"
+            }
+          ]
+        }
+      },
+      "result": {
+        "schema_version": 4,
+        "id": "customer_departure_confirmed",
+        "broker_epoch": "broker",
+        "status": "succeeded",
+        "reason": "postcondition_observed",
+        "before": {
+          "schema_version": 4,
+          "version": "fixture-world:1",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 1,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": null,
+                "dialogue_stage": "unknown",
+                "dialogue_text": null,
+                "is_typing": null,
+                "waiting_for_advance": null,
+                "option_refs": [],
+                "options": []
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [
+            {
+              "action": "dismiss_customer",
+              "arguments": {
+                "customer_ref": "customer-1",
+                "surface_ref": "surface-1",
+                "control_ref": "control-1"
+              }
+            }
+          ],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-1",
+            "kind": "customer_completion",
+            "phase": "completed",
+            "status": "awaiting_agent",
+            "completeness": "complete",
+            "reason": "visible_current_surface",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": null,
+            "controls": [
+              {
+                "control_ref": "control-1",
+                "action": "dismiss_customer",
+                "mode": null,
+                "option_ref": null,
+                "text": "Continue",
+                "enabled": true,
+                "effect_contract": "customer_departure",
+                "effects": [
+                  "customer_departure",
+                  "story_state"
+                ],
+                "reason": "native_callback_verified"
+              }
+            ]
+          }
+        },
+        "after": {
+          "schema_version": 4,
+          "version": "fixture-world:2",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 2,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-2",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-2",
+                "dialogue_stage": "typing",
+                "dialogue_text": null,
+                "is_typing": true,
+                "waiting_for_advance": false,
+                "option_refs": [],
+                "options": []
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-2",
+            "kind": "dialogue",
+            "phase": "progressing",
+            "status": "progressing",
+            "completeness": "complete",
+            "reason": "dialogue_transition_observed",
+            "text": null,
+            "customer_ref": "customer-2",
+            "dialogue_ref": "dialogue-2",
+            "controls": [
+              {
+                "control_ref": "control-progress",
+                "action": "advance_dialogue",
+                "mode": "next",
+                "option_ref": null,
+                "text": null,
+                "enabled": false,
+                "effect_contract": "presentation",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state"
+                ],
+                "reason": "dialogue_transition_pending"
+              }
+            ]
+          }
+        },
+        "execution": {
+          "id": "customer_departure_confirmed",
+          "broker_epoch": "broker",
+          "stage": "completed",
+          "sequence": 4,
+          "may_have_side_effects": true,
+          "started_at_unix_ms": 2,
+          "execution_deadline_unix_ms": 5002
+        },
+        "interaction_result": {
+          "input_receipt": "returned",
+          "verification": "confirmed",
+          "effect_contract": "customer_departure",
+          "observed_effects": [
+            "customer_departure"
+          ],
+          "unverified_effects": [
+            "story_state"
+          ],
+          "cash_delta": 0,
+          "added_item_refs": [],
+          "removed_item_refs": []
+        }
+      },
+      "progress": {
+        "id": "customer_departure_confirmed",
+        "broker_epoch": "broker",
+        "stage": "completed",
+        "sequence": 4,
+        "may_have_side_effects": true,
+        "started_at_unix_ms": 2,
+        "execution_deadline_unix_ms": 5002
+      }
+    },
+    "cash_change_uncertain": {
+      "command": {
+        "schema_version": 4,
+        "id": "cash_change_uncertain",
+        "broker_epoch": "broker",
+        "action": "choose_dialogue_option",
+        "expected_version": "fixture-world:1",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "arguments": {
+          "customer_ref": "customer-1",
+          "option_ref": "option-1",
+          "dialogue_ref": "dialogue-1",
+          "surface_ref": "surface-1",
+          "control_ref": "control-1"
+        },
+        "start_deadline_unix_ms": 100,
+        "execution_timeout_ms": 5000
+      },
+      "before": {
+        "schema_version": 4,
+        "version": "fixture-world:1",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 1,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-1",
+              "dialogue_stage": "choices",
+              "dialogue_text": null,
+              "is_typing": false,
+              "waiting_for_advance": false,
+              "option_refs": [
+                "option-1"
+              ],
+              "options": [
+                {
+                  "option_ref": "option-1",
+                  "text": "Continue"
+                }
+              ]
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [
+          {
+            "action": "choose_dialogue_option",
+            "arguments": {
+              "customer_ref": "customer-1",
+              "option_ref": "option-1",
+              "dialogue_ref": "dialogue-1",
+              "surface_ref": "surface-1",
+              "control_ref": "control-1"
+            }
+          }
+        ],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-1",
+          "kind": "dialogue",
+          "phase": "awaiting_choice",
+          "status": "awaiting_agent",
+          "completeness": "complete",
+          "reason": "visible_current_surface",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-1",
+          "controls": [
+            {
+              "control_ref": "control-1",
+              "action": "choose_dialogue_option",
+              "mode": null,
+              "option_ref": "option-1",
+              "text": "Continue",
+              "enabled": true,
+              "effect_contract": "presentation",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state"
+              ],
+              "reason": "native_callback_verified"
+            }
+          ]
+        }
+      },
+      "after": {
+        "schema_version": 4,
+        "version": "fixture-world:2",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 2,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 551,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-2",
+              "dialogue_stage": "typing",
+              "dialogue_text": null,
+              "is_typing": true,
+              "waiting_for_advance": false,
+              "option_refs": [],
+              "options": []
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-2",
+          "kind": "dialogue",
+          "phase": "progressing",
+          "status": "progressing",
+          "completeness": "complete",
+          "reason": "dialogue_transition_observed",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-2",
+          "controls": [
+            {
+              "control_ref": "control-progress",
+              "action": "advance_dialogue",
+              "mode": "next",
+              "option_ref": null,
+              "text": null,
+              "enabled": false,
+              "effect_contract": "presentation",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state"
+              ],
+              "reason": "dialogue_transition_pending"
+            }
+          ]
+        }
+      },
+      "result": {
+        "schema_version": 4,
+        "id": "cash_change_uncertain",
+        "broker_epoch": "broker",
+        "status": "outcome_unknown",
+        "reason": "cash_changed_during_interaction",
+        "before": {
+          "schema_version": 4,
+          "version": "fixture-world:1",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 1,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-1",
+                "dialogue_stage": "choices",
+                "dialogue_text": null,
+                "is_typing": false,
+                "waiting_for_advance": false,
+                "option_refs": [
+                  "option-1"
+                ],
+                "options": [
+                  {
+                    "option_ref": "option-1",
+                    "text": "Continue"
+                  }
+                ]
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [
+            {
+              "action": "choose_dialogue_option",
+              "arguments": {
+                "customer_ref": "customer-1",
+                "option_ref": "option-1",
+                "dialogue_ref": "dialogue-1",
+                "surface_ref": "surface-1",
+                "control_ref": "control-1"
+              }
+            }
+          ],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-1",
+            "kind": "dialogue",
+            "phase": "awaiting_choice",
+            "status": "awaiting_agent",
+            "completeness": "complete",
+            "reason": "visible_current_surface",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-1",
+            "controls": [
+              {
+                "control_ref": "control-1",
+                "action": "choose_dialogue_option",
+                "mode": null,
+                "option_ref": "option-1",
+                "text": "Continue",
+                "enabled": true,
+                "effect_contract": "presentation",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state"
+                ],
+                "reason": "native_callback_verified"
+              }
+            ]
+          }
+        },
+        "after": {
+          "schema_version": 4,
+          "version": "fixture-world:2",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 2,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 551,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-2",
+                "dialogue_stage": "typing",
+                "dialogue_text": null,
+                "is_typing": true,
+                "waiting_for_advance": false,
+                "option_refs": [],
+                "options": []
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-2",
+            "kind": "dialogue",
+            "phase": "progressing",
+            "status": "progressing",
+            "completeness": "complete",
+            "reason": "dialogue_transition_observed",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-2",
+            "controls": [
+              {
+                "control_ref": "control-progress",
+                "action": "advance_dialogue",
+                "mode": "next",
+                "option_ref": null,
+                "text": null,
+                "enabled": false,
+                "effect_contract": "presentation",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state"
+                ],
+                "reason": "dialogue_transition_pending"
+              }
+            ]
+          }
+        },
+        "execution": {
+          "id": "cash_change_uncertain",
+          "broker_epoch": "broker",
+          "stage": "uncertain",
+          "sequence": 4,
+          "may_have_side_effects": true,
+          "started_at_unix_ms": 2,
+          "execution_deadline_unix_ms": 5002
+        },
+        "interaction_result": {
+          "input_receipt": "returned",
+          "verification": "unknown",
+          "effect_contract": "presentation",
+          "observed_effects": [],
+          "unverified_effects": [
+            "dialogue_transition",
+            "presentation",
+            "story_state"
+          ],
+          "cash_delta": 1,
+          "added_item_refs": [],
+          "removed_item_refs": []
+        }
+      },
+      "progress": {
+        "id": "cash_change_uncertain",
+        "broker_epoch": "broker",
+        "stage": "uncertain",
+        "sequence": 4,
+        "may_have_side_effects": true,
+        "started_at_unix_ms": 2,
+        "execution_deadline_unix_ms": 5002
+      }
+    },
+    "cash_and_inventory_delta_unknown": {
+      "command": {
+        "schema_version": 4,
+        "id": "cash_and_inventory_delta_unknown",
+        "broker_epoch": "broker",
+        "action": "choose_dialogue_option",
+        "expected_version": "fixture-world:1",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "arguments": {
+          "customer_ref": "customer-1",
+          "option_ref": "option-1",
+          "dialogue_ref": "dialogue-1",
+          "surface_ref": "surface-1",
+          "control_ref": "control-1"
+        },
+        "start_deadline_unix_ms": 100,
+        "execution_timeout_ms": 5000
+      },
+      "before": {
+        "schema_version": 4,
+        "version": "fixture-world:1",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 1,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-1",
+              "dialogue_stage": "choices",
+              "dialogue_text": null,
+              "is_typing": false,
+              "waiting_for_advance": false,
+              "option_refs": [
+                "option-1"
+              ],
+              "options": [
+                {
+                  "option_ref": "option-1",
+                  "text": "Continue"
+                }
+              ]
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [
+          {
+            "action": "choose_dialogue_option",
+            "arguments": {
+              "customer_ref": "customer-1",
+              "option_ref": "option-1",
+              "dialogue_ref": "dialogue-1",
+              "surface_ref": "surface-1",
+              "control_ref": "control-1"
+            }
+          }
+        ],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-1",
+          "kind": "dialogue",
+          "phase": "awaiting_choice",
+          "status": "awaiting_agent",
+          "completeness": "complete",
+          "reason": "visible_current_surface",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-1",
+          "controls": [
+            {
+              "control_ref": "control-1",
+              "action": "choose_dialogue_option",
+              "mode": null,
+              "option_ref": "option-1",
+              "text": "Continue",
+              "enabled": true,
+              "effect_contract": "presentation",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state"
+              ],
+              "reason": "native_callback_verified"
+            }
+          ]
+        }
+      },
+      "after": {
+        "schema_version": 4,
+        "version": "fixture-world:2",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 2,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 551,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-2",
+              "dialogue_stage": "typing",
+              "dialogue_text": null,
+              "is_typing": true,
+              "waiting_for_advance": false,
+              "option_refs": [],
+              "options": []
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "unexpected-item"
+                ]
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "unexpected-item",
+                "container": "front",
+                "name": "Document",
+                "units": 1,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-2",
+          "kind": "dialogue",
+          "phase": "progressing",
+          "status": "progressing",
+          "completeness": "complete",
+          "reason": "dialogue_transition_observed",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-2",
+          "controls": [
+            {
+              "control_ref": "control-progress",
+              "action": "advance_dialogue",
+              "mode": "next",
+              "option_ref": null,
+              "text": null,
+              "enabled": false,
+              "effect_contract": "presentation",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state"
+              ],
+              "reason": "dialogue_transition_pending"
+            }
+          ]
+        }
+      },
+      "result": {
+        "schema_version": 4,
+        "id": "cash_and_inventory_delta_unknown",
+        "broker_epoch": "broker",
+        "status": "outcome_unknown",
+        "reason": "cash_changed_during_interaction",
+        "before": {
+          "schema_version": 4,
+          "version": "fixture-world:1",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 1,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-1",
+                "dialogue_stage": "choices",
+                "dialogue_text": null,
+                "is_typing": false,
+                "waiting_for_advance": false,
+                "option_refs": [
+                  "option-1"
+                ],
+                "options": [
+                  {
+                    "option_ref": "option-1",
+                    "text": "Continue"
+                  }
+                ]
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [
+            {
+              "action": "choose_dialogue_option",
+              "arguments": {
+                "customer_ref": "customer-1",
+                "option_ref": "option-1",
+                "dialogue_ref": "dialogue-1",
+                "surface_ref": "surface-1",
+                "control_ref": "control-1"
+              }
+            }
+          ],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-1",
+            "kind": "dialogue",
+            "phase": "awaiting_choice",
+            "status": "awaiting_agent",
+            "completeness": "complete",
+            "reason": "visible_current_surface",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-1",
+            "controls": [
+              {
+                "control_ref": "control-1",
+                "action": "choose_dialogue_option",
+                "mode": null,
+                "option_ref": "option-1",
+                "text": "Continue",
+                "enabled": true,
+                "effect_contract": "presentation",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state"
+                ],
+                "reason": "native_callback_verified"
+              }
+            ]
+          }
+        },
+        "after": {
+          "schema_version": 4,
+          "version": "fixture-world:2",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 2,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 551,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-2",
+                "dialogue_stage": "typing",
+                "dialogue_text": null,
+                "is_typing": true,
+                "waiting_for_advance": false,
+                "option_refs": [],
+                "options": []
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "unexpected-item"
+                  ]
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "unexpected-item",
+                  "container": "front",
+                  "name": "Document",
+                  "units": 1,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-2",
+            "kind": "dialogue",
+            "phase": "progressing",
+            "status": "progressing",
+            "completeness": "complete",
+            "reason": "dialogue_transition_observed",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-2",
+            "controls": [
+              {
+                "control_ref": "control-progress",
+                "action": "advance_dialogue",
+                "mode": "next",
+                "option_ref": null,
+                "text": null,
+                "enabled": false,
+                "effect_contract": "presentation",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state"
+                ],
+                "reason": "dialogue_transition_pending"
+              }
+            ]
+          }
+        },
+        "execution": {
+          "id": "cash_and_inventory_delta_unknown",
+          "broker_epoch": "broker",
+          "stage": "uncertain",
+          "sequence": 4,
+          "may_have_side_effects": true,
+          "started_at_unix_ms": 2,
+          "execution_deadline_unix_ms": 5002
+        },
+        "interaction_result": {
+          "input_receipt": "returned",
+          "verification": "unknown",
+          "effect_contract": "presentation",
+          "observed_effects": [],
+          "unverified_effects": [
+            "dialogue_transition",
+            "presentation",
+            "story_state"
+          ],
+          "cash_delta": 1,
+          "added_item_refs": [
+            "unexpected-item"
+          ],
+          "removed_item_refs": [
+            "owned-sale-item"
+          ]
+        }
+      },
+      "progress": {
+        "id": "cash_and_inventory_delta_unknown",
+        "broker_epoch": "broker",
+        "stage": "uncertain",
+        "sequence": 4,
+        "may_have_side_effects": true,
+        "started_at_unix_ms": 2,
+        "execution_deadline_unix_ms": 5002
+      }
+    },
+    "invoked_exception_unknown": {
+      "command": {
+        "schema_version": 4,
+        "id": "invoked-exception-unknown",
+        "broker_epoch": "broker",
+        "action": "choose_dialogue_option",
+        "expected_version": "fixture-world:1",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 1,
+        "arguments": {
+          "customer_ref": "customer-1",
+          "option_ref": "option-1",
+          "dialogue_ref": "dialogue-1",
+          "surface_ref": "surface-1",
+          "control_ref": "control-1"
+        },
+        "start_deadline_unix_ms": 100,
+        "execution_timeout_ms": 5000
+      },
+      "before": {
+        "schema_version": 4,
+        "version": "fixture-world:1",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 1,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-1",
+              "dialogue_stage": "choices",
+              "dialogue_text": null,
+              "is_typing": false,
+              "waiting_for_advance": false,
+              "option_refs": [
+                "option-1"
+              ],
+              "options": [
+                {
+                  "option_ref": "option-1",
+                  "text": "Continue"
+                }
+              ]
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [
+          {
+            "action": "choose_dialogue_option",
+            "arguments": {
+              "customer_ref": "customer-1",
+              "option_ref": "option-1",
+              "dialogue_ref": "dialogue-1",
+              "surface_ref": "surface-1",
+              "control_ref": "control-1"
+            }
+          }
+        ],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-1",
+          "kind": "dialogue",
+          "phase": "awaiting_choice",
+          "status": "awaiting_agent",
+          "completeness": "complete",
+          "reason": "visible_current_surface",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-1",
+          "controls": [
+            {
+              "control_ref": "control-1",
+              "action": "choose_dialogue_option",
+              "mode": null,
+              "option_ref": "option-1",
+              "text": "Continue",
+              "enabled": true,
+              "effect_contract": "presentation",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state"
+              ],
+              "reason": "native_callback_verified"
+            }
+          ]
+        }
+      },
+      "after": {
+        "schema_version": 4,
+        "version": "fixture-world:1",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 1,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-1",
+              "dialogue_stage": "choices",
+              "dialogue_text": null,
+              "is_typing": false,
+              "waiting_for_advance": false,
+              "option_refs": [
+                "option-1"
+              ],
+              "options": [
+                {
+                  "option_ref": "option-1",
+                  "text": "Continue"
+                }
+              ]
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [
+          {
+            "action": "choose_dialogue_option",
+            "arguments": {
+              "customer_ref": "customer-1",
+              "option_ref": "option-1",
+              "dialogue_ref": "dialogue-1",
+              "surface_ref": "surface-1",
+              "control_ref": "control-1"
+            }
+          }
+        ],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-1",
+          "kind": "dialogue",
+          "phase": "awaiting_choice",
+          "status": "awaiting_agent",
+          "completeness": "complete",
+          "reason": "visible_current_surface",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-1",
+          "controls": [
+            {
+              "control_ref": "control-1",
+              "action": "choose_dialogue_option",
+              "mode": null,
+              "option_ref": "option-1",
+              "text": "Continue",
+              "enabled": true,
+              "effect_contract": "presentation",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state"
+              ],
+              "reason": "native_callback_verified"
+            }
+          ]
+        }
+      },
+      "result": {
+        "schema_version": 4,
+        "id": "invoked-exception-unknown",
+        "broker_epoch": "broker",
+        "status": "outcome_unknown",
+        "reason": "execution_exception",
+        "before": {
+          "schema_version": 4,
+          "version": "fixture-world:1",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 1,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-1",
+                "dialogue_stage": "choices",
+                "dialogue_text": null,
+                "is_typing": false,
+                "waiting_for_advance": false,
+                "option_refs": [
+                  "option-1"
+                ],
+                "options": [
+                  {
+                    "option_ref": "option-1",
+                    "text": "Continue"
+                  }
+                ]
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [
+            {
+              "action": "choose_dialogue_option",
+              "arguments": {
+                "customer_ref": "customer-1",
+                "option_ref": "option-1",
+                "dialogue_ref": "dialogue-1",
+                "surface_ref": "surface-1",
+                "control_ref": "control-1"
+              }
+            }
+          ],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-1",
+            "kind": "dialogue",
+            "phase": "awaiting_choice",
+            "status": "awaiting_agent",
+            "completeness": "complete",
+            "reason": "visible_current_surface",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-1",
+            "controls": [
+              {
+                "control_ref": "control-1",
+                "action": "choose_dialogue_option",
+                "mode": null,
+                "option_ref": "option-1",
+                "text": "Continue",
+                "enabled": true,
+                "effect_contract": "presentation",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state"
+                ],
+                "reason": "native_callback_verified"
+              }
+            ]
+          }
+        },
+        "after": {
+          "schema_version": 4,
+          "version": "fixture-world:1",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 1,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-1",
+                "dialogue_stage": "choices",
+                "dialogue_text": null,
+                "is_typing": false,
+                "waiting_for_advance": false,
+                "option_refs": [
+                  "option-1"
+                ],
+                "options": [
+                  {
+                    "option_ref": "option-1",
+                    "text": "Continue"
+                  }
+                ]
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [
+            {
+              "action": "choose_dialogue_option",
+              "arguments": {
+                "customer_ref": "customer-1",
+                "option_ref": "option-1",
+                "dialogue_ref": "dialogue-1",
+                "surface_ref": "surface-1",
+                "control_ref": "control-1"
+              }
+            }
+          ],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-1",
+            "kind": "dialogue",
+            "phase": "awaiting_choice",
+            "status": "awaiting_agent",
+            "completeness": "complete",
+            "reason": "visible_current_surface",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-1",
+            "controls": [
+              {
+                "control_ref": "control-1",
+                "action": "choose_dialogue_option",
+                "mode": null,
+                "option_ref": "option-1",
+                "text": "Continue",
+                "enabled": true,
+                "effect_contract": "presentation",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state"
+                ],
+                "reason": "native_callback_verified"
+              }
+            ]
+          }
+        },
+        "execution": {
+          "id": "invoked-exception-unknown",
+          "broker_epoch": "broker",
+          "stage": "uncertain",
+          "sequence": 3,
+          "may_have_side_effects": true,
+          "started_at_unix_ms": 2,
+          "execution_deadline_unix_ms": 5002
+        },
+        "interaction_result": {
+          "input_receipt": "unknown",
+          "verification": "unknown",
+          "effect_contract": "presentation",
+          "observed_effects": [],
+          "unverified_effects": [
+            "dialogue_transition",
+            "presentation",
+            "story_state"
+          ],
+          "cash_delta": 0,
+          "added_item_refs": [],
+          "removed_item_refs": []
+        }
+      },
+      "progress": {
+        "id": "invoked-exception-unknown",
+        "broker_epoch": "broker",
+        "stage": "uncertain",
+        "sequence": 3,
+        "may_have_side_effects": true,
+        "started_at_unix_ms": 2,
+        "execution_deadline_unix_ms": 5002
+      }
+    },
+    "preentry_rejected": {
+      "command": {
+        "schema_version": 4,
+        "id": "preentry-rejected",
+        "broker_epoch": "broker",
+        "action": "choose_dialogue_option",
+        "expected_version": "fixture-world:0",
+        "expected_world_epoch": "fixture-world",
+        "expected_revision": 0,
+        "arguments": {
+          "customer_ref": "customer-1",
+          "option_ref": "option-1",
+          "dialogue_ref": "dialogue-1",
+          "surface_ref": "surface-1",
+          "control_ref": "control-1"
+        },
+        "start_deadline_unix_ms": 100,
+        "execution_timeout_ms": 5000
+      },
+      "before": {
+        "schema_version": 4,
+        "version": "fixture-world:1",
+        "world_epoch": "fixture-world",
+        "phase": "OPEN",
+        "scene": "InventoryScene",
+        "not_ready_reason": null,
+        "revision": 1,
+        "loaded": true,
+        "ready": true,
+        "menu_open": false,
+        "can_close_menu": false,
+        "cash": 550,
+        "interaction": {
+          "phase": "business",
+          "consistency": "unverified",
+          "reason": null,
+          "operable": true
+        },
+        "business": {
+          "support": "partial",
+          "customer_ref": "customer-1",
+          "item_refs": [],
+          "offer_ref": null,
+          "collection_fingerprint": null,
+          "details": {
+            "schema_version": 2,
+            "status": "partial",
+            "customer": {
+              "presence": "present",
+              "arrived": true,
+              "trade_type": "unknown",
+              "phase": "dialogue",
+              "dialogue_ref": "dialogue-1",
+              "dialogue_stage": "choices",
+              "dialogue_text": null,
+              "is_typing": false,
+              "waiting_for_advance": false,
+              "option_refs": [
+                "option-1"
+              ],
+              "options": [
+                {
+                  "option_ref": "option-1",
+                  "text": "Continue"
+                }
+              ]
+            },
+            "containers": [
+              {
+                "container": "player",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": [
+                  "owned-sale-item"
+                ]
+              },
+              {
+                "container": "front",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              },
+              {
+                "container": "back",
+                "completeness": "complete",
+                "reason": null,
+                "item_refs": []
+              }
+            ],
+            "items": [
+              {
+                "item_ref": "owned-sale-item",
+                "container": "player",
+                "name": "Owned item",
+                "units": 2,
+                "owned": true,
+                "shape_status": "unverified",
+                "width": null,
+                "height": null
+              }
+            ],
+            "front_collection_fingerprint": null,
+            "quote": {
+              "status": "unverified",
+              "mode": "unknown",
+              "displayed_total": null,
+              "wholesale_total": null,
+              "rows": [],
+              "reason": "quote_not_ready"
+            },
+            "ui": {
+              "status": "unverified",
+              "blockers": [],
+              "coverage": "verified"
+            },
+            "capacity": {
+              "status": "unverified",
+              "reason": "not_required_for_sale",
+              "scope": "none"
+            },
+            "eligibility": {
+              "purchase_enabled": false,
+              "missing": [
+                "purchase_specific_eligibility"
+              ]
+            },
+            "candidates": []
+          }
+        },
+        "legal_actions": [
+          {
+            "action": "choose_dialogue_option",
+            "arguments": {
+              "customer_ref": "customer-1",
+              "option_ref": "option-1",
+              "dialogue_ref": "dialogue-1",
+              "surface_ref": "surface-1",
+              "control_ref": "control-1"
+            }
+          }
+        ],
+        "surface": {
+          "schema_version": 1,
+          "surface_ref": "surface-1",
+          "kind": "dialogue",
+          "phase": "awaiting_choice",
+          "status": "awaiting_agent",
+          "completeness": "complete",
+          "reason": "visible_current_surface",
+          "text": null,
+          "customer_ref": "customer-1",
+          "dialogue_ref": "dialogue-1",
+          "controls": [
+            {
+              "control_ref": "control-1",
+              "action": "choose_dialogue_option",
+              "mode": null,
+              "option_ref": "option-1",
+              "text": "Continue",
+              "enabled": true,
+              "effect_contract": "presentation",
+              "effects": [
+                "presentation",
+                "dialogue_transition",
+                "story_state"
+              ],
+              "reason": "native_callback_verified"
+            }
+          ]
+        }
+      },
+      "after": null,
+      "result": {
+        "schema_version": 4,
+        "id": "preentry-rejected",
+        "broker_epoch": "broker",
+        "status": "rejected",
+        "reason": "stale_state",
+        "before": {
+          "schema_version": 4,
+          "version": "fixture-world:1",
+          "world_epoch": "fixture-world",
+          "phase": "OPEN",
+          "scene": "InventoryScene",
+          "not_ready_reason": null,
+          "revision": 1,
+          "loaded": true,
+          "ready": true,
+          "menu_open": false,
+          "can_close_menu": false,
+          "cash": 550,
+          "interaction": {
+            "phase": "business",
+            "consistency": "unverified",
+            "reason": null,
+            "operable": true
+          },
+          "business": {
+            "support": "partial",
+            "customer_ref": "customer-1",
+            "item_refs": [],
+            "offer_ref": null,
+            "collection_fingerprint": null,
+            "details": {
+              "schema_version": 2,
+              "status": "partial",
+              "customer": {
+                "presence": "present",
+                "arrived": true,
+                "trade_type": "unknown",
+                "phase": "dialogue",
+                "dialogue_ref": "dialogue-1",
+                "dialogue_stage": "choices",
+                "dialogue_text": null,
+                "is_typing": false,
+                "waiting_for_advance": false,
+                "option_refs": [
+                  "option-1"
+                ],
+                "options": [
+                  {
+                    "option_ref": "option-1",
+                    "text": "Continue"
+                  }
+                ]
+              },
+              "containers": [
+                {
+                  "container": "player",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": [
+                    "owned-sale-item"
+                  ]
+                },
+                {
+                  "container": "front",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                },
+                {
+                  "container": "back",
+                  "completeness": "complete",
+                  "reason": null,
+                  "item_refs": []
+                }
+              ],
+              "items": [
+                {
+                  "item_ref": "owned-sale-item",
+                  "container": "player",
+                  "name": "Owned item",
+                  "units": 2,
+                  "owned": true,
+                  "shape_status": "unverified",
+                  "width": null,
+                  "height": null
+                }
+              ],
+              "front_collection_fingerprint": null,
+              "quote": {
+                "status": "unverified",
+                "mode": "unknown",
+                "displayed_total": null,
+                "wholesale_total": null,
+                "rows": [],
+                "reason": "quote_not_ready"
+              },
+              "ui": {
+                "status": "unverified",
+                "blockers": [],
+                "coverage": "verified"
+              },
+              "capacity": {
+                "status": "unverified",
+                "reason": "not_required_for_sale",
+                "scope": "none"
+              },
+              "eligibility": {
+                "purchase_enabled": false,
+                "missing": [
+                  "purchase_specific_eligibility"
+                ]
+              },
+              "candidates": []
+            }
+          },
+          "legal_actions": [
+            {
+              "action": "choose_dialogue_option",
+              "arguments": {
+                "customer_ref": "customer-1",
+                "option_ref": "option-1",
+                "dialogue_ref": "dialogue-1",
+                "surface_ref": "surface-1",
+                "control_ref": "control-1"
+              }
+            }
+          ],
+          "surface": {
+            "schema_version": 1,
+            "surface_ref": "surface-1",
+            "kind": "dialogue",
+            "phase": "awaiting_choice",
+            "status": "awaiting_agent",
+            "completeness": "complete",
+            "reason": "visible_current_surface",
+            "text": null,
+            "customer_ref": "customer-1",
+            "dialogue_ref": "dialogue-1",
+            "controls": [
+              {
+                "control_ref": "control-1",
+                "action": "choose_dialogue_option",
+                "mode": null,
+                "option_ref": "option-1",
+                "text": "Continue",
+                "enabled": true,
+                "effect_contract": "presentation",
+                "effects": [
+                  "presentation",
+                  "dialogue_transition",
+                  "story_state"
+                ],
+                "reason": "native_callback_verified"
+              }
+            ]
+          }
+        },
+        "after": null,
+        "execution": {
+          "id": "preentry-rejected",
+          "broker_epoch": "broker",
+          "stage": "completed",
+          "sequence": 1,
+          "may_have_side_effects": false,
+          "started_at_unix_ms": null,
+          "execution_deadline_unix_ms": null
+        }
+      },
+      "progress": {
+        "id": "preentry-rejected",
+        "broker_epoch": "broker",
+        "stage": "completed",
+        "sequence": 1,
+        "may_have_side_effects": false,
+        "started_at_unix_ms": null,
+        "execution_deadline_unix_ms": null
+      }
+    }
+  }
+}

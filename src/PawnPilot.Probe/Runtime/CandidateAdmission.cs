@@ -17,12 +17,15 @@ namespace PawnPilot
         public static string Validate(Snapshot snapshot, LegalAction candidate)
         {
             if (candidate == null || candidate.arguments == null) return "invalid_candidate";
+            if (InteractionPolicy.IsGenericAction(candidate.action) && InteractionPolicy.HasSurfaceBinding(candidate.arguments))
+                return InteractionPolicy.ValidateCandidate(snapshot, candidate, requireFinalStatus: false);
             if (candidate.action == "close_menu")
                 return snapshot?.ready == true && snapshot.loaded && snapshot.menu_open && snapshot.can_close_menu &&
                     !BusinessProjection.IsInspectionWaitingIn(snapshot) && !DayBlocksOrdinary(snapshot) &&
                     BusinessActionPolicy.SameArguments(candidate.arguments, new ActionArguments())
                     ? null : "close_menu_candidate_blocked";
-            var command = new Command { schema_version = Protocol.BusinessSchemaVersion,
+            var command = new Command { schema_version = Protocol.IsBusinessVersion(snapshot?.schema_version ?? 0)
+                    ? snapshot.schema_version : Protocol.BusinessSchemaVersion,
                 action = candidate.action, arguments = candidate.arguments };
             string reason = BusinessActionPolicy.ValidateCandidate(command, snapshot);
             if (reason != null) return reason;
@@ -57,7 +60,9 @@ namespace PawnPilot
             if (reason == null) { destination.Add(candidate); return true; }
             // Preserve why a native-capable action was not published. Unexpected malformed
             // candidates are programming errors, not normal transient admission failures.
-            if (candidate == null || !BusinessActionPolicy.ArgumentsValid(candidate.action, candidate.arguments))
+            if (candidate == null || !(InteractionPolicy.IsGenericAction(candidate.action) && InteractionPolicy.HasSurfaceBinding(candidate.arguments)
+                ? InteractionPolicy.ArgumentsValid(candidate.action, candidate.arguments)
+                : BusinessActionPolicy.ArgumentsValid(candidate.action, candidate.arguments)))
                 throw new InvalidOperationException("invalid_native_candidate");
             var descriptions = snapshot.business.details.candidates;
             var description = descriptions.Find(x => x.action == candidate.action);
@@ -96,7 +101,12 @@ namespace PawnPilot
         {
             if (!ActionGate.IsSnapshotValid(snapshot)) throw new InvalidOperationException("invalid_publication_snapshot");
             foreach (var candidate in snapshot.legal_actions)
-                if (Validate(snapshot, candidate) != null) throw new InvalidOperationException("invalid_publication_candidate");
+            {
+                string reason = InteractionPolicy.IsGenericAction(candidate?.action) && InteractionPolicy.HasSurfaceBinding(candidate?.arguments)
+                    ? InteractionPolicy.ValidateCandidate(snapshot, candidate, requireFinalStatus: true)
+                    : Validate(snapshot, candidate);
+                if (reason != null) throw new InvalidOperationException("invalid_publication_candidate");
+            }
             if (snapshot.business.details.eligibility.purchase_enabled !=
                 snapshot.legal_actions.Any(x => x.action == "purchase_visible_offer"))
                 throw new InvalidOperationException("purchase_publication_mismatch");

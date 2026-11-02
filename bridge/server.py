@@ -14,29 +14,35 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 try:
     from .journal import Journal, JournalError
-    from .protocol import (WIRE_VERSION, WIRE_VERSION_V3, MAX_V2_MESSAGE_BYTES,
-                           MAX_V3_MESSAGE_BYTES, compact_json_size, response_size_valid,
+    from .protocol import (WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4, MAX_V2_MESSAGE_BYTES,
+                           MAX_V3_MESSAGE_BYTES, MAX_V4_MESSAGE_BYTES, compact_json_size, response_size_valid,
                            progress_matches_command, request_fingerprint,
                            valid_command, valid_progress, valid_progress_transition,
                            valid_request, valid_result_structure, valid_snapshot,
                            valid_success_result, valid_command_v3, valid_request_v3,
                            valid_result_structure_v3, valid_snapshot_v3, valid_success_result_v3,
                            valid_action_binding_v3, valid_action_state_v3, V3_PRODUCTION_ACTIONS,
+                           valid_command_v4, valid_request_v4, valid_result_structure_v4,
+                           valid_snapshot_v4, valid_success_result_v4, valid_action_binding_v4,
+                           valid_action_state_v4, GENERIC_INTERACTION_ACTIONS, V4_PRODUCTION_ACTIONS,
                            strict_json_loads)
 except ImportError:  # Support the existing `python bridge/server.py` launch path.
     from journal import Journal, JournalError
-    from protocol import (WIRE_VERSION, WIRE_VERSION_V3, MAX_V2_MESSAGE_BYTES,
-                          MAX_V3_MESSAGE_BYTES, compact_json_size, response_size_valid,
+    from protocol import (WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4, MAX_V2_MESSAGE_BYTES,
+                          MAX_V3_MESSAGE_BYTES, MAX_V4_MESSAGE_BYTES, compact_json_size, response_size_valid,
                           progress_matches_command, request_fingerprint,
                           valid_command, valid_progress, valid_progress_transition,
                           valid_request, valid_result_structure, valid_snapshot,
                           valid_success_result, valid_command_v3, valid_request_v3,
                           valid_result_structure_v3, valid_snapshot_v3, valid_success_result_v3,
                           valid_action_binding_v3, valid_action_state_v3, V3_PRODUCTION_ACTIONS,
+                          valid_command_v4, valid_request_v4, valid_result_structure_v4,
+                          valid_snapshot_v4, valid_success_result_v4, valid_action_binding_v4,
+                          valid_action_state_v4, GENERIC_INTERACTION_ACTIONS, V4_PRODUCTION_ACTIONS,
                           strict_json_loads)
 
 PORT = 18765
-MAX_BODY = MAX_V3_MESSAGE_BYTES
+MAX_BODY = max(MAX_V3_MESSAGE_BYTES, MAX_V4_MESSAGE_BYTES)
 ACTION = "close_menu"
 LEGACY_STATUS = {"pending": "queued", "running": "delivered", "succeeded": "success",
                  "rejected": "rejected", "failed": "error", "outcome_unknown": "uncertain"}
@@ -114,20 +120,43 @@ class Broker:
 
     @staticmethod
     def _snapshot_valid(value, version):
-        return valid_snapshot_v3(value) if version == WIRE_VERSION_V3 else valid_snapshot(value)
+        if version == WIRE_VERSION_V4:
+            return valid_snapshot_v4(value)
+        if version == WIRE_VERSION_V3:
+            return valid_snapshot_v3(value)
+        if version == WIRE_VERSION:
+            return valid_snapshot(value)
+        return False
 
     @staticmethod
     def _request_valid(value, version):
-        return valid_request_v3(value) if version == WIRE_VERSION_V3 else valid_request(value)
+        if version == WIRE_VERSION_V4:
+            return valid_request_v4(value)
+        if version == WIRE_VERSION_V3:
+            return valid_request_v3(value)
+        if version == WIRE_VERSION:
+            return valid_request(value)
+        return False
 
     @staticmethod
     def _command_valid(value, version):
-        return valid_command_v3(value) if version == WIRE_VERSION_V3 else valid_command(value)
+        if version == WIRE_VERSION_V4:
+            return valid_command_v4(value)
+        if version == WIRE_VERSION_V3:
+            return valid_command_v3(value)
+        if version == WIRE_VERSION:
+            return valid_command(value)
+        return False
 
     @staticmethod
     def _result_valid(value, version, require_execution=True):
-        return (valid_result_structure_v3(value, require_execution) if version == WIRE_VERSION_V3
-                else valid_result_structure(value, require_execution))
+        if version == WIRE_VERSION_V4:
+            return valid_result_structure_v4(value, require_execution)
+        if version == WIRE_VERSION_V3:
+            return valid_result_structure_v3(value, require_execution)
+        if version == WIRE_VERSION:
+            return valid_result_structure(value, require_execution)
+        return False
 
     @staticmethod
     def _command_deadline(command):
@@ -153,10 +182,18 @@ class Broker:
                     "broker_epoch": command["broker_epoch"], "status": LEGACY_STATUS[status],
                     "reason": reason, "before": None, "after": None}
         version = self._record_schema_version(record)
-        return {"schema_version": version if version in {WIRE_VERSION, WIRE_VERSION_V3} else WIRE_VERSION,
-                "id": record["command_id"],
-                "broker_epoch": command["broker_epoch"], "status": status,
-                "reason": reason, "before": None, "after": None, "execution": None}
+        result = {"schema_version": version if version in {WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4} else WIRE_VERSION,
+                  "id": record["command_id"], "broker_epoch": command["broker_epoch"],
+                  "status": status, "reason": reason, "before": None, "after": None, "execution": None}
+        args = command.get("arguments", {})
+        if (version == WIRE_VERSION_V4 and status == "outcome_unknown"
+                and command.get("action") in GENERIC_INTERACTION_ACTIONS
+                and "surface_ref" in args and "control_ref" in args):
+            result["interaction_result"] = {
+                "input_receipt": "unknown", "verification": "unknown", "effect_contract": "unknown",
+                "observed_effects": [], "unverified_effects": [], "cash_delta": None,
+                "added_item_refs": [], "removed_item_refs": []}
+        return result
 
     def _set_terminal(self, record, status, reason, result=None):
         record["command_status"] = status
@@ -201,7 +238,7 @@ class Broker:
     @staticmethod
     def _valid_state(state):
         version = state.get("schema_version") if type(state) is dict else None
-        return valid_snapshot_v3(state) if version == WIRE_VERSION_V3 else valid_snapshot(state)
+        return Broker._snapshot_valid(state, version)
 
     @staticmethod
     def _validate_exchange_shape(body):
@@ -209,13 +246,14 @@ class Broker:
                     "has_result", "result", "progress"}
         if type(body) is not dict:
             raise ProtocolError(400, "invalid_exchange")
-        if type(body.get("schema_version")) is not int or body.get("schema_version") not in {WIRE_VERSION, WIRE_VERSION_V3}:
+        if type(body.get("schema_version")) is not int or body.get("schema_version") not in {WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4}:
             raise ProtocolError(400, "schema_version_unsupported")
         if type(body.get("has_result")) is not bool:
             raise ProtocolError(400, "has_result_boolean_required")
         if set(body) != expected:
             raise ProtocolError(400, "invalid_exchange")
-        limit = MAX_V3_MESSAGE_BYTES if body["schema_version"] == WIRE_VERSION_V3 else MAX_V2_MESSAGE_BYTES
+        limit = (MAX_V4_MESSAGE_BYTES if body["schema_version"] == WIRE_VERSION_V4 else
+                 MAX_V3_MESSAGE_BYTES if body["schema_version"] == WIRE_VERSION_V3 else MAX_V2_MESSAGE_BYTES)
         size = compact_json_size(body)
         if size is None or size > limit:
             raise ProtocolError(413, "exchange_too_large")
@@ -232,13 +270,14 @@ class Broker:
 
     def _validate_result(self, record, result):
         version = self._record_schema_version(record)
-        if (version not in {WIRE_VERSION, WIRE_VERSION_V3}
+        if (version not in {WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4}
                 or result["id"] != record["command_id"]
                 or result["broker_epoch"] != record["command"]["broker_epoch"]
                 or not progress_matches_command(result["execution"], record["command"])
                 or not valid_progress_transition(record.get("execution"), result["execution"])
-                or not (valid_success_result_v3(record["command"], result) if version == WIRE_VERSION_V3
-                        else valid_success_result(record["command"], result))):
+                or not (valid_success_result_v4(record["command"], result) if version == WIRE_VERSION_V4 else
+                        valid_success_result_v3(record["command"], result) if version == WIRE_VERSION_V3 else
+                        valid_success_result(record["command"], result))):
             raise ProtocolError(409, "invalid_result_evidence")
 
     def exchange(self, body):
@@ -257,7 +296,7 @@ class Broker:
         if ((self.session_id == body["session_id"] and self.session_wire_version is not None
              and self.session_wire_version != wire_version)
                 or (active_before_lock is not None
-                    and self._record_schema_version(active_before_lock) in {WIRE_VERSION, WIRE_VERSION_V3}
+                    and self._record_schema_version(active_before_lock) in {WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4}
                     and self._record_schema_version(active_before_lock) != wire_version)):
             raise ProtocolError(409, "session_wire_version_mismatch")
         progress = body["progress"]
@@ -353,7 +392,7 @@ class Broker:
     def enqueue(self, body):
         if type(body) is not dict:
             raise ProtocolError(400, "invalid_command")
-        if type(body.get("schema_version")) is not int or body.get("schema_version") not in {WIRE_VERSION, WIRE_VERSION_V3}:
+        if type(body.get("schema_version")) is not int or body.get("schema_version") not in {WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4}:
             raise ProtocolError(400, "schema_version_unsupported")
         version = body["schema_version"]
         if not self._request_valid(body, version):
@@ -374,6 +413,8 @@ class Broker:
             if version == WIRE_VERSION and (body["action"] != ACTION or body["arguments"] != {}):
                 raise ProtocolError(400, "action_not_allowed")
             if version == WIRE_VERSION_V3 and body["action"] not in V3_PRODUCTION_ACTIONS:
+                raise ProtocolError(400, "action_not_allowed")
+            if version == WIRE_VERSION_V4 and body["action"] not in V4_PRODUCTION_ACTIONS:
                 raise ProtocolError(400, "action_not_allowed")
             if self.closed or not self._connected():
                 raise ProtocolError(503, "game_disconnected")
@@ -418,6 +459,12 @@ class Broker:
             if version == WIRE_VERSION_V3 and not valid_action_state_v3(
                     self.state, body["action"], body["arguments"]):
                 raise ProtocolError(409, "precondition")
+            if version == WIRE_VERSION_V4 and not valid_action_binding_v4(
+                    self.state, body["action"], body["arguments"]):
+                raise ProtocolError(409, "stale_business_reference")
+            if version == WIRE_VERSION_V4 and not valid_action_state_v4(
+                    self.state, body["action"], body["arguments"]):
+                raise ProtocolError(409, "precondition")
             now_wall = self.clock()
             now_monotonic = self.monotonic()
             request = copy.deepcopy(body)
@@ -444,7 +491,7 @@ class Broker:
                 or set(body) != {"schema_version", "id", "broker_epoch", "world_epoch", "revision",
                                 "expected_version", "operator_note", "confirm_no_replay"}
                 or type(body.get("schema_version")) is not int
-                or body.get("schema_version") not in {WIRE_VERSION, WIRE_VERSION_V3} or not isinstance(body.get("id"), str)
+                or body.get("schema_version") not in {WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4} or not isinstance(body.get("id"), str)
                 or not isinstance(body.get("broker_epoch"), str)
                 or not isinstance(body.get("world_epoch"), str) or not 1 <= len(body["world_epoch"]) <= 128
                 or type(body.get("revision")) is not int or body["revision"] < 0
@@ -464,7 +511,7 @@ class Broker:
             if (record is None or record["command_status"] != "outcome_unknown"
                     or record.get("resolution") is not None
                     or not (record["command"].get("action") == "close_menu"
-                        or self._record_schema_version(record) == WIRE_VERSION_V3
+                        or self._record_schema_version(record) in {WIRE_VERSION_V3, WIRE_VERSION_V4}
                         and record["command"].get("action") in {"open_bargain_panel", "close_bargain_panel"})):
                 raise ProtocolError(409, "command_not_reconcilable")
             record_version = self._record_schema_version(record)
@@ -484,7 +531,7 @@ class Broker:
                 # After restart the map is intentionally empty; the durable Unix deadline
                 # above plus the required new Mod session are the available evidence.
                 command = record["command"]
-                if self._record_schema_version(record) in {WIRE_VERSION, WIRE_VERSION_V3}:
+                if self._record_schema_version(record) in {WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4}:
                     mono_deadline += command["execution_timeout_ms"] / 1000
                 reported_deadline = self.execution_monotonic_deadlines.get(record["command_id"])
                 if reported_deadline is not None:
@@ -516,7 +563,7 @@ class Broker:
     @staticmethod
     def _command_reply(record):
         record_version = Broker._record_schema_version(record)
-        envelope_version = record_version if record_version in {WIRE_VERSION, WIRE_VERSION_V3} else WIRE_VERSION
+        envelope_version = record_version if record_version in {WIRE_VERSION, WIRE_VERSION_V3, WIRE_VERSION_V4} else WIRE_VERSION
         return {"id": record["command_id"], "command_status": record["command_status"],
                 "status": record["command_status"],
                 "result": copy.deepcopy(record["result"]), "resolved": bool(record.get("resolution")),
@@ -647,9 +694,9 @@ class Handler(BaseHTTPRequestHandler):
                     raise ProtocolError(400, "invalid_content_length")
                 length = int(lengths[0])
                 wire_header = self.headers.get("X-PawnPilot-Wire-Version")
-                if wire_header is not None and wire_header not in {"2", "3"}:
+                if wire_header is not None and wire_header not in {"2", "3", "4"}:
                     raise ProtocolError(400, "wire_version_header_invalid")
-                if length > MAX_V2_MESSAGE_BYTES and wire_header != str(WIRE_VERSION_V3):
+                if length > MAX_V2_MESSAGE_BYTES and wire_header not in {str(WIRE_VERSION_V3), str(WIRE_VERSION_V4)}:
                     raise ProtocolError(413, "body_too_large_or_empty")
                 if not 0 < length <= MAX_BODY:
                     raise ProtocolError(413, "body_too_large_or_empty")

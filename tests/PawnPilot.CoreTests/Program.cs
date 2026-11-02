@@ -13,6 +13,11 @@ if (args.Length == 1 && args[0] == "--export-inspection-fixtures")
     Console.WriteLine(InspectionHandoffTests.Export());
     return;
 }
+if (args.Length == 1 && args[0] == "--export-interaction-fixtures")
+{
+    Console.WriteLine(InteractionTests.Export());
+    return;
+}
 if (args.Length >= 2 && (args[0] == "--simulate-mod" || args[0] == "--simulate-mod-v3"))
 {
     Environment.ExitCode = await ModSimulator.Run(args);
@@ -25,6 +30,8 @@ void Check(string name, bool condition)
     Console.WriteLine("PASS " + name); count++;
 }
 CandidateAdmissionTests.Run(Check);
+InteractionTests.Run(Check);
+VersionedSerializationTests.Run(Check);
 Snapshot State(string version = "world:1", bool ready = true, bool loaded = true, bool open = true,
     string epoch = "world", int revision = 1, int cash = 10) =>
     new Snapshot

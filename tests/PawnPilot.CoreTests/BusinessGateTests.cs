@@ -6,7 +6,7 @@ public static class BusinessGateTests
     public static void Run(Action<string, bool> check)
     {
         using var fixture = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "v3-business-observation.json")));
-        var options = new JsonSerializerOptions { IncludeFields = true };
+        var options = ManagedVersionedJson.Create();
         bool canonical = true;
         foreach (var sample in fixture.RootElement.GetProperty("fingerprint_cases").EnumerateArray())
         {

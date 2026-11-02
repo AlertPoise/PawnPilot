@@ -16,7 +16,9 @@ namespace PawnPilot
     {
         public const int SchemaVersion = 2;
         public const int BusinessSchemaVersion = 3;
-        public static bool Supported(int version) => version == SchemaVersion || version == BusinessSchemaVersion;
+        public const int InteractionSchemaVersion = 4;
+        public static bool Supported(int version) => version == SchemaVersion || IsBusinessVersion(version);
+        public static bool IsBusinessVersion(int version) => version == BusinessSchemaVersion || version == InteractionSchemaVersion;
         public const int MaxCommands = 4096;
     }
 
@@ -58,6 +60,8 @@ namespace PawnPilot
         public InteractionObservation interaction;
         public BusinessObservation business;
         public List<LegalAction> legal_actions;
+        public SurfaceObservation surface;
+        public bool ShouldSerializesurface() => schema_version == Protocol.InteractionSchemaVersion && surface != null;
     }
 
     // Null means the optional property was absent. The wire parser rejects explicit nulls.
@@ -70,6 +74,7 @@ namespace PawnPilot
         public string container;
         public string option_ref;
         public string dialogue_ref, mode, authorization_ref;
+        public string surface_ref, control_ref;
         public string handoff_ref;
         public string settlement_ref;
         public int? amount, max_spend;
@@ -100,6 +105,8 @@ namespace PawnPilot
         public string id, broker_epoch, status, reason;
         public Snapshot before, after;
         public Progress execution;
+        public InteractionResult interaction_result;
+        public bool ShouldSerializeinteraction_result() => schema_version == Protocol.InteractionSchemaVersion && interaction_result != null;
     }
 
     [Serializable] public sealed class Exchange
@@ -130,6 +137,7 @@ namespace PawnPilot
     {
         public string outcome; // pending | succeeded | uncertain
         public string reason;
+        public InteractionResult interaction_result;
         public static VerificationDecision Pending() => new VerificationDecision { outcome = "pending", reason = "postcondition_pending" };
         public static VerificationDecision Succeeded() => new VerificationDecision { outcome = "succeeded", reason = "postcondition_observed" };
         public static VerificationDecision Uncertain(string reason) => new VerificationDecision { outcome = "uncertain", reason = reason };
@@ -150,6 +158,8 @@ namespace PawnPilot
             public ActionResult result;
             public bool acknowledged;
             public bool invocationStarted;
+            public bool nativeReturned;
+            public InteractionResult interactionResult;
             public long startedUnixMs;
             public long deadlineUnixMs;
             public long startedMonotonicMs;
@@ -178,7 +188,8 @@ namespace PawnPilot
             if (!Protocol.Supported(command.schema_version))
                 return NewResult(command, "rejected", "schema_version_unsupported", before, null, Completed(command, false, 1));
             string shapeError = ValidateArgumentsShape(command.arguments, command.action);
-            if (command.schema_version == Protocol.SchemaVersion && HasV3Arguments(command.arguments)) shapeError = "invalid_arguments";
+            if ((command.schema_version == Protocol.SchemaVersion && (HasV3Arguments(command.arguments) || HasV4Arguments(command.arguments))) ||
+                (command.schema_version == Protocol.BusinessSchemaVersion && HasV4Arguments(command.arguments))) shapeError = "invalid_arguments";
             if (shapeError != null) return NewResult(command, "rejected", shapeError, before, null, Completed(command, false, 1));
             string fingerprint = EnvelopeFingerprint(command);
             if (records.TryGetValue(command.id, out var existing))
@@ -264,6 +275,10 @@ namespace PawnPilot
                     FinishUnknown(active, "execution_exception", snapshot);
                     return CurrentStep();
                 }
+                // For ordinary actions, a clean synchronous Invoke return remains the receipt.
+                // Generic UI actions can start an asynchronous native gesture (for example a
+                // held pointer); their adapter must explicitly report the actual callback return.
+                if (!InteractionPolicy.IsGenericCommand(active.command)) active.nativeReturned = true;
                 return CurrentStep();
             }
 
@@ -306,15 +321,27 @@ namespace PawnPilot
                 FinishUnknown(active, "verification_exception", snapshot);
                 return CurrentStep();
             }
+            if (InteractionPolicy.IsGenericCommand(active.command))
+            {
+                var supplied = decision.interaction_result ??
+                    InteractionPolicy.UnknownResult(active.command, active.before, snapshot, active.nativeReturned);
+                active.interactionResult = InteractionPolicy.BindTrustedReceipt(supplied, active.nativeReturned);
+                decision.interaction_result = InteractionState.Clone(active.interactionResult);
+            }
             if (decision.outcome == "uncertain")
                 FinishUnknown(active, decision.reason ?? "verification_uncertain", snapshot);
             else if (decision.outcome == "succeeded")
             {
                 // The test injection can delay/drive observation but cannot weaken the production
                 // action's close-menu evidence predicate.
-                if (!(active.command.action == "close_menu" ? CloseMenuPostcondition(active.before, snapshot) :
-                    BusinessActionPolicy.Postcondition(active.command, active.before, snapshot)))
+                bool postcondition = InteractionPolicy.IsGenericCommand(active.command)
+                    ? InteractionPolicy.Postcondition(active.command, active.before, snapshot, active.interactionResult)
+                    : active.command.action == "close_menu" ? CloseMenuPostcondition(active.before, snapshot) :
+                      BusinessActionPolicy.Postcondition(active.command, active.before, snapshot);
+                if (!postcondition)
                 {
+                    if (InteractionPolicy.IsGenericCommand(active.command) && active.interactionResult != null)
+                        active.interactionResult.verification = "unknown";
                     FinishUnknown(active, "postcondition_not_observed", snapshot);
                     return CurrentStep();
                 }
@@ -337,6 +364,18 @@ namespace PawnPilot
             if (active.invocationStarted) FinishUnknown(active, "broker_epoch_changed_after_invocation", snapshot);
             else Finish(active, "rejected", "stale_broker_epoch", snapshot, Completed(active.command, false, Next(active.progress.sequence)));
             return Clone(active.result);
+        }
+
+        // Trusted native adapters call this only after the game callback has returned. Merely
+        // starting a held input is not a receipt. Late reports after timeout/terminal completion
+        // are ignored so they cannot rewrite an already published unknown result.
+        public bool MarkNativeReturned(string commandId)
+        {
+            if (active == null || active.result != null || !active.invocationStarted ||
+                !InteractionPolicy.IsGenericCommand(active.command) ||
+                !string.Equals(active.command.id, commandId, StringComparison.Ordinal)) return false;
+            active.nativeReturned = true;
+            return true;
         }
 
         // Local lifecycle cancellation only. There is deliberately no wire/MCP cancel action.
@@ -387,7 +426,24 @@ namespace PawnPilot
         private void Finish(Record record, string status, string reason, Snapshot after, Progress progress)
         {
             record.progress = progress;
-            record.result = NewResult(record.command, status, reason, record.before, after, progress);
+            bool generic = InteractionPolicy.IsGenericCommand(record.command);
+            Snapshot evidenceAfter = after;
+            if (generic && (record.before == null || evidenceAfter != null &&
+                (evidenceAfter.schema_version != ResultVersion(record.command) ||
+                 evidenceAfter.world_epoch != record.before.world_epoch || evidenceAfter.scene != record.before.scene)))
+                evidenceAfter = null;
+            record.result = NewResult(record.command, status, reason, record.before, evidenceAfter, progress);
+            if (generic && record.invocationStarted)
+            {
+                // A terminal unknown result describes the exact retained after snapshot. Any
+                // earlier pending verifier receipt may refer to another frame, so recompute its
+                // finite DTO deltas at the terminal boundary.
+                var evidence = status == "succeeded" && record.interactionResult != null
+                    ? record.interactionResult
+                    : InteractionPolicy.UnknownResult(record.command, record.before, evidenceAfter, record.nativeReturned);
+                record.result.interaction_result = InteractionPolicy.BindTrustedReceipt(evidence, record.nativeReturned);
+                if (status != "succeeded") record.result.interaction_result.verification = "unknown";
+            }
             record.terminalStatus = status;
             pendingAcknowledgement = record;
         }
@@ -405,14 +461,20 @@ namespace PawnPilot
             if (c.schema_version != before.schema_version) return "schema_version_mismatch";
             if (c.expected_version != before.version || c.expected_world_epoch != before.world_epoch || c.expected_revision != before.revision)
                 return "stale_state";
-            if (c.action != "close_menu" && (c.schema_version != Protocol.BusinessSchemaVersion || !BusinessActionPolicy.IsRegistered(c.action))) return "unknown_action";
+            if (c.action != "close_menu" && (!Protocol.IsBusinessVersion(c.schema_version) || !BusinessActionPolicy.IsRegistered(c.action))) return "unknown_action";
             if (c.action == "close_menu" && !ArgumentsEmpty(c.arguments)) return "invalid_arguments";
             if (BusinessProjection.IsInspectionWaitingIn(before) && c.action != "resume_inspection_handoff") return "inspection_handoff";
             if (!before.ready)
                 return !before.loaded ? "not_loaded" : (before.not_ready_reason ?? "not_ready");
             if (c.action == "close_menu")
             { if (!before.can_close_menu || !HasLegalCloseMenu(before)) return "precondition"; }
-            else { string reason = BusinessActionPolicy.Validate(c, before); if (reason != null) return reason; }
+            else
+            {
+                string reason = InteractionPolicy.IsGenericCommand(c)
+                    ? InteractionPolicy.ValidateCommand(c, before)
+                    : BusinessActionPolicy.Validate(c, before);
+                if (reason != null) return reason;
+            }
             if (now >= c.start_deadline_unix_ms) return "start_deadline_elapsed";
             return null;
         }
@@ -430,7 +492,13 @@ namespace PawnPilot
             if (BusinessProjection.IsInspectionWaitingIn(snapshot) && record.command.action != "resume_inspection_handoff") return "inspection_handoff";
             if (record.command.action == "close_menu")
             { if (!snapshot.can_close_menu || !HasLegalCloseMenu(snapshot)) return "precondition"; }
-            else { string reason = BusinessActionPolicy.Validate(record.command, snapshot); if (reason != null) return reason; }
+            else
+            {
+                string reason = InteractionPolicy.IsGenericCommand(record.command)
+                    ? InteractionPolicy.ValidateCommand(record.command, snapshot)
+                    : BusinessActionPolicy.Validate(record.command, snapshot);
+                if (reason != null) return reason;
+            }
             if (now >= record.command.start_deadline_unix_ms) return "start_deadline_elapsed";
             if (now > 9007199254740991L - record.command.execution_timeout_ms) return "execution_deadline_out_of_range";
             return null;
@@ -453,9 +521,11 @@ namespace PawnPilot
             if (snapshot.schema_version == Protocol.SchemaVersion)
             {
                 if (snapshot.business.support != "unsupported" || snapshot.business.customer_ref != null || snapshot.business.item_refs != null ||
-                    snapshot.business.offer_ref != null || snapshot.business.collection_fingerprint != null || snapshot.business.details != null) return false;
+                    snapshot.business.offer_ref != null || snapshot.business.collection_fingerprint != null || snapshot.business.details != null || snapshot.surface != null) return false;
             }
             else if (!BusinessWire.Validate(snapshot.business)) return false;
+            if (snapshot.schema_version != Protocol.InteractionSchemaVersion && snapshot.surface != null) return false;
+            if (snapshot.schema_version == Protocol.InteractionSchemaVersion && !InteractionState.IsValid(snapshot.surface)) return false;
             if (snapshot.legal_actions == null || snapshot.legal_actions.Count > (snapshot.schema_version == 2 ? 1 : 64)) return false;
             bool close = false;
             for (int i = 0; i < snapshot.legal_actions.Count; i++)
@@ -471,12 +541,21 @@ namespace PawnPilot
                     if (!ArgumentsEmpty(legal.arguments) || !snapshot.loaded || !snapshot.menu_open) return false;
                     close = true;
                 }
-                else if (snapshot.schema_version != 3 || !BusinessActionPolicy.IsEnabled(legal.action) || !BusinessActionPolicy.IsRegistered(legal.action) ||
-                    !BusinessActionPolicy.ArgumentsValid(legal.action, legal.arguments) ||
-                    (snapshot.menu_open && legal.action != "resume_inspection_handoff")) return false;
+                else
+                {
+                    if (!Protocol.IsBusinessVersion(snapshot.schema_version) || !BusinessActionPolicy.IsEnabled(legal.action) ||
+                        !BusinessActionPolicy.IsRegistered(legal.action) ||
+                        (snapshot.menu_open && legal.action != "resume_inspection_handoff")) return false;
+                    if (InteractionPolicy.HasSurfaceBinding(legal.arguments))
+                    {
+                        if (snapshot.schema_version != Protocol.InteractionSchemaVersion ||
+                            InteractionPolicy.ValidateCandidate(snapshot, legal, requireFinalStatus: true) != null) return false;
+                    }
+                    else if (!BusinessActionPolicy.ArgumentsValid(legal.action, legal.arguments)) return false;
+                }
             }
             if (snapshot.can_close_menu != close) return false;
-            return true;
+            return InteractionPolicy.ValidateSnapshot(snapshot, requireFinalStatus: true);
         }
 
         private static bool CloseMenuPostcondition(Snapshot before, Snapshot after) => before != null && after != null &&
@@ -507,6 +586,7 @@ namespace PawnPilot
             if (a == null) return "invalid_arguments";
             if (!ValidRef(a.customer_ref) || !ValidRef(a.offer_ref) || !ValidRef(a.option_ref) || !ValidRef(a.collection_fingerprint) ||
                 !ValidRef(a.dialogue_ref) || !ValidRef(a.mode) || !ValidRef(a.authorization_ref) || !ValidRef(a.handoff_ref) ||
+                !ValidRef(a.surface_ref) || !ValidRef(a.control_ref) ||
                 !ValidRef(a.settlement_ref) || (action != "confirm_end_of_day" && a.amount < 0) || a.max_spend < 0)
                 return "invalid_arguments";
             if (a.container != null && (a.container.Length < 1 || a.container.Length > 32)) return "invalid_arguments";
@@ -530,10 +610,13 @@ namespace PawnPilot
         }
 
         private static bool ArgumentsEmpty(ActionArguments a) => a != null && a.customer_ref == null && a.item_refs == null &&
-            a.offer_ref == null && a.collection_fingerprint == null && a.container == null && a.option_ref == null && !HasV3Arguments(a);
+            a.offer_ref == null && a.collection_fingerprint == null && a.container == null && a.option_ref == null &&
+            !HasV3Arguments(a) && !HasV4Arguments(a);
 
         private static bool HasV3Arguments(ActionArguments a) => a != null && (a.container != null || a.dialogue_ref != null || a.mode != null ||
             a.authorization_ref != null || a.handoff_ref != null || a.settlement_ref != null || a.amount.HasValue || a.max_spend.HasValue);
+
+        private static bool HasV4Arguments(ActionArguments a) => a != null && (a.surface_ref != null || a.control_ref != null);
 
         private static bool ValidText(string value, int max) => !string.IsNullOrEmpty(value) && value.Length <= max;
         private static int Next(int value) => value == int.MaxValue ? int.MaxValue : value + 1;
@@ -591,6 +674,7 @@ namespace PawnPilot
             if (c.arguments.authorization_ref != null) Property(args, ref argFirst, "authorization_ref", Quote(c.arguments.authorization_ref));
             if (c.arguments.collection_fingerprint != null) Property(args, ref argFirst, "collection_fingerprint", Quote(c.arguments.collection_fingerprint));
             if (c.arguments.container != null) Property(args, ref argFirst, "container", Quote(c.arguments.container));
+            if (c.arguments.control_ref != null) Property(args, ref argFirst, "control_ref", Quote(c.arguments.control_ref));
             if (c.arguments.customer_ref != null) Property(args, ref argFirst, "customer_ref", Quote(c.arguments.customer_ref));
             if (c.arguments.dialogue_ref != null) Property(args, ref argFirst, "dialogue_ref", Quote(c.arguments.dialogue_ref));
             if (c.arguments.handoff_ref != null) Property(args, ref argFirst, "handoff_ref", Quote(c.arguments.handoff_ref));
@@ -605,6 +689,7 @@ namespace PawnPilot
             if (c.arguments.offer_ref != null) Property(args, ref argFirst, "offer_ref", Quote(c.arguments.offer_ref));
             if (c.arguments.option_ref != null) Property(args, ref argFirst, "option_ref", Quote(c.arguments.option_ref));
             if (c.arguments.settlement_ref != null) Property(args, ref argFirst, "settlement_ref", Quote(c.arguments.settlement_ref));
+            if (c.arguments.surface_ref != null) Property(args, ref argFirst, "surface_ref", Quote(c.arguments.surface_ref));
             args.Append('}');
             Property(s, ref first, "arguments", args.ToString());
             Property(s, ref first, "broker_epoch", Quote(c.broker_epoch));
@@ -658,7 +743,7 @@ namespace PawnPilot
                 { phase = s.interaction.phase, consistency = s.interaction.consistency, reason = s.interaction.reason, operable = s.interaction.operable },
                 business = s.business == null ? null : new BusinessObservation
                 { support = s.business.support, customer_ref = s.business.customer_ref, item_refs = s.business.item_refs == null ? null : new List<string>(s.business.item_refs), offer_ref = s.business.offer_ref, collection_fingerprint = s.business.collection_fingerprint, details = BusinessWire.Clone(s.business.details) },
-                legal_actions = new List<LegalAction>()
+                legal_actions = new List<LegalAction>(), surface = InteractionState.Clone(s.surface)
             };
             if (s.legal_actions != null) foreach (var action in s.legal_actions)
                 copy.legal_actions.Add(action == null ? null : new LegalAction { action = action.action, arguments = Clone(action.arguments) });
@@ -670,7 +755,8 @@ namespace PawnPilot
             customer_ref = a.customer_ref, item_refs = a.item_refs == null ? null : new List<string>(a.item_refs),
             offer_ref = a.offer_ref, collection_fingerprint = a.collection_fingerprint, container = a.container, option_ref = a.option_ref,
             dialogue_ref = a.dialogue_ref, mode = a.mode, authorization_ref = a.authorization_ref, handoff_ref = a.handoff_ref,
-            settlement_ref = a.settlement_ref, amount = a.amount, max_spend = a.max_spend
+            settlement_ref = a.settlement_ref, amount = a.amount, max_spend = a.max_spend,
+            surface_ref = a.surface_ref, control_ref = a.control_ref
         };
 
         private static Progress Clone(Progress p) => p == null ? null : new Progress
@@ -683,7 +769,8 @@ namespace PawnPilot
         private static ActionResult Clone(ActionResult r) => r == null ? null : new ActionResult
         {
             schema_version = r.schema_version, id = r.id, broker_epoch = r.broker_epoch, status = r.status, reason = r.reason,
-            before = Clone(r.before), after = Clone(r.after), execution = Clone(r.execution)
+            before = Clone(r.before), after = Clone(r.after), execution = Clone(r.execution),
+            interaction_result = InteractionState.Clone(r.interaction_result)
         };
 
         private static Command Clone(Command c) => c == null ? null : new Command

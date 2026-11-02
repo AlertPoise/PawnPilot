@@ -1,4 +1,6 @@
-# PawnPilot — M5-A 基线修复与机制核验
+# PawnPilot — M5-B 通用交互与结果契约
+
+M5-B 建立受限通用对话、可见选项、原生长按遣走及分层效果核验，生产启用 wire v4，历史 v2/v3 保持独立校验。真实隔离槽已完成普通开门、接待、遣走和一次日结；绿色名片顾客的通用遣走实际让其离场，但暴露跨顾客物品引用重签问题，原命令保留 unknown、未重放。项目内实现 PASS，实机 PARTIAL、最终修复包复验 PENDING；671 managed + 219 Python = 890 项通过，Release 构建0错误。修复、证据边界和后续验收见 [M5-B 报告](docs/m5b-implementation.md)。
 
 M5-A **项目内实现与静态调查 PASS，未进行新实机验收**。统一生产 `legal_actions` 候选准入，修复整理动作在日过渡期间与协议不一致的问题；Broker 严格校验、历史 wire/journal 和人工/未知结果门禁保持不变。自动化 **593 managed + 202 Python = 795项**通过，正式构建0错误（2个既有NU1900网络警告）。本机程序集与资源核验了绿色名片、废料数量接收、通缉/Aug扩展需求，以及声望45个注册特权/47个定义和逐阶段舍入规则。M5-B～D接口设计、证据等级及待授权实机项目见 [M5-A 报告](docs/m5a-implementation.md)。本轮没有安装Mod、操作游戏或存档。
 
@@ -18,7 +20,7 @@ M3-A **PASS（已验证的基础范围）**，交易面板自主开启收尾已�
 
 Codex → MCP stdio Adapter → loopback HTTP broker ← Unity 主线程主动轮询 Mod。
 
-Adapter 与 broker 独立进程；Adapter 不启动 broker，Codex 退出不销毁结果。保留安装 ID pawnpilot_m0 和既有双层目录。默认 Mod 使用 [wire v3](protocol/v3-contract.md)，broker/MCP 显式兼容 v2；新 business payload 使用 schema 2，历史 schema 1/journal 不重标版本。见 [M2-C 观察报告](docs/m2c-implementation.md)、[M2-D 动作报告](docs/m2d-implementation.md)、[冻结的 v2 契约](protocol/v2-contract.md)及 [M2-B 报告](docs/m2b-implementation.md)。
+Adapter 与 broker 独立进程；Adapter 不启动 broker，Codex 退出不销毁结果。保留安装 ID pawnpilot_m0 和既有双层目录。默认 Mod 使用 [wire v4](protocol/v4-contract.md)，broker/MCP 显式兼容冻结的 v2/v3；新 business payload 使用 schema 2，历史 schema 1/journal 不重标版本。见 [M2-C 观察报告](docs/m2c-implementation.md)、[M2-D 动作报告](docs/m2d-implementation.md)、[冻结的 v2 契约](protocol/v2-contract.md)及 [M2-B 报告](docs/m2b-implementation.md)。
 
 ## 环境与构建
 
@@ -68,9 +70,9 @@ pyproject.toml 固定官方 MCP SDK 2.3.0、Pydantic 2.12.5 和异步等待使�
 
 参数和返回结构都有 JSON Schema。业务错误结构化返回，区分 broker、protocol、connection、configuration、internal。日志不污染 MCP stdout。[Agent Skill](.agents/skills/pawnpilot-player/SKILL.md)规定一次一个动作、未知先查询、人工暂停不得自行恢复。
 
-版本字段不要混用：MCP响应外层 `schema_version: 2` 是响应格式，`business.details.schema_version` 是业务数据格式。`health_check` 和 `observe` 的顶层 `action_schema_version` 才是动作wire版本，等于已连接快照的 `snapshot.state.schema_version`；没有连接/快照时为null。提交前复制最新 `observe.action_schema_version` 到 `act.schema_version`，并继续使用同次快照的身份、版本和合法动作。旧字段及wire2/3校验保持兼容，不自动升级错误请求。
+版本字段不要混用：MCP响应外层 `schema_version: 2` 是响应格式，`business.details.schema_version` 是业务数据格式。`health_check` 和 `observe` 的顶层 `action_schema_version` 才是动作wire版本，等于已连接快照的 `snapshot.state.schema_version`；没有连接/快照时为null。提交前复制最新 `observe.action_schema_version` 到 `act.schema_version`，并继续使用同次快照的身份、版本和合法动作。旧字段及wire2/3校验保持兼容，新v4独立校验，不自动升级错误请求。
 
-诊断 CLI 的 close_menu/reconcile 必须显式传入与核对快照一致的 --schema-version 2 或 3；不自动猜测或降级。schema_version 是 wire 结构版本，不是能力授权。v1 wire 请求明确拒绝；历史 v1 journal 先备份再迁移，v1/v2/v3 查询保留原证据。broker_epoch 每次 broker 启动改变；session_id 是 Mod 进程身份；同会话禁止混用 wire 版本。world_epoch 在场景切换、载入 Hook 或存档身份改变时更新；revision 随观察快照变化递增；version 必须等于 world_epoch:revision。
+诊断 CLI 的 close_menu/reconcile 必须显式传入与核对快照一致的 --schema-version 2、3 或 4；不自动猜测或降级。schema_version 是 wire 结构版本，不是能力授权。v1 wire 请求明确拒绝；历史 v1 journal 先备份再迁移，v1/v2/v3/v4 查询保留原证据。broker_epoch 每次 broker 启动改变；session_id 是 Mod 进程身份；同会话禁止混用 wire 版本。world_epoch 在场景切换、载入 Hook 或存档身份改变时更新；revision 随观察快照变化递增；version 必须等于 world_epoch:revision。
 
 loaded 表示当前游戏场景中存档已初始化；ready 额外要求必要 UI/库存组件存在并稳定两个 Unity Update 帧。动作前再次核对身份和状态。loaded=false 时现金 0 是无效占位。两个 can_act 字段作用域不同：health_check.can_act 表示已连接、就绪、broker允许写入且存在当前合法动作；observe.snapshot.can_act 保留 broker 门禁可用性，具体合法动作以 legal_actions 为准。当broker门禁可用但legal_actions为空时，前者false、后者true；不能据此构造未列出的动作。
 
@@ -99,7 +101,7 @@ loaded 表示当前游戏场景中存档已初始化；ready 额外要求必要 
 
 journal 使用独占进程锁、同目录临时文件、flush/fsync 与原子替换。命令先落盘后交付，结果先落盘后确认。重启 pending 转 rejected，running 转 unknown；原 Mod 保留结果可按原 epoch/session 归档，不重放。已完成结果跨重启可查。上限 4096 条/16 MiB，满载、损坏、写失败停止写入，不淘汰 ID。此方案不宣称 exactly-once，不能抵御人为删除记录或断电磁盘损坏。
 
-若 Mod 退出使结果丢失，不能删除 journal 清零。人工恢复仅允许 close_menu，以及 wire3 的 open_bargain_panel / close_bargain_panel；议价选择、成交等业务动作不允许此恢复。操作者核对当前世界、正常关闭菜单、退出旧 Mod 并建立新会话，重新 observe 并记录画面证据。原命令最迟可能执行期限已过、快照新鲜就绪且版本前进后，才可执行：
+若 Mod 退出使结果丢失，不能删除 journal 清零。人工恢复仅允许 close_menu，以及 wire3/4 的 open_bargain_panel / close_bargain_panel；议价选择、成交等业务动作不允许此恢复。操作者核对当前世界、正常关闭菜单、退出旧 Mod 并建立新会话，重新 observe 并记录画面证据。原命令最迟可能执行期限已过、快照新鲜就绪且版本前进后，才可执行：
 
 ~~~powershell
 python bridge/client.py reconcile --schema-version 3 --id '<原ID>' --broker-epoch '<当前broker>' --world-epoch '<当前world>' --revision '<当前revision>' --expected-version '<当前world>:<当前revision>' --operator-note '<人工核对世界、菜单及证据位置>' --confirm-no-replay

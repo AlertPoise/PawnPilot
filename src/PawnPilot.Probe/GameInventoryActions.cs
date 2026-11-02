@@ -29,7 +29,7 @@ namespace PawnPilot
         internal List<LegalAction> BuildLegalActions(Snapshot snapshot)
         {
             var actions = new List<LegalAction>();
-            if (snapshot == null || snapshot.schema_version != Protocol.BusinessSchemaVersion || !snapshot.ready ||
+            if (snapshot == null || !Protocol.IsBusinessVersion(snapshot.schema_version) || !snapshot.ready ||
                 snapshot.business?.details?.customer == null || snapshot.business.details.customer.presence != "absent" ||
                 snapshot.menu_open || (snapshot.phase != "MORNING" && snapshot.phase != "OPEN")) return actions;
 
@@ -93,7 +93,7 @@ namespace PawnPilot
         {
             evidence = null;
             reason = "player_inventory_unverified";
-            if (snapshot == null || snapshot.schema_version != Protocol.BusinessSchemaVersion || !snapshot.ready ||
+            if (snapshot == null || !Protocol.IsBusinessVersion(snapshot.schema_version) || !snapshot.ready ||
                 string.IsNullOrEmpty(snapshot.world_epoch) || string.IsNullOrEmpty(snapshot.scene) ||
                 snapshot.business?.details?.customer == null || snapshot.business.details.customer.presence != "absent" ||
                 snapshot.menu_open || (snapshot.phase != "MORNING" && snapshot.phase != "OPEN"))

@@ -612,7 +612,7 @@ def main():
         "Here state means observe.snapshot.state. Copy the explicit action_schema_version, which equals "
         "state.schema_version; null means no connected state, so do not act. Never copy from the "
         "outer tool-reply schema_version or business.details.schema_version (both may be 2 while the "
-        "actual state wire version is 3). "
+        "actual state wire version is 3 or 4). "
         "ONLY wait_for_update has a request wrapper. For command waits use exactly "
         "request={criterion:'command_terminal', command_id:the_id, max_wait_ms:30000}; "
         "do not pass kind, broker_epoch or world_epoch to a command-terminal wait. "

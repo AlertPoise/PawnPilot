@@ -50,6 +50,9 @@ namespace PawnPilot
         public static bool ArgumentsValid(string action, ActionArguments a)
         {
             if (!IsRegistered(action) || a == null) return false;
+            // Surface/control bindings are reserved for InteractionPolicy's v4 route. The
+            // legacy DTO policy continues to accept only its exact pre-v4 argument shapes.
+            if (a.surface_ref != null || a.control_ref != null) return false;
             if (DayActionPolicy.Handles(action)) return DayActionPolicy.ArgumentsValid(action, a);
             if (a.settlement_ref != null) return false;
             if (action != "resume_inspection_handoff" && a.handoff_ref != null) return false;
@@ -365,7 +368,7 @@ namespace PawnPilot
         private static bool ExactPlayerInventory(Snapshot snapshot) =>
             TryGetCompleteContainer(snapshot, "player", out _);
 
-        private static bool BaseSnapshotReady(Snapshot s) => s != null && s.schema_version == Protocol.BusinessSchemaVersion &&
+        private static bool BaseSnapshotReady(Snapshot s) => s != null && Protocol.IsBusinessVersion(s.schema_version) &&
             s.loaded && s.ready && s.business != null && s.business.details != null &&
             s.business.details.customer != null && s.business.details.ui != null &&
             s.interaction != null && s.legal_actions != null;
@@ -386,7 +389,7 @@ namespace PawnPilot
         {
             if (action == "sort_inventory_default") return SortInventoryPostcondition(before, after);
             if (before == null || after == null || !before.ready || !after.ready ||
-                before.schema_version != Protocol.BusinessSchemaVersion || after.schema_version != Protocol.BusinessSchemaVersion ||
+                !Protocol.IsBusinessVersion(before.schema_version) || !Protocol.IsBusinessVersion(after.schema_version) ||
                 before.world_epoch != after.world_epoch || before.scene != after.scene || after.revision <= before.revision ||
                 before.cash != after.cash || before.business?.details?.customer == null || after.business?.details?.customer == null)
                 return false;
@@ -531,7 +534,7 @@ namespace PawnPilot
         private static bool SortInventoryPostcondition(Snapshot before, Snapshot after)
         {
             if (before == null || after == null || !before.ready || !after.ready ||
-                before.schema_version != Protocol.BusinessSchemaVersion || after.schema_version != Protocol.BusinessSchemaVersion ||
+                !Protocol.IsBusinessVersion(before.schema_version) || !Protocol.IsBusinessVersion(after.schema_version) ||
                 before.world_epoch != after.world_epoch || before.scene != after.scene || after.revision < before.revision ||
                 before.cash != after.cash || !ExactPlayerInventory(before) || !ExactPlayerInventory(after)) return false;
             var oldItems = before.business.details.items;
@@ -573,7 +576,7 @@ namespace PawnPilot
 
         private static bool BaselinePostcondition(Snapshot before, Snapshot after) =>
             before != null && after != null && before.ready && after.ready &&
-            before.schema_version == Protocol.BusinessSchemaVersion && after.schema_version == Protocol.BusinessSchemaVersion &&
+            Protocol.IsBusinessVersion(before.schema_version) && Protocol.IsBusinessVersion(after.schema_version) &&
             string.Equals(before.world_epoch, after.world_epoch, StringComparison.Ordinal) &&
             string.Equals(before.scene, after.scene, StringComparison.Ordinal) && after.revision > before.revision &&
             before.cash == after.cash && before.business?.details?.customer != null &&
@@ -664,7 +667,7 @@ namespace PawnPilot
         private static bool HasExactlyOneConfirmationBlocker(List<string> blockers) =>
             blockers != null && blockers.Count == 1 && IsConfirmationBlocker(blockers[0]);
 
-        private static bool HasActionBlockingEvidence(List<string> blockers, string action)
+        internal static bool HasActionBlockingEvidence(List<string> blockers, string action)
         {
             if (blockers == null) return true;
             foreach (var blocker in blockers)

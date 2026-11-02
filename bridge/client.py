@@ -7,12 +7,12 @@ import urllib.error
 import urllib.request
 
 try:
-    from .protocol import MAX_V3_MESSAGE_BYTES, response_size_valid, strict_json_loads
+    from .protocol import MAX_V3_MESSAGE_BYTES, MAX_V4_MESSAGE_BYTES, response_size_valid, strict_json_loads
 except ImportError:
-    from protocol import MAX_V3_MESSAGE_BYTES, response_size_valid, strict_json_loads
+    from protocol import MAX_V3_MESSAGE_BYTES, MAX_V4_MESSAGE_BYTES, response_size_valid, strict_json_loads
 
 PORT = 18765
-MAX_RESPONSE = MAX_V3_MESSAGE_BYTES
+MAX_RESPONSE = max(MAX_V3_MESSAGE_BYTES, MAX_V4_MESSAGE_BYTES)
 
 
 class ResponseError(ValueError):
@@ -44,8 +44,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def request(config, path, body=None):
     raw = None if body is None else json.dumps(body).encode("utf-8")
     headers = {"Authorization": "Bearer " + config["token"], "Content-Type": "application/json"}
-    if type(body) is dict and type(body.get("schema_version")) is int and body["schema_version"] == 3:
-        headers["X-PawnPilot-Wire-Version"] = "3"
+    if type(body) is dict and type(body.get("schema_version")) is int and body["schema_version"] in (3, 4):
+        headers["X-PawnPilot-Wire-Version"] = str(body["schema_version"])
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", data=raw,
                                  headers=headers)
     # 忽略系统代理，避免 localhost 请求和密钥送往代理服务器。
@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--config", default="artifacts/session.json")
     parser.add_argument("action", choices=["state", "result", "observe", "close_menu", "reconcile"])
     parser.add_argument("--expected-version")
-    parser.add_argument("--schema-version", type=int, choices=[2, 3],
+    parser.add_argument("--schema-version", type=int, choices=[2, 3, 4],
                         help="wire version from the reviewed snapshot; required for writes")
     parser.add_argument("--id")
     parser.add_argument("--broker-epoch")

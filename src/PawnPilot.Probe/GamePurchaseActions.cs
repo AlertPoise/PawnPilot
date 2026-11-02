@@ -58,7 +58,7 @@ namespace PawnPilot
         internal LegalAction GetLegalAction(Snapshot snapshot)
         {
             LastUnavailableReason = null;
-            if (snapshot == null || snapshot.schema_version != Protocol.BusinessSchemaVersion || !snapshot.ready)
+            if (snapshot == null || !Protocol.IsBusinessVersion(snapshot.schema_version) || !snapshot.ready)
                 return Unavailable("not_ready");
             if (snapshot.business?.details?.quote == null || snapshot.business.details.quote.status != "complete" ||
                 snapshot.business.details.quote.mode != "normal" || !snapshot.business.details.quote.displayed_total.HasValue)
@@ -81,7 +81,7 @@ namespace PawnPilot
             };
             var command = new Command
             {
-                schema_version = Protocol.BusinessSchemaVersion,
+                schema_version = snapshot.schema_version,
                 id = "purchase-candidate",
                 action = "purchase_visible_offer",
                 expected_version = snapshot.version,
@@ -217,7 +217,7 @@ namespace PawnPilot
             request = new PurchaseRequest(command.id, command.expected_world_epoch, command.expected_version,
                 command.expected_revision, args.customer_ref, args.offer_ref, args.item_refs,
                 args.collection_fingerprint, args.mode, args.amount.Value, args.max_spend.Value);
-            if (snapshot == null || !snapshot.ready || snapshot.schema_version != Protocol.BusinessSchemaVersion ||
+            if (snapshot == null || !snapshot.ready || !Protocol.IsBusinessVersion(snapshot.schema_version) ||
                 snapshot.world_epoch != request.WorldEpoch || snapshot.version != request.ExpectedVersion ||
                 snapshot.revision != request.ExpectedRevision || snapshot.scene == null || snapshot.menu_open ||
                 snapshot.business?.details?.customer == null)

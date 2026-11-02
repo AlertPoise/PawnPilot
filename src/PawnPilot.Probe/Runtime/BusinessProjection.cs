@@ -255,6 +255,7 @@ namespace PawnPilot
         }
 
         private readonly Dictionary<object, ItemRecord> itemRefs = new Dictionary<object, ItemRecord>(RefComparer.Instance);
+        private readonly bool preserveItemRefsAcrossCustomers;
         private readonly Dictionary<object, RefState> optionRefs = new Dictionary<object, RefState>(RefComparer.Instance);
         private readonly Dictionary<object, RefState> bargainRefs = new Dictionary<object, RefState>(RefComparer.Instance);
         private object[] bargainIdentities = Array.Empty<object>();
@@ -273,6 +274,13 @@ namespace PawnPilot
         private string[] currentFrontItemRefs = Array.Empty<string>();
         private string world;
         private long nextReference;
+
+        public BusinessProjection() : this(false) { }
+
+        public BusinessProjection(bool preserveItemRefsAcrossCustomers)
+        {
+            this.preserveItemRefsAcrossCustomers = preserveItemRefsAcrossCustomers;
+        }
 
         internal BusinessObservation Invalidate(string worldEpoch, string reason)
         {
@@ -448,8 +456,9 @@ namespace PawnPilot
             {
                 customerIdentity = customer.Identity;
                 customerRef = hasCustomer ? NewRef("customer") : null;
-                ClearItemRefs();
+                if (!preserveItemRefsAcrossCustomers) ClearItemRefs();
                 ClearDialogueRefs();
+                ClearCollectionRefs();
             }
             if (!hasCustomer)
             {

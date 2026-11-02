@@ -169,7 +169,7 @@ public static class InspectionHandoffTests
         p.ResumeInspectionHandoff("w", command.arguments.handoff_ref); var resumed = Capture(p, input, 2);
         input.Containers[1].Items = new[] { new BusinessItemInput { Identity = new object(), Identifier = "water_pitcher", Name = "New visible water", Units = 1 } };
         var newPending = Capture(p, input, 3);
-        var options = new JsonSerializerOptions { IncludeFields = true };
+        var options = ManagedVersionedJson.Create();
         var root = JsonSerializer.SerializeToNode(new { snapshots, before, resume_command = command, resumed_snapshot = resumed, new_pending_snapshot = newPending }, options);
         void Clean(JsonNode node)
         {

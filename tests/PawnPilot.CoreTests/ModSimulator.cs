@@ -8,12 +8,11 @@ using PawnPilot;
 // Test executable only. No Unity references and no production capability switch.
 internal static class ModSimulator
 {
-    private static readonly JsonSerializerOptions Json = new()
+    private static readonly JsonSerializerOptions Json = ManagedVersionedJson.Create(options =>
     {
-        IncludeFields = true,
-        PropertyNameCaseInsensitive = false,
-        Converters = { new ArgumentsConverter(), new LegacyBusinessConverter() }
-    };
+        options.Converters.Add(new ArgumentsConverter());
+        options.Converters.Add(new LegacyBusinessConverter());
+    });
 
     internal static async Task<int> Run(string[] args)
     {

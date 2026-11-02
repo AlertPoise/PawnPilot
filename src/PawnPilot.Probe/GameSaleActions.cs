@@ -466,7 +466,7 @@ namespace PawnPilot
             NegociationUIManager.Instance.uiObject.activeInHierarchy && !UnsafeVisibleModal();
 
         private bool BaseReady(Snapshot snapshot) => snapshot != null && snapshot.ready &&
-            snapshot.schema_version == Protocol.BusinessSchemaVersion && snapshot.loaded &&
+            Protocol.IsBusinessVersion(snapshot.schema_version) && snapshot.loaded &&
             !string.IsNullOrEmpty(snapshot.world_epoch) &&
             snapshot.business?.details != null && snapshot.business.details.customer != null &&
             snapshot.business.details.ui != null && snapshot.legal_actions != null;
@@ -583,7 +583,7 @@ namespace PawnPilot
 
         private static Command CommandFor(Snapshot snapshot, string action, ActionArguments args) => new Command
         {
-            schema_version = Protocol.BusinessSchemaVersion, id = "sale-candidate", action = action,
+            schema_version = snapshot.schema_version, id = "sale-candidate", action = action,
             expected_world_epoch = snapshot.world_epoch, expected_version = snapshot.version,
             expected_revision = snapshot.revision, arguments = args
         };

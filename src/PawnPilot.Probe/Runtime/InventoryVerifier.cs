@@ -81,8 +81,8 @@ namespace PawnPilot
                 command.arguments?.container != "player")
                 return VerificationDecision.Uncertain("inventory_sort_command_invalid");
             if (before == null || after == null || nativeBefore == null || nativeAfter == null ||
-                !before.ready || !after.ready || before.schema_version != Protocol.BusinessSchemaVersion ||
-                after.schema_version != Protocol.BusinessSchemaVersion)
+                !before.ready || !after.ready || !Protocol.IsBusinessVersion(before.schema_version) ||
+                !Protocol.IsBusinessVersion(after.schema_version))
                 return VerificationDecision.Pending();
             if (before.world_epoch != after.world_epoch || before.scene != after.scene ||
                 before.world_epoch != nativeBefore.WorldEpoch || before.world_epoch != nativeAfter.WorldEpoch ||

@@ -36,7 +36,7 @@ namespace PawnPilot
                 CapabilityScopeVerified = false,
                 Reason = "native_scope_unverified"
             };
-            if (command == null || snapshot == null || snapshot.schema_version != Protocol.BusinessSchemaVersion ||
+            if (command == null || snapshot == null || !Protocol.IsBusinessVersion(snapshot.schema_version) ||
                 !snapshot.ready || snapshot.business?.details?.customer == null) return evidence;
 
             var store = PlayerStore.HasInstance ? PlayerStore.Instance : null;
@@ -251,7 +251,7 @@ namespace PawnPilot
         internal List<LegalAction> BuildLegalActions(Snapshot snapshot)
         {
             var result = new List<LegalAction>();
-            if (snapshot == null || !snapshot.ready || snapshot.schema_version != Protocol.BusinessSchemaVersion) return result;
+            if (snapshot == null || !snapshot.ready || !Protocol.IsBusinessVersion(snapshot.schema_version)) return result;
             AddIfEligible("start_business", snapshot, result);
             AddIfEligible("receive_next_customer", snapshot, result);
             AddCurrentCustomerActions(snapshot, result);
@@ -288,7 +288,7 @@ namespace PawnPilot
             if (customer.presence != "absent") return;
             // Day transitions are action-local snapshot gates too. Do not advertise a
             // bell/open candidate that the protocol would reject during shutter motion.
-            var candidate = new Command { schema_version = Protocol.BusinessSchemaVersion,
+            var candidate = new Command { schema_version = snapshot.schema_version,
                 action = action, arguments = new ActionArguments() };
             if (BusinessActionPolicy.ValidateCandidate(candidate, snapshot) != null) return;
             CandidateAdmission.TryAdd(snapshot, result, new LegalAction { action = action, arguments = new ActionArguments() });

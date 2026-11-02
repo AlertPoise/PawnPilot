@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 
 public static class CandidateAdmissionTests
 {
-    private static readonly JsonSerializerOptions Json = new() { IncludeFields = true };
+    private static readonly JsonSerializerOptions Json = ManagedVersionedJson.Create();
     private static Snapshot Fixture(string name = "m3a-sort")
     {
         var state = JsonSerializer.Deserialize<Snapshot>(
